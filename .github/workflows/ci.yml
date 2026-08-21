@@ -23,8 +23,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-          cache: maven
-          cache-dependency-path: backend/pom.xml
 
       - name: Test and build backend
         shell: bash
