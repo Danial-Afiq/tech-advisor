@@ -114,9 +114,9 @@ jobs:
             npm install
           fi
 
-          # Run these only if the corresponding scripts exist
-          npm run test --if-present
-          npm run build --if-present
+          # Run tests
+          npm test
+          npm run build
 
   repository-checks:
     name: Repository Checks
