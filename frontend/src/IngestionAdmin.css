@@ -1,0 +1,25 @@
+.ingestion-admin { text-align: left; padding: 40px 28px; color: #dce3f3; background: #0c1426; min-height: 100vh; box-sizing: border-box; }
+.ingestion-admin h1 { color: #f3f6ff; font-size: 34px; line-height: 1.2; margin: 12px 0; }
+.ingestion-admin h2 { color: #f3f6ff; font-size: 22px; }
+.ingestion-admin p { color: #a9b7d0; }
+.ingestion-admin .eyebrow { color: #b4a3ff; font-size: 12px; letter-spacing: 2px; }
+.ingestion-card { padding: 24px; margin-top: 24px; background: #141f35; border: 1px solid #2d3a55; border-radius: 12px; }
+.ingestion-admin form { margin-top: 20px; display: grid; gap: 18px; }
+.ingestion-admin label { display: grid; gap: 8px; }
+.ingestion-admin input:not([type=checkbox]) { box-sizing: border-box; width: 100%; padding: 12px; font: inherit; color: #f3f6ff; background: #0c1426; border: 1px solid #526080; border-radius: 6px; }
+.ingestion-admin button { justify-self: start; border: 0; border-radius: 7px; padding: 12px 22px; font: inherit; font-weight: 600; color: white; background: #7455d9; cursor: pointer; }
+.ingestion-admin button:disabled { opacity: .5; cursor: not-allowed; }
+.ingestion-admin :focus-visible { outline: 3px solid #b4a3ff; outline-offset: 3px; }
+.ingestion-admin fieldset { border: 1px solid #526080; border-radius: 7px; display: grid; gap: 12px; }
+.ingestion-admin .source-choice { display: flex; gap: 12px; align-items: flex-start; }
+.ingestion-admin input[type=checkbox] { width: 18px; height: 18px; accent-color: #a18aff; }
+.ingestion-admin small { display: block; color: #adbad3; font-size: 12px; }
+.ingestion-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 28px; }
+.ingestion-summary div { padding: 18px; border-left: 3px solid #a18aff; background: #141f35; }
+.ingestion-summary span { display: block; color: #adbad3; font-size: 13px; }
+.ingestion-summary strong { display: block; font-size: 17px; margin-top: 6px; }
+.ingestion-admin .ingestion-error { padding: 16px; background: #44212d; color: #ffd1da; border-radius: 8px; margin-top: 20px; }
+.ingestion-table { overflow-x: auto; margin-top: 20px; }
+.ingestion-admin table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ingestion-admin th, .ingestion-admin td { text-align: left; padding: 12px 8px; border-bottom: 1px solid #34415b; vertical-align: top; }
+@media (max-width: 700px) { .ingestion-summary { grid-template-columns: 1fr; } .ingestion-admin { padding: 24px 14px; } .ingestion-card { padding: 18px; } }

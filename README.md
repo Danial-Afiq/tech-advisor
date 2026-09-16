@@ -282,6 +282,13 @@ The simulator / admin path is useful for reliable demos when live data is insuff
 
 ## Data ingestion
 
+The ingestion runner implementation and source integration guide are in
+[docs/ingestion.md](docs/ingestion.md). It supports an anchored 24-hour schedule,
+asynchronous admin-triggered runs, typed source payloads, and persistent execution
+history. Local simulated sources demonstrate the pipeline; production admin
+activation depends on the account authentication integration. The admin panel is
+available at `/admin/ingestion`.
+
 The current architecture defines two main ingestion paths:
 
 1. **Web scraping** — planned for sources such as PCPartPicker, RTINGS and manufacturer specification pages where no suitable free API is available.

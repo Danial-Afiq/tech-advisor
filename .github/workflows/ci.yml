@@ -23,7 +23,7 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_DB: techadvisor
+          POSTGRES_DB: techadvisor_test
           POSTGRES_USER: techadvisor
           POSTGRES_PASSWORD: devpassword
         ports:
@@ -31,7 +31,7 @@ jobs:
 
         # Wait until PostgreSQL is ready before running backend tests
         options: >-
-          --health-cmd "pg_isready -U techadvisor -d techadvisor"
+          --health-cmd "pg_isready -U techadvisor -d techadvisor_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -41,7 +41,7 @@ jobs:
     env:
       DB_HOST: localhost
       DB_PORT: 5432
-      POSTGRES_DB: techadvisor
+      POSTGRES_DB: techadvisor_test
       POSTGRES_USER: techadvisor
       POSTGRES_PASSWORD: devpassword
 

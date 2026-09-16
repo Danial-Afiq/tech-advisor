@@ -1,0 +1,212 @@
+openapi: 3.0.3
+info:
+  title: Tech Advisor Ingestion API
+  version: 1.0.0
+  description: >-
+    ADMIN-only ingestion operations. Production routes are denied pending account-auth integration.
+    The localhost ingestion-demo profile supports Basic authentication and session CSRF tokens.
+servers:
+  - url: http://localhost:8080
+security:
+  - demoBasic: []
+paths:
+  /api/admin/ingestion/session:
+    get:
+      summary: Read authenticated identity and CSRF token
+      responses:
+        '200':
+          description: Save the session cookie; use csrfHeader and csrfToken on POST requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  username: { type: string }
+                  csrfHeader: { type: string }
+                  csrfToken: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/admin/ingestion/runs:
+    post:
+      summary: Request an asynchronous scrape without moving the recurring schedule
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{8,128}$' }
+        - in: header
+          name: X-CSRF-TOKEN
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sources:
+                  type: array
+                  description: Registered enabled source IDs; absent or empty selects all enabled sources.
+                  items: { type: string }
+                reason: { type: string, nullable: true, maxLength: 500 }
+      responses:
+        '202':
+          description: Durable run admission, or an existing run for the same actor/key/body.
+          headers:
+            Location:
+              schema: { type: string }
+              description: Run detail URL
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Active run (ID in message), or idempotency key reused with a different body.
+        '503': { $ref: '#/components/responses/Unavailable' }
+    get:
+      summary: Paginated run history, newest first
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+        - in: query
+          name: size
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: trigger
+          schema: { type: string, enum: [MANUAL, SCHEDULED] }
+      responses:
+        '200':
+          description: Runs (empty array past the last page)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Run' }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/admin/ingestion/runs/{id}:
+    get:
+      summary: Read persisted run state and source results
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run state, including in-flight counters
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Run' }
+        '404': { description: Unknown run ID }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/admin/ingestion/sources:
+    get:
+      summary: Registered sources and persistent cooldowns
+      responses:
+        '200':
+          description: Available source modules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    sourceId: { type: string }
+                    enabled: { type: boolean }
+                    simulation: { type: boolean }
+                    nextAllowedAt: { type: string, format: date-time, nullable: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /api/admin/ingestion/schedule:
+    get:
+      summary: Current schedule and active run
+      responses:
+        '200':
+          description: Persisted schedule (manual runs never move nextScheduledAt)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  intervalDays: { type: integer, enum: [1] }
+                  intervalHours: { type: integer, enum: [24] }
+                  anchor: { type: string, format: date-time, nullable: true }
+                  nextScheduledAt: { type: string, format: date-time, nullable: true }
+                  activeRunId: { type: string, nullable: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+components:
+  securitySchemes:
+    demoBasic:
+      type: http
+      scheme: basic
+      description: Local demo only. Replace with account authentication before production activation.
+  responses:
+    Unauthorized: { description: Authentication required }
+    Forbidden: { description: Non-admin, invalid CSRF token, or production access not yet enabled }
+    Invalid: { description: Invalid source selection, request, or pagination }
+    Unavailable: { description: Run storage unavailable }
+  schemas:
+    SourceResult:
+      type: object
+      properties:
+        sourceId: { type: string }
+        status: { type: string }
+        startedAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+        processedPayloadCount: { type: integer }
+        duplicatePayloadCount: { type: integer }
+        rejectedPayloadCount: { type: integer }
+        errorCount: { type: integer }
+        errorStackCount: { type: integer }
+        errors:
+          type: array
+          description: Sanitized exception type and at most five application stack frames.
+          items: { type: string }
+    Run:
+      type: object
+      properties:
+        runId: { type: string }
+        triggerType: { type: string, enum: [MANUAL, SCHEDULED] }
+        requestedBy: { type: string }
+        reason: { type: string, nullable: true }
+        idempotencyKey: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [ACCEPTED, RUNNING, SUCCESS, PARTIAL_FAILURE, FAILED, INTERRUPTED, SKIPPED]
+        requestedAt: { type: string, format: date-time }
+        scheduledFor: { type: string, format: date-time, nullable: true }
+        startedAt: { type: string, format: date-time, nullable: true }
+        finishedAt: { type: string, format: date-time, nullable: true }
+        durationMs: { type: integer, format: int64 }
+        latenessMs: { type: integer, format: int64 }
+        missedSlots: { type: integer, format: int64 }
+        processedPayloadCount: { type: integer }
+        duplicatePayloadCount: { type: integer }
+        rejectedPayloadCount: { type: integer }
+        errorCount: { type: integer }
+        errorStackCount: { type: integer }
+        skippedSourceCount: { type: integer }
+        simulation: { type: boolean }
+        sourceIds:
+          type: array
+          items: { type: string }
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/SourceResult' }
