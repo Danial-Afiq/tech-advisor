@@ -3,8 +3,9 @@ import heroImg from './assets/hero.png'
 import reactLogo from './assets/react.svg'
 import viteLogo from './assets/vite.svg'
 import './App.css'
+import IngestionAdmin from './IngestionAdmin'
 
-function App() {
+function StarterApp() {
   const [count, setCount] = useState(0)
 
   return (
@@ -119,4 +120,6 @@ function App() {
   )
 }
 
-export default App
+export default function App() {
+  return window.location.pathname === '/admin/ingestion' ? <IngestionAdmin /> : <StarterApp />
+}
