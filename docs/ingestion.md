@@ -95,7 +95,7 @@ If the backend was offline, one run represents the most recent overdue slot; `mi
 
 Accepted work is durable before dispatch. If dispatch never occurs, the next sweep can claim it. Running work has a unique owner, ten-second heartbeat and 90-second lease. Expired running work becomes `INTERRUPTED` and is not blindly replayed. All progress/finalization writes check owner and lease. The schedule retains its cadence after interruption; an admin may initiate a new run when appropriate.
 
-`backend/fly.toml` now keeps one machine running in the primary region, which incurs ongoing runtime cost once deployed. No deployment was performed by this change. Keep machine clocks synchronized; due times/leases use UTC application clocks. Retain coordinator and active-run rows if adding log retention later.
+`backend/fly.toml` disables automatic stopping and starting so deployed Machines keep running without HTTP traffic. This incurs ongoing runtime cost once deployed. No deployment was performed by this change. Keep machine clocks synchronized; due times/leases use UTC application clocks. Retain coordinator and active-run rows if adding log retention later.
 
 ## Database and metadata
 
