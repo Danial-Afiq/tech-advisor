@@ -1,0 +1,107 @@
+﻿{
+    "runs":  [
+                 {
+                     "duplicatePayloadCount":  0,
+                     "durationMs":  240,
+                     "errorCount":  0,
+                     "errorStackCount":  0,
+                     "finishedAt":  "2026-09-16T12:25:49.002391400Z",
+                     "idempotencyKey":  "010217a1-a692-4e84-8af0-b4767f83f059",
+                     "latenessMs":  0,
+                     "missedSlots":  0,
+                     "processedPayloadCount":  3,
+                     "reason":  "Mid-cycle release demonstration",
+                     "rejectedPayloadCount":  0,
+                     "requestedAt":  "2026-09-16T12:25:48.742630900Z",
+                     "requestedBy":  "demo-admin",
+                     "runId":  "5a7bac61-05d8-41f2-b410-64babbc37f2c",
+                     "scheduledFor":  null,
+                     "simulation":  true,
+                     "skippedSourceCount":  0,
+                     "sourceIds":  [
+                                       "simulated-release"
+                                   ],
+                     "sources":  [
+                                     {
+                                         "duplicatePayloadCount":  0,
+                                         "errorCount":  0,
+                                         "errorStackCount":  0,
+                                         "errors":  [
+
+                                                    ],
+                                         "finishedAt":  "2026-09-16T12:25:48.992171700Z",
+                                         "processedPayloadCount":  3,
+                                         "rejectedPayloadCount":  0,
+                                         "sourceId":  "simulated-release",
+                                         "startedAt":  "2026-09-16T12:25:48.788591800Z",
+                                         "status":  "SUCCESS"
+                                     }
+                                 ],
+                     "startedAt":  "2026-09-16T12:25:48.762187100Z",
+                     "status":  "SUCCESS",
+                     "triggerType":  "MANUAL"
+                 },
+                 {
+                     "duplicatePayloadCount":  0,
+                     "durationMs":  125,
+                     "errorCount":  1,
+                     "errorStackCount":  1,
+                     "finishedAt":  "2026-09-16T12:25:49.379555100Z",
+                     "idempotencyKey":  "59794a80-f0ca-4d58-b693-8c3ef1207225",
+                     "latenessMs":  0,
+                     "missedSlots":  0,
+                     "processedPayloadCount":  3,
+                     "reason":  "Mid-cycle release demonstration",
+                     "rejectedPayloadCount":  0,
+                     "requestedAt":  "2026-09-16T12:25:49.243620200Z",
+                     "requestedBy":  "demo-admin",
+                     "runId":  "edf54a60-0c4c-41d3-8469-c7000304e0f9",
+                     "scheduledFor":  null,
+                     "simulation":  true,
+                     "skippedSourceCount":  0,
+                     "sourceIds":  [
+                                       "simulated-failure",
+                                       "simulated-release"
+                                   ],
+                     "sources":  [
+                                     {
+                                         "duplicatePayloadCount":  0,
+                                         "errorCount":  1,
+                                         "errorStackCount":  1,
+                                         "errors":  [
+                                                        "IllegalStateException",
+                                                        "com.springboot.backend.ingestion.SimulatedSources$2.ingest(SimulatedSources.java:35)",
+                                                        "com.springboot.backend.ingestion.IngestionOrchestrator.lambda$5(IngestionOrchestrator.java:81)"
+                                                    ],
+                                         "finishedAt":  "2026-09-16T12:25:49.288228Z",
+                                         "processedPayloadCount":  0,
+                                         "rejectedPayloadCount":  0,
+                                         "sourceId":  "simulated-failure",
+                                         "startedAt":  "2026-09-16T12:25:49.271982800Z",
+                                         "status":  "FAILED"
+                                     },
+                                     {
+                                         "duplicatePayloadCount":  0,
+                                         "errorCount":  0,
+                                         "errorStackCount":  0,
+                                         "errors":  [
+
+                                                    ],
+                                         "finishedAt":  "2026-09-16T12:25:49.367875100Z",
+                                         "processedPayloadCount":  3,
+                                         "rejectedPayloadCount":  0,
+                                         "sourceId":  "simulated-release",
+                                         "startedAt":  "2026-09-16T12:25:49.302706700Z",
+                                         "status":  "SUCCESS"
+                                     }
+                                 ],
+                     "startedAt":  "2026-09-16T12:25:49.254160500Z",
+                     "status":  "PARTIAL_FAILURE",
+                     "triggerType":  "MANUAL"
+                 }
+             ],
+    "description":  "Actual local simulated runs, retrieved again after backend restart",
+    "restartVerified":  true,
+    "scheduleUnchanged":  true,
+    "database":  "techadvisor_ingestion_demo"
+}
