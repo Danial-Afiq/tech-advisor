@@ -17,7 +17,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 
 from app.assess import Assessor
 from app.config import Settings, get_settings
-from app.llm import AnthropicLlm
+from app.llm import build_llm
 from app.retrieval.embedder import DeterministicEmbedder
 from app.retrieval.store import LocalVectorStore
 from app.schemas import AssessRequest, AssessResponse
@@ -43,8 +43,8 @@ def build_assessor(settings: Settings) -> Assessor:
             "VECTOR_STORE=pgvector is not wired up yet: the vector extension "
             "and review_chunks table do not exist. Use VECTOR_STORE=local."
         )
-    store = LocalVectorStore(settings.vector_store_path, embedder)
-    return Assessor(settings, store, embedder, AnthropicLlm(settings))
+    store = LocalVectorStore(settings.resolved_vector_store_path, embedder)
+    return Assessor(settings, store, embedder, build_llm(settings))
 
 
 def get_assessor() -> Assessor:

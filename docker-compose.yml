@@ -28,7 +28,13 @@ services:
       # Same rule as postgres: interpolated from the repo-root .env, listed
       # explicitly. Inside the container there is no repo root to read, so the
       # process environment is the whole story.
+      LLM_PROVIDER: ${LLM_PROVIDER}
+      LLM_MODEL: ${LLM_MODEL}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_API_KEY: ${LLM_API_KEY}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
       VECTOR_STORE: local
     ports:

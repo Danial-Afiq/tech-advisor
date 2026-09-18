@@ -87,3 +87,23 @@ def test_credential_reaches_the_anthropic_client() -> None:
     was constructed with no api_key, so ai/.env could never have worked."""
     llm = AnthropicLlm(Settings(anthropic_api_key="sk-ant-not-a-real-key"))
     assert llm.client.api_key == "sk-ant-not-a-real-key"
+
+
+def test_relative_vector_store_path_resolves_against_the_package_root() -> None:
+    """The regression this guards cost a live debugging round: the path was
+    CWD-relative, so starting uvicorn from the repo root found no store,
+    retrieved nothing, and degraded every assessment to '-' with
+    NO_PASSAGES_RETRIEVED - no error, no log, nothing pointing at the cause."""
+    from app.config import AI_ROOT
+
+    settings = Settings(_env_file=None, vector_store_path="data/vector_store")
+    assert settings.resolved_vector_store_path == AI_ROOT / "data" / "vector_store"
+    assert settings.resolved_vector_store_path.is_absolute()
+    # AI_ROOT is the `ai` package root - `/srv` in the container, which is
+    # where docker-compose mounts the store.
+    assert (AI_ROOT / "app" / "main.py").is_file()
+
+
+def test_absolute_vector_store_path_is_left_alone(tmp_path: Path) -> None:
+    settings = Settings(_env_file=None, vector_store_path=str(tmp_path / "store"))
+    assert settings.resolved_vector_store_path == tmp_path / "store"

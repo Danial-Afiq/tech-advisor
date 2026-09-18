@@ -9,6 +9,7 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "anthropic>=1.6,<2",
+    "openai>=1.40",
 ]
 
 [project.optional-dependencies]

@@ -392,12 +392,22 @@ ends; they are returned for debugging only.
 ### The stand-in vector store
 
 pgvector is not enabled and `review_chunks` does not exist, so retrieval runs
-against `LocalVectorStore` — JSON files under `ai/data/vector_store/`, which
-ships **empty**. An empty store is a legitimate state, not a misconfiguration:
-it is what an un-ingested product looks like, and the service answers `-`.
+against `LocalVectorStore` — JSON files under `ai/data/vector_store/`.
 
-To exercise retrieval, drop a `*.json` file in that directory shaped like
-`ai/tests/fixtures/chunks.json`:
+`chunks.json` is committed there as **demo data**: five passages for product
+`812` (plus one for `999`, which must never be retrieved — it is what proves
+the `product_id` filter works). That is enough to exercise a real end-to-end
+`/assess` against a live model. Delete it to see the un-ingested behaviour: an
+empty store is a legitimate state, not a misconfiguration, and the service
+answers `-` for it.
+
+The path is resolved against the `ai` package root, never the working
+directory — `/srv` in the container, which is where compose mounts the store.
+A CWD-relative path failed silently and expensively: started from the repo
+root it found no directory, retrieved nothing, and degraded every assessment
+to `-` with `NO_PASSAGES_RETRIEVED` and nothing in the logs explaining why.
+
+To add more, drop another `*.json` file in that directory shaped the same way:
 
 ```json
 [
@@ -426,12 +436,51 @@ model, set its dimension on the column, swap the embedder, set
 mandatory `product_id` filter, without which passages about other phones get
 graded as if they described the candidate.
 
-### Model configuration
+### Model and provider configuration
 
-`claude-opus-5`, via `client.beta.messages.create`. Tuning knobs are typed
-defaults in `ai/app/config.py`, overridable from the environment; they are
-deliberately **not** in the root `.env`, which is reserved for secrets and
-cross-service settings.
+The layer is **vendor-neutral**. `Assessor` depends only on the `Llm` protocol
+in `ai/app/llm.py`, so which company answers is a config change, not a code
+change. `LLM_PROVIDER` selects one of two adapters:
+
+| `LLM_PROVIDER` | Adapter | Reaches |
+| --- | --- | --- |
+| `anthropic` *(default)* | `AnthropicLlm`, native Claude API | Claude models |
+| `openrouter` | `OpenAICompatibleLlm` | one key fronting Anthropic, OpenAI, Google, Meta, Mistral, DeepSeek … |
+| `openai` | `OpenAICompatibleLlm` | OpenAI directly |
+| `custom` + `LLM_BASE_URL` | `OpenAICompatibleLlm` | Ollama, vLLM, Groq, Together, DeepSeek, a company gateway |
+
+Only two adapters are needed for all of that, because the OpenAI
+chat-completions format is a de-facto standard — the base URL is the only thing
+that differs between those vendors.
+
+`LLM_MODEL` travels with `LLM_PROVIDER` and both live in the root `.env`. The
+same model is named differently per vendor (`claude-opus-5` natively,
+`anthropic/claude-opus-5` through OpenRouter), so changing one without the
+other is always a mistake.
+
+#### Structured output is tiered
+
+Not every model reachable through a gateway can enforce a JSON schema
+server-side, so `LLM_SCHEMA_MODE=auto` (the default) starts at the strongest
+tier and steps down only when a provider rejects the request *because of the
+response format*, then remembers what worked so the wasted request is paid once
+per process rather than per assessment:
+
+```text
+json_schema  ->  json_object  ->  a schema spelled out in the prompt
+```
+
+Pin it (`json_schema`, `json_object`, `prompt`) to skip the discovery. A 400
+for any other reason — a bad model name, say — is surfaced rather than
+mistaken for a format problem and quietly retried at a weaker tier.
+
+This is where the existing design pays off: whatever a weaker model still gets
+wrong is caught by `validate()` and the retry/degrade path, so the result is a
+degraded `-` rather than a fabricated grade.
+
+#### What each adapter sends
+
+Native Anthropic (`claude-opus-5`, via `client.beta.messages.create`):
 
 - **No `temperature`.** Sampling parameters are rejected with a 400 on this
   model. Depth is controlled with `LLM_EFFORT` (`low`…`max`, default `medium`).
@@ -442,9 +491,26 @@ cross-service settings.
   load-bearing: models generate left to right, so the grade is committed before
   any personalised prose is written. **Do not reorder it.**
 - `fallbacks="default"` re-runs a request server-side if a safety classifier
-  declines it. Review corpora occasionally trip one, and a declined request
-  would otherwise cost the user their grade. Disable with
-  `LLM_FALLBACKS_ENABLED=false`.
+  declines it. Disable with `LLM_FALLBACKS_ENABLED=false`.
+- Prompt caching on the system block.
+
+OpenAI-compatible:
+
+- `response_format` per the tier above; the system prompt is left clean when
+  the provider enforces the schema, so the cached prefix is not wasted on
+  instructions the API already guarantees.
+- Reasoning depth is **opt-in** (`LLM_SEND_EFFORT=true`), because many models
+  behind a gateway reject the parameter outright.
+- Truncation (`finish_reason: "length"`) is reported as itself rather than
+  left to fail validation, since no retry can fix a token ceiling.
+- Gateways sometimes report upstream failures as HTTP 200 with no choices;
+  that is caught explicitly.
+- `meta.ai_model` records the model that **actually answered**, which is not
+  always the one requested — gateways route and substitute.
+
+The Anthropic-specific levers are kept rather than flattened to a lowest common
+denominator, so running on Claude does not cost you effort control, refusal
+fallbacks or prompt caching just because the layer also supports other vendors.
 
 Full validation still runs even though the schema is enforced API-side: a
 hallucinated ref is indistinguishable from a real one to any schema validator,
@@ -704,15 +770,33 @@ identically started from `ai/` or from the repo root:
 Swagger UI is at `http://localhost:8000/docs`, health at `/health`.
 
 ```bash
-./.venv/Scripts/python.exe -m pytest        # 63 tests, no live model calls
+./.venv/Scripts/python.exe -m pytest        # 90 tests, no live model calls
 ```
 
-**What works without an Anthropic API key.** The test suite, `/health`, `/docs`
-and the whole container build need no credential — the tests inject a fake
-model client. `POST /assess` is the *only* thing that makes a live call, and it
-will fail without `ANTHROPIC_API_KEY` set in the root `.env` (or an
-`ant auth login` profile). An empty key is a legitimate local state; it simply
-means the grading path is untested on your machine.
+**What works without any API key.** The test suite, `/health`, `/docs` and the
+whole container build need no credential — the tests inject a fake model client
+at two levels. `POST /assess` is the *only* thing that makes a live call, and it
+will fail without a key for whichever `LLM_PROVIDER` is selected. An empty key
+is a legitimate local state; it simply means the grading path is untested on
+your machine.
+
+**Switching provider** is two lines in the root `.env`:
+
+```bash
+LLM_PROVIDER=openrouter
+LLM_MODEL=anthropic/claude-opus-5     # or openai/gpt-5, google/gemini-..., meta-llama/...
+OPENROUTER_API_KEY=sk-or-...
+```
+
+Nothing else changes — `Assessor` depends on the `Llm` protocol, not on a
+vendor. To run against a local model with no key and no cost at all:
+
+```bash
+LLM_PROVIDER=custom
+LLM_BASE_URL=http://localhost:11434/v1    # Ollama
+LLM_MODEL=qwen2.5
+LLM_API_KEY=ollama                        # any non-empty string; Ollama ignores it
+```
 
 Or run it in Docker alongside PostgreSQL, which reads the same root `.env`:
 
@@ -1003,7 +1087,13 @@ overridable from the environment when you actually need to change one.
 | `POSTGRES_PASSWORD` | backend, compose | `devpassword` | Fly secret (`SPRING_DATASOURCE_PASSWORD`) |
 | `DB_HOST` | backend | `localhost` | — (Fly uses the datasource URL) |
 | `DB_PORT` | backend, compose | `5433` | — |
+| `LLM_PROVIDER` | ai | `anthropic` | not deployed yet |
+| `LLM_MODEL` | ai | `claude-opus-5` | not deployed yet |
 | `ANTHROPIC_API_KEY` | ai | *(blank)* | not deployed yet |
+| `OPENROUTER_API_KEY` | ai | *(blank)* | not deployed yet |
+| `OPENAI_API_KEY` | ai | *(blank)* | not deployed yet |
+| `LLM_BASE_URL` | ai (`custom` provider) | *(blank)* | not deployed yet |
+| `LLM_API_KEY` | ai (`custom` provider) | *(blank)* | not deployed yet |
 | `AI_SERVICE_TOKEN` | ai, backend | *(blank)* | not deployed yet |
 | `AI_PORT` | compose | `8000` | — |
 | `VITE_API_BASE_URL` | frontend | `http://localhost:8080` | Vercel environment variable |
@@ -1025,9 +1115,10 @@ overridable from the environment when you actually need to change one.
 2. **A blank `AI_SERVICE_TOKEN` disables authentication on `/assess`.** That is
    deliberate for local development — see `require_token` in `ai/app/main.py` —
    but it must be set anywhere the service is reachable from outside.
-3. **A blank `ANTHROPIC_API_KEY` is a valid local state.** Tests, `/health`,
-   `/docs` and the container build all work without it. Only `POST /assess`
-   needs it, and it fails loudly rather than degrading quietly.
+3. **A blank credential is a valid local state.** Tests, `/health`, `/docs` and
+   the container build all work without one. Only `POST /assess` needs a key,
+   and it fails loudly rather than degrading quietly. Only the key matching
+   `LLM_PROVIDER` is read — the others may stay blank.
 
 ### Local vs Fly: two shapes for the database
 
@@ -1098,15 +1189,31 @@ Paid external AI calls should be mocked or replaced with deterministic test data
 
 ### AI layer tests
 
-`cd ai && ./.venv/Scripts/python.exe -m pytest` — 63 tests, **no live model
-calls**. They inject a fake model client (`ai/tests/conftest.py`), so they cost
-nothing and need no API key. Coverage includes valid responses and ref mapping,
-hallucinated refs, invalid grades, factors outside the closed list, the retry
-firing once and only once, the `product_id` filter, delimiter stripping, the
-degraded paths, the HTTP surface, and configuration resolution from the root
-`.env`.
+`cd ai && ./.venv/Scripts/python.exe -m pytest` — 90 tests, **no live model
+calls**, no API key, no cost. They stub the model at two levels:
 
-One honest limit worth recording. The prompt-injection test proves that an
+- `ai/tests/conftest.py` replaces the whole `Llm` implementation, for testing
+  the assessment flow: valid responses and ref mapping, hallucinated refs,
+  invalid grades, factors outside the closed list, the retry firing once and
+  only once, the `product_id` filter, delimiter stripping, the degraded paths
+  and the HTTP surface.
+- `ai/tests/test_providers.py` stubs one layer lower, at the wire format, so
+  the request actually sent to each vendor is asserted rather than reviewed by
+  eye: provider selection, the schema/json_object/prompt tiers and the
+  step-down between them, refusals, truncation, gateway errors, and the
+  Anthropic request shape (cache breakpoint, effort, fallback betas, no
+  sampling parameters).
+
+Plus configuration resolution from the root `.env`.
+
+Two honest limits worth recording.
+
+**No test proves a real provider accepts these requests.** The stubs assert
+what is sent, not that any vendor is happy to receive it. A wrong beta header
+or an unsupported parameter is a 400 in production that every test still
+passes through. One live call settles it.
+
+ The prompt-injection test proves that an
 injected passage reaches the model only as data inside the delimiters, that a
 passage cannot close the block early, and that the grade matches a control run
 without the poisoned chunk. It **cannot** prove the model itself ignores the

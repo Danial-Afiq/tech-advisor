@@ -19,6 +19,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = REPO_ROOT / ".env"
 
+# The `ai` package root: `ai/` in a checkout, `/srv` in the container, which is
+# also what docker-compose mounts the vector store into. Relative data paths
+# resolve against this for the same reason ENV_FILE does - see
+# Settings.resolved_vector_store_path.
+AI_ROOT = Path(__file__).resolve().parents[1]
+
 
 class Settings(BaseSettings):
     # `extra="ignore"` is load-bearing: the root `.env` also carries the
@@ -28,10 +34,37 @@ class Settings(BaseSettings):
     # Service
     ai_service_token: str = ""
 
+    # --- Provider selection -------------------------------------------------
+    # Which adapter in app/llm.py handles the call: anthropic | openrouter |
+    # openai | custom. Everything but `anthropic` goes through the shared
+    # OpenAI-compatible adapter, so adding a vendor is a base URL, not code.
+    llm_provider: str = "anthropic"
+
     # Anthropic credential. Blank falls back to the SDK's own resolution
     # (a real ANTHROPIC_API_KEY in the environment, then an `ant auth login`
     # profile) - see AnthropicLlm.__init__.
     anthropic_api_key: str = ""
+
+    # One key fronting many vendors. Used when LLM_PROVIDER=openrouter.
+    openrouter_api_key: str = ""
+
+    # Used when LLM_PROVIDER=openai.
+    openai_api_key: str = ""
+
+    # Used when LLM_PROVIDER=custom, together with llm_base_url: Ollama,
+    # vLLM, Groq, Together, DeepSeek, a company gateway.
+    llm_api_key: str = ""
+    llm_base_url: str = ""
+
+    # How the JSON contract is enforced. `auto` starts at json_schema and
+    # steps down to json_object then prompt only when the provider rejects
+    # the format, remembering what worked. Pin it to skip the discovery.
+    llm_schema_mode: str = "auto"
+
+    # Send reasoning depth to OpenAI-compatible providers. Off by default:
+    # many models behind a gateway reject the parameter outright. Ignored by
+    # the Anthropic adapter, which always sends effort.
+    llm_send_effort: bool = False
 
     # Section 11
     k: int = 12
@@ -75,6 +108,21 @@ class Settings(BaseSettings):
             if needle in lowered:
                 return source_type
         return "UNKNOWN"
+
+
+    @property
+    def resolved_vector_store_path(self) -> Path:
+        """Where the stand-in store actually lives.
+
+        A relative `vector_store_path` resolves against the `ai` package root,
+        never the working directory. The CWD-relative version failed silently
+        and expensively: started from the repo root it found no directory, so
+        retrieval returned nothing, and every assessment degraded to '-' with
+        `NO_PASSAGES_RETRIEVED` and no error anywhere to explain why. An
+        absolute path is honoured as given.
+        """
+        path = Path(self.vector_store_path)
+        return path if path.is_absolute() else AI_ROOT / path
 
 
 @lru_cache

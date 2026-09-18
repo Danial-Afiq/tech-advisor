@@ -43,9 +43,30 @@ class FakeLlm:
         return self.calls[-1]["messages"][0]["content"]
 
 
+@pytest.fixture(autouse=True)
+def isolate_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the suite hermetic.
+
+    pydantic-settings ranks the process environment above any env file, so a
+    developer who exports LLM_MODEL or ANTHROPIC_API_KEY - or just sources the
+    root .env - would silently change what these tests assert. Clearing every
+    variable matching a Settings field means assertions describe the code and
+    the fixtures, never the machine they run on.
+    """
+    for name in Settings.model_fields:
+        monkeypatch.delenv(name.upper(), raising=False)
+
+
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
+    # `_env_file=None` keeps the suite hermetic. Without it, any field not
+    # pinned below is inherited from the developer's root .env, so switching
+    # LLM_PROVIDER locally would change what the tests assert.
     return Settings(
+        _env_file=None,
+        llm_provider="anthropic",
+        llm_model="claude-opus-5",
+        llm_schema_mode="auto",
         ai_service_token="",
         k=4,
         chunk_char_cap=200,
