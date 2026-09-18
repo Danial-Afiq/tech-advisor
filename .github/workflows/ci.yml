@@ -21,7 +21,7 @@ jobs:
     # This database exists only for this GitHub Actions run
     services:
       postgres:
-        image: postgres:17-alpine
+        image: pgvector/pgvector:0.8.6-pg17-bookworm
         env:
           POSTGRES_DB: techadvisor_test
           POSTGRES_USER: techadvisor
