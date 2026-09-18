@@ -1478,6 +1478,28 @@ The safe architectural decision is:
 - normalize into the shared ingestion contract,
 - keep AI/recommendation layers source-agnostic.
 
+## 17.1.1 Implemented (not yet enabled) real adapters — 18 Sep 2026
+
+Two real `IngestionSource` adapters exist as of this branch, both fetch +
+translate only — neither is in `ingestion.enabled-sources` because no
+production sink exists yet for `Specifications`/`Article` payloads (see
+§16.3/§18.2: only `system_log` and the demo `SimulationSink` exist).
+
+- **`MobileApiSmartphoneSource`** (ticket 1.2) — MobileAPI.dev device list
+  endpoint (`/devices/` or `/devices/by-year/`), 1 request/run, up to 10
+  devices. RAM/storage/battery/camera parsed from list-response text fields.
+  Requires `sources.mobileapi.api-key` (not yet provisioned).
+- **`TechLaunchRssSource`** (ticket 1.4) — RSS 2.0 only, defaults to
+  Engadget + HardwareZone Singapore (`sources.tech-launch-rss.feed-urls`).
+  **The Verge was evaluated and rejected**: its `robots.txt` explicitly
+  disallows `ClaudeBot`/`anthropic-ai` outside one unrelated path
+  (`Allow: /sp/`, `Disallow: /`) — do not add it back without a human
+  re-clearing that. TechPowerUp (GPU specs, still unimplemented) has the
+  same kind of block and needs the same treatment before any adapter is
+  built against it.
+- Neither adapter's exact field/source selection is a final decision —
+  both are config-driven per §17.1's "keep source adapters replaceable."
+
 ## 17.2 Compliance requirement
 Before scraping any real site:
 - inspect `robots.txt`,
