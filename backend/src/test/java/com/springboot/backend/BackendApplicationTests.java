@@ -9,6 +9,17 @@ class BackendApplicationTests {
     @org.springframework.beans.factory.annotation.Autowired
     org.springframework.web.context.WebApplicationContext web;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    org.springframework.jdbc.core.JdbcTemplate db;
+
+    @Test
+    void pgvectorMigrationMakesVectorOperationsAvailable() {
+        org.junit.jupiter.api.Assertions.assertNotNull(db.queryForObject(
+                "SELECT extversion FROM pg_extension WHERE extname='vector'", String.class));
+        org.junit.jupiter.api.Assertions.assertEquals(1.0, db.queryForObject(
+                "SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector", Double.class));
+    }
+
     @Test
     void productionIngestionIsDeniedUntilAccountAuthIsIntegrated() throws Exception {
         var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup(web)

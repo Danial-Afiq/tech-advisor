@@ -40,7 +40,7 @@ The Python service is planned as a small, stateless AI service that receives one
 | Database | PostgreSQL |
 | ORM | Spring Data JPA + Hibernate |
 | Schema migrations | Flyway |
-| Local database | PostgreSQL via Docker Compose; pgvector-enabled image planned |
+| Local database | PostgreSQL 17 with pgvector via Docker Compose |
 | Hosted database | Neon PostgreSQL |
 | Backend hosting | Fly.io |
 | Authentication | Spring Security; USER / ADMIN roles |
@@ -585,7 +585,7 @@ Neon therefore does not require a separate application deployment workflow.
 
 Flyway manages database schema changes when the deployed Spring Boot application starts.
 
-> Note: the current Docker Compose setup uses standard PostgreSQL. Before RAG / vector-storage work starts, switch to the agreed pgvector-enabled PostgreSQL setup and enable the extension.
+Flyway's `V4__enable_pgvector.sql` enables the `vector` extension on startup. Local Docker Compose and CI use the matching pgvector-enabled PostgreSQL 17 image; the hosted Neon database must also support the extension.
 
 ## Git workflow
 
