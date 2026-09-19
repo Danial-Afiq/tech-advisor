@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 18 September 2026
+> **Last consolidated:** 20 September 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -479,6 +479,33 @@ If the candidate has no meaningful path for this owned device/user:
 - return `NO_MEANINGFUL_CHANGE`,
 - do not retrieve/grade owner reviews,
 - do not spend an LLM call.
+
+### Deterministic candidate shortlisting - IMPLEMENTED (SCRUM-34)
+
+Before any of the above runs, the catalogue is reduced to a compatible and
+affordable candidate set by `recommendation/CandidatePruningService`, backed by
+`ProductRepository.findCompatibleCandidates(...)`.
+
+Rules, all enforced in SQL:
+- candidate `products.category` equals the owned device's category,
+- the product's **latest** `price_history` observation is `<=`
+  `device_preferences.budget` (inclusive),
+- the currently owned `product_id` is excluded,
+- products with **no** price history are excluded - affordability cannot be
+  verified, so they are not candidates,
+- products with `status <> 'VERIFIED'` are excluded.
+
+"Latest price" is `DISTINCT ON (product_id) ... ORDER BY product_id,
+observed_at DESC, id DESC`. The `id DESC` tiebreaker is required: without it two
+observations sharing an `observed_at` resolve arbitrarily and the step stops
+being reproducible.
+
+This step performs **no** embeddings, retrieval or model calls, and must stay
+that way - bounding the candidate set is what bounds every downstream AI cost.
+
+**Nothing populates these tables yet.** Ingestion still writes only to
+`system_log`, so the filter is exercised by tests and seeded data. Wiring a
+real source into the catalogue is separate work (Epic 01), not part of this.
 
 ## 7.2 Channel B — owner evidence grade
 
@@ -1532,13 +1559,32 @@ V1__create_users_table.sql
 V2__create_system_log.sql
 V3__anchor_daily_ingestion_schedule.sql
 V4__enable_pgvector.sql
+V5__add_password_hash_to_users.sql
+V6__create_catalog_and_device_tables.sql
 ```
 
-Therefore:
-- the **12-table database design is target architecture**,
-- it is **not yet fully implemented in migrations on main**.
+**6 of the 12 canonical tables now exist:** `users`, `system_log`, `products`,
+`price_history`, `user_devices`, `device_preferences`.
+
+**6 remain outstanding:** `smartphone_specs`, `benchmark_results`,
+`market_events`, `review_documents`, `review_chunks`, `recommendations`. The
+last three are on the `feat/3.4-llm_layer` branch.
 
 Do not tell a teammate/assistant “all 12 tables already exist.”
+
+### WARNING: `products` is created on two branches
+
+`feat/3.4-llm_layer` also creates `products`, in its own review-corpus
+migration. Both branches need the table and neither could assume the other
+merged first, so **the two definitions are deliberately byte-identical**.
+
+Whichever branch merges second must delete its own copy of that one
+`CREATE TABLE products` block and renumber - not reconcile two different
+shapes. Do not "improve" either copy in isolation.
+
+A follow-up belongs to whichever branch lands second: add the FK
+`recommendations.current_device_id` to `user_devices(id)`, which 3.4's
+migration explicitly deferred to "the migration that creates user_devices".
 
 ## 18.3 Frontend currently contains
 Known files include:
@@ -2079,6 +2125,30 @@ Do not blindly reuse old “confidence > x” wording.
 The long-term concept can support PC components/peripherals, but the current 12-table DB is smartphone-first.
 
 Avoid expanding schema prematurely during Sprint 1 unless the team explicitly reprioritises.
+
+## 27.9 Currency handling in the budget gate - ASSUMPTION, NOT A DECISION
+
+Candidate shortlisting compares `device_preferences.budget` against
+`price_history.price` as **bare numbers, with no conversion**, on the assumption
+that the system runs in a single currency.
+
+That assumption is not enforced anywhere upstream: the ingestion `Price` payload
+accepts any ISO 4217 code. `CandidatePruningService` therefore logs a warning
+when a candidate's currency differs from the budget's, rather than converting -
+converting would mean inventing an exchange rate.
+
+`currency` columns exist and are persisted on both tables, so this can be made
+real later without a migration. **Do not read the current implementation as a
+team decision that the product is single-currency.**
+
+## 27.10 `device_preferences.budget` is NOT NULL - decided here, flagged onward
+
+Resolved by SCRUM-34: the budget ceiling is the entire basis of candidate
+shortlisting, so a preferences row without one cannot be evaluated.
+
+**Flag for SCRUM-20 (device inventory management):** the preferences UI must
+always collect a budget. If the product decides a budget should be optional,
+relax the constraint in a later migration rather than editing V6.
 
 ---
 
