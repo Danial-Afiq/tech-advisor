@@ -744,7 +744,7 @@ Representative request:
       "budget": 1200,
       "currency": "SGD",
       "upgrade_urgency": "WHEN_DEVICE_STRUGGLES",
-      "brand_flexibility": "SAME_ECOSYSTEM",
+      "brand_flexibility": "FLEXIBLE",
       "priorities": {
         "battery": 5,
         "camera": 4,
@@ -806,6 +806,10 @@ Representative request:
 ```
 
 Important semantics:
+- Every enum value above must come from `ai/app/factors.py`. An earlier version of
+  this example used `"brand_flexibility": "SAME_ECOSYSTEM"`, which is **not** in
+  `BRAND_FLEXIBILITIES` and is rejected with a 422 — the allowed values are
+  `EXTREMELY_FLEXIBLE`, `FLEXIBLE`, `SOMEWHAT_FLEXIBLE`, `NOT_FLEXIBLE`.
 - `vs_budget < 0` means candidate is under budget.
 - `spec_overrides` are folded into deltas before sending.
 - benchmark direction has already been normalized using `higher_is_better`.
@@ -1156,9 +1160,10 @@ database is needed.
    harness runs 7 scenario cases once each. Repeat-run stability is exactly where the
    grade variance in finding 3 shows up, so if the AC is read literally, run one case
    10 times and record the spread rather than running 10 different cases.
-3. **No Java caller exists yet**, so the Spring → `POST /assess` contract in §9/§10
-   has never been exercised over HTTP — only by constructing `AssessRequest`
-   directly in Python.
+3. ~~No Java caller exists yet~~ — **resolved.** The Spring caller now exists
+   (§18.8) and the §9/§10 contract is exercised over real HTTP in
+   `RecommendationPersistenceTests`, against a stub AI service rather than a live
+   model. What remains unexercised is Spring against the *real* FastAPI process.
 
 ---
 
@@ -1383,6 +1388,10 @@ This is an **evidence grade**, not a floating-point probability.
 When implementing/migrating, document this clearly.
 
 Longer-term naming may be cleaner as `evidence_grade`, but the agreed current plan says no new column is required.
+
+**Implemented in `V6`** as a nullable `TEXT` column holding `A`-`F` or `-`, with the
+semantics documented in a `COMMENT ON COLUMN` so the next reader does not mistake it
+for a probability.
 
 ### `input_snapshot`
 Preserve the generation-time inputs because:
@@ -1670,10 +1679,18 @@ V2__create_system_log.sql
 V3__anchor_daily_ingestion_schedule.sql
 V4__enable_pgvector.sql
 V5__create_review_corpus.sql
+V6__create_recommendations.sql
 ```
 
 `V5` adds `review_documents` and `review_chunks`, including
 `review_chunks.embedding vector(512)` and `review_chunks.embedder`.
+
+`V6` adds `recommendations` (§14.11). `user_id` and `candidate_product_id` carry real
+foreign keys; `current_device_id` and `trigger_event_id` are nullable `BIGINT` with
+**no** foreign key, because `user_devices` and `market_events` still do not exist.
+Whoever creates those tables adds the constraints in that migration, not by editing
+`V6`. A partial unique index keeps one `ACTIVE` row per `(user_id,
+candidate_product_id)`; re-assessment supersedes the previous row.
 
 The `embedder` column is load-bearing, not bookkeeping: vectors from two different
 models share no space, and comparing across them returns a confident, meaningless
@@ -1776,8 +1793,83 @@ Verified working on this branch: retrieval against the file-backed store, all si
 degraded paths, prompt-injection resistance against a live model, and the
 ref → `review_chunks.id` mapping.
 
-Not yet verified end-to-end: Spring → `POST /assess` over HTTP (no Java caller exists
-yet), and retrieval against a populated pgvector corpus at realistic scale.
+**Verified end-to-end 19 Sep 2026** — the full chain now runs: Spring → FastAPI over
+HTTP → pgvector retrieval → one live model call → validated structured output →
+`recommendations`. Both halves were exercised:
+
+- *Degraded path*, free: a product with no chunks returned `NO_PASSAGES_RETRIEVED`,
+  grade `-`, null summary, and the `system_log` row was persisted.
+- *Non-degraded path*, one billed `gpt-5.5` call against product 812's four chunks:
+  grade **C** on genuinely contested battery evidence, a grounded summary, and four
+  evidence findings carrying real `review_chunks.id` values. `retrieved_chunk_ids`
+  came back as `[3, 2, 1, 4]` — retrieval-rank order, not insertion order, which is
+  the §8.6 behaviour actually working rather than assumed.
+
+Two details worth knowing from that run:
+
+1. `meta.ai_model` persisted as `gpt-5.5-2026-04-23`, the id the provider resolved,
+   not the configured `gpt-5.5`. That is the more useful value for reproducibility.
+2. The model returned findings for `performance` and `thermals` — factors outside
+   the request's `deciding_factors`. That is correct: it grades what the evidence
+   actually discusses, and `factor_analysis.deterministic` stays separate.
+
+Still unverified: retrieval against a populated corpus at realistic scale (four
+chunks is fewer than `k`, so retrieval ordered rather than selected — the same gap
+§13.5 records for the manual harness).
+
+## 18.8 Backend AI caller and recommendation persistence — 19 Sep 2026
+
+Implemented under `backend/src/main/java/com/springboot/backend/recommendation/`.
+This is the Java half of the §9/§10 contract: it calls the AI layer and persists the
+result. It is **not** the deterministic verdict engine and **not** a trigger.
+
+| Class | Responsibility |
+|---|---|
+| `AssessRequest` / `AssessResponse` | records mirroring `ai/app/schemas.py` field for field |
+| `AiSettings` | `@ConfigurationProperties("ai")` — base URL, bearer token, timeout |
+| `RecommendationConfiguration` | the `RestClient` bean, bearer header, JDK HTTP client timeouts |
+| `AiAssessmentClient` | `POST /assess`; wraps transport failure as `AiServiceException` |
+| `RecommendationInput` | caller-supplied context: user/device/trigger ids + the `AssessRequest` + deterministic factor analysis |
+| `RecommendationRepository` | `JdbcTemplate` insert into `recommendations`, plus the degraded `system_log` row, in one transaction |
+| `RecommendationService` | orchestration: call, map, persist |
+
+Deliberate boundaries:
+
+- **Channel A is still absent.** `verdict`, `relevance_score`, `preference_score`,
+  `deciding_factors` and every figure in `computed` arrive as *input* on
+  `RecommendationInput`. Nothing here computes or second-guesses them, and the
+  verdict persisted is whatever the caller supplied (§7.1).
+- **The maturity gate (§8.3) is still not implemented.** Nothing in this package
+  checks evidence maturity before spending a call.
+- **No trigger.** No `@Scheduled`, no controller, no HTTP surface. The scheduled job
+  that will drive this calls `RecommendationService.assessAndPersist`.
+- **No JPA.** `spring-boot-starter-data-jpa` remains on the classpath and unused;
+  this package follows the `JdbcTemplate` precedent set by `RunStore` rather than
+  introducing the first `@Entity` for one write-once table.
+- `P*` refs are dropped at the persistence boundary — only `supporting_chunk_ids` /
+  `irrelevant_chunk_ids` are stored (§8.6).
+- A degraded response still persists the recommendation (verdict, scores,
+  deterministic factor analysis) with grade `-` and a null summary, and writes the
+  AI layer's ready-formed `system_log` row in the same transaction. A degraded
+  response carrying no `system_log` is treated as a contract violation and throws,
+  rather than silently losing the failure.
+
+Config added: `ai.service-url` / `ai.service-token` / `ai.timeout` in
+`application.properties`, bound to `AI_SERVICE_URL` / `AI_SERVICE_TOKEN` / `AI_TIMEOUT`.
+
+Two things the stub could not catch, found only by calling the real service — keep
+them in mind before changing the client:
+
+1. The JDK HTTP client defaults to HTTP/2 and attempts an h2c upgrade on cleartext.
+   uvicorn/h11 does not support it, the body is dropped, and FastAPI answers
+   `422 Field required, loc: body`. `RecommendationConfiguration` pins HTTP/1.1.
+2. `Content-Type: application/json` must be set explicitly, or FastAPI does not bind
+   the body at all — same misleading 422.
+
+Tests: `AssessContractTests` (no Spring context) pins the wire shape against
+`extra="forbid"`; `RecommendationPersistenceTests` runs the real client against a
+local `HttpServer` stub and asserts what lands in the database on the success,
+degraded, re-assessment and transport-failure paths. No live model call, no API cost.
 
 ---
 
@@ -1869,6 +1961,7 @@ OPENAI_API_KEY
 LLM_BASE_URL              # LLM_PROVIDER=custom only
 LLM_API_KEY               # LLM_PROVIDER=custom only
 AI_SERVICE_TOKEN          # shared secret Spring sends to POST /assess
+AI_SERVICE_URL            # where Spring reaches the AI service
 AI_PORT
 VECTOR_STORE              # local | pgvector
 EMBEDDER                  # must match what ingested the corpus (§18.2)

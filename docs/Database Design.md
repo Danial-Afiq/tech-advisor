@@ -239,7 +239,7 @@ The main persisted output of Tech Advisor. One row represents the system evaluat
 | `candidate_product_id` | Foreign key to the smartphone being evaluated as an upgrade. |
 | `trigger_event_id` | Optional foreign key to the market event that triggered reassessment. |
 | `verdict` | Final recommendation category, such as `NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, or `STRONG_UPGRADE_CANDIDATE`. |
-| `confidence` | Optional confidence score for the assessment. |
+| `confidence` | The A-F owner-evidence grade from the AI layer, or `-` when evidence is insufficient. Stored as text, **not** a probability - see AGENTS.md 14.11. |
 | `input_snapshot` | JSONB snapshot of important inputs used at generation time, including the affected owned device, its device-specific budget/priorities/urgency/pain points, candidate product, current price, calculated deltas, and other relevant context. |
 | `factor_analysis` | JSONB breakdown of how each factor affected the assessment and how important it was in the affected device's upgrade profile. |
 | `reasoning` | Plain-language explanation shown to the user. |
