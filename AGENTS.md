@@ -1678,18 +1678,29 @@ V1__create_users_table.sql
 V2__create_system_log.sql
 V3__anchor_daily_ingestion_schedule.sql
 V4__enable_pgvector.sql
-V5__create_review_corpus.sql
-V6__create_recommendations.sql
+V5__add_password_hash_to_users.sql
+V6__create_review_corpus.sql
+V7__create_recommendations.sql
 ```
 
-`V5` adds `review_documents` and `review_chunks`, including
+`V5` is owned by the authentication work and lands on `main` independently of the
+AI/RAG branches.
+
+`V6` adds `products`, `review_documents` and `review_chunks`, including
 `review_chunks.embedding vector(512)` and `review_chunks.embedder`.
 
-`V6` adds `recommendations` (§14.11). `user_id` and `candidate_product_id` carry real
+`V7` adds `recommendations` (§14.11). `user_id` and `candidate_product_id` carry real
 foreign keys; `current_device_id` and `trigger_event_id` are nullable `BIGINT` with
 **no** foreign key, because `user_devices` and `market_events` still do not exist.
 Whoever creates those tables adds the constraints in that migration, not by editing
-`V6`. A partial unique index keeps one `ACTIVE` row per `(user_id,
+`V7`.
+
+**Ordering is load-bearing.** `V7.recommendations.candidate_product_id` references
+`products`, which `V6` creates. The corpus migration must keep a lower version than
+the recommendations migration; renumbering one without the other fails on a fresh
+database with `relation "products" does not exist`, which is how CI sees it first.
+When a renumber is unavoidable, move the pair together and check §18.2 against
+`main` for the next free version. A partial unique index keeps one `ACTIVE` row per `(user_id,
 candidate_product_id)`; re-assessment supersedes the previous row.
 
 The `embedder` column is load-bearing, not bookkeeping: vectors from two different
@@ -2384,7 +2395,7 @@ Locked in, because it is baked into the image and the schema:
 ```text
 EMBEDDER       = model2vec
 model          = minishlab/potion-retrieval-32M
-EMBEDDING_DIM  = 512          # must equal vector(N) in migration V5
+EMBEDDING_DIM  = 512          # must equal vector(N) in migration V6
 ```
 
 Chosen because static embeddings need no GPU, no API key and no network at request

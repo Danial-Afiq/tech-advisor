@@ -6,7 +6,7 @@ Two implementations behind one interface:
   store standing in until pgvector is enabled. It starts empty.
 * `PgVectorStore` is the real one, built around `SEARCH_SQL` below. Selected
   with `VECTOR_STORE=pgvector`; requires the `vector` extension and the tables
-  from migration V5.
+  from migration V6.
 """
 
 from __future__ import annotations

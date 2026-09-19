@@ -395,7 +395,7 @@ Two implementations behind one interface, chosen with `VECTOR_STORE`.
 
 **`pgvector`** is the real one: `review_chunks` joined to `review_documents`,
 ranked by cosine distance with an HNSW index. Created by migrations
-`V4__enable_pgvector.sql` and `V5__create_review_corpus.sql`. Requires a
+`V4__enable_pgvector.sql` and `V6__create_review_corpus.sql`. Requires a
 Postgres image that ships the extension - `docker-compose.yml` uses
 `pgvector/pgvector`, because stock `postgres:17-alpine` does **not** have it
 and `CREATE EXTENSION vector` fails against it.

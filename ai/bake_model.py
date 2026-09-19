@@ -16,7 +16,7 @@ two reasons:
   is missing.
 
 The dimension is asserted here so a model swap cannot silently disagree with
-the vector(N) column in migration V5.
+the vector(N) column in migration V6.
 """
 
 from __future__ import annotations
