@@ -43,7 +43,24 @@ class Assessor:
 
     async def assess(self, request: AssessRequest) -> AssessResponse:
         k = request.retrieval.k or self.settings.k
-        chunks = self._retrieve(request, k)
+        try:
+            chunks = self._retrieve(request, k)
+        except Exception as exc:  # noqa: BLE001
+            # With pgvector, retrieval is a network call and can fail for
+            # reasons that have nothing to do with this request: the database
+            # is down, the pool is exhausted, the stored embeddings were
+            # produced by a different model. Section 10 says the user keeps
+            # the verdict and the deterministic analysis when the evidence
+            # path fails, so this degrades like any other failure rather than
+            # returning a 500 and losing the whole recommendation.
+            log.exception("retrieval failed request_id=%s", request.request_id)
+            return self._degraded(
+                request,
+                reason="RETRIEVAL_FAILED",
+                message="%s: %s" % (type(exc).__name__, exc),
+                retrieved_chunk_ids=[],
+                retry_count=0,
+            )
 
         if not chunks:
             # The maturity gate in Java should have caught this before the

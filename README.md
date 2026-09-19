@@ -389,52 +389,101 @@ ends; they are returned for debugging only.
   header; `|`, `[`, `]` and newlines are stripped so a source name cannot forge
   a passage header.
 
-### The stand-in vector store
+### Retrieval: the vector store
 
-pgvector is not enabled and `review_chunks` does not exist, so retrieval runs
-against `LocalVectorStore` — JSON files under `ai/data/vector_store/`.
+Two implementations behind one interface, chosen with `VECTOR_STORE`.
 
-`chunks.json` is committed there as **demo data**: five passages for product
-`812` (plus one for `999`, which must never be retrieved — it is what proves
-the `product_id` filter works). That is enough to exercise a real end-to-end
-`/assess` against a live model. Delete it to see the un-ingested behaviour: an
-empty store is a legitimate state, not a misconfiguration, and the service
-answers `-` for it.
+**`pgvector`** is the real one: `review_chunks` joined to `review_documents`,
+ranked by cosine distance with an HNSW index. Created by migrations
+`V4__enable_pgvector.sql` and `V5__create_review_corpus.sql`. Requires a
+Postgres image that ships the extension - `docker-compose.yml` uses
+`pgvector/pgvector`, because stock `postgres:17-alpine` does **not** have it
+and `CREATE EXTENSION vector` fails against it.
 
-The path is resolved against the `ai` package root, never the working
-directory — `/srv` in the container, which is where compose mounts the store.
-A CWD-relative path failed silently and expensively: started from the repo
-root it found no directory, retrieved nothing, and degraded every assessment
-to `-` with `NO_PASSAGES_RETRIEVED` and nothing in the logs explaining why.
+**`local`** reads `*.json` from `ai/data/vector_store/`, needs no database,
+and is the default for a fresh clone. `chunks.json` is committed there as demo
+data: five passages for product `812` plus one for `999` that must never be
+retrieved - it is what proves the `product_id` filter works. That filter is the
+difference between grading a phone on its own reviews and grading it on
+someone else's.
 
-To add more, drop another `*.json` file in that directory shaped the same way:
+The path resolves against the `ai` package root, never the working directory
+(`/srv` in the container, matching the compose mount). A CWD-relative path
+failed silently: started from the repo root it found nothing, retrieved
+nothing, and degraded every assessment to `-` with no error explaining why.
 
-```json
-[
-  {
-    "chunk_id": 4412,
-    "product_id": 812,
-    "source_name": "Reddit r/GalaxyS25",
-    "published_at": "2025-11-02",
-    "chunk_text": "Battery life has been noticeably worse since the update..."
-  }
-]
+#### Setting up pgvector locally
+
+```bash
+docker compose up -d postgres
+
+cd backend && ./mvnw flyway:migrate   -Dflyway.url=jdbc:postgresql://localhost:5434/techadvisor   -Dflyway.user=techadvisor -Dflyway.password=devpassword   -Dflyway.locations=filesystem:src/main/resources/db/migration
+
+cd ../ai && python -m scripts.ingest --truncate   # embeds + loads the corpus
 ```
 
-`published_at` may be null. `embedding` is optional and is computed on load when
-absent, so fixtures can be plain text.
+Then set `VECTOR_STORE=pgvector` in the root `.env`.
 
-`DeterministicEmbedder` is a hashed bag-of-words, not a semantic model. It ranks
-by shared vocabulary and understands nothing. **It must be replaced at the same
-moment the real store is wired in** — a chunk embedded by one model and a query
-embedded by another produce plausible nonsense rather than an error.
+`scripts/ingest.py` stands in for the real ingestion pipeline, which is the
+Java side's job (`docs/ingestion.md`). Re-running it is safe: documents and
+chunks are upserted rather than appended, because duplicated passages would
+quietly skew retrieval toward whatever was ingested twice.
 
-Switching over: enable the extension, create `review_chunks`, pick an embedding
-model, set its dimension on the column, swap the embedder, set
-`VECTOR_STORE=pgvector`. `PgVectorStore` and `SEARCH_SQL` already exist in
-`ai/app/retrieval/store.py` so the two paths cannot drift; the SQL keeps the
-mandatory `product_id` filter, without which passages about other phones get
-graded as if they described the candidate.
+#### Embeddings
+
+`minishlab/potion-retrieval-32M` via `model2vec`: 512 dimensions, local, free,
+no API key, and **no torch** - static embeddings are a token-to-vector lookup
+rather than a transformer forward pass, so a query embeds in single-digit
+milliseconds on CPU and the dependency is ~87 MB rather than ~2 GB.
+
+The previous `DeterministicEmbedder` is a hashed bag-of-words, kept for tests
+where determinism matters more than meaning. It is not good enough for real
+retrieval. Measured on the demo corpus, query *"how is the battery life after
+a few months of ownership"*:
+
+| passage | potion-retrieval | deterministic |
+| --- | --- | --- |
+| battery noticeably worse | **+0.493** | +0.224 |
+| eight months in, battery holds up | **+0.420** | +0.302 |
+| camera low light is a step up | +0.044 | +0.185 |
+| performance fine, gets warm | −0.004 | +0.167 |
+
+The stand-in barely separates a camera passage from a battery one. The
+semantic model separates them by roughly 10x.
+
+The model is **baked into the Docker image** at build time (`bake_model.py`,
+~126 MB at `/opt/model`) and `HF_HUB_OFFLINE=1` is set, so the container never
+reaches HuggingFace on the request path and works with no egress at all. Two
+non-obvious details, both load-bearing:
+
+- It is written as a **plain directory**, not into the HuggingFace cache. The
+  repo ships the weights twice (`model.safetensors` and `onnx/model.onnx`,
+  ~124 MB each) and model2vec only reads the safetensors - but deleting the
+  ONNX from the *cache* makes every later offline load fail with
+  `IncompleteSnapshotError`, because the hub verifies that every file in the
+  repo tree is present. A directory skips that check.
+- The embedder's **identity stays the repo id** even when loaded from
+  `/opt/model`. It is written to `review_chunks.embedder`, so if the container
+  reported `/opt/model` while a laptop reported the repo id, every
+  containerised query would trip `EmbedderMismatch` against a corpus ingested
+  from the host.
+
+**Both sides of a comparison must use the same embedder.** Vectors from two
+models share no space, and pgvector will compare them happily and return a
+confident, meaningless ranking - no error anywhere. `review_chunks.embedder`
+records which model produced each row and `PgVectorStore` checks it on every
+search, raising `EmbedderMismatch` rather than grading nonsense. Changing
+`EMBEDDER` means changing the `vector(N)` column width **and** re-running the
+ingestion script.
+
+#### When retrieval fails
+
+With pgvector, retrieval is a network call. A database outage, an exhausted
+pool or an embedder mismatch degrades the assessment to `-` with
+`degraded_reason: RETRIEVAL_FAILED` and a `system_log` row, exactly like a
+model failure - the user keeps the verdict and the deterministic factor
+analysis. It never returns a 500 and never fabricates a grade. Verified by
+killing the database mid-request.
 
 ### Model and provider configuration
 
@@ -770,7 +819,7 @@ identically started from `ai/` or from the repo root:
 Swagger UI is at `http://localhost:8000/docs`, health at `/health`.
 
 ```bash
-./.venv/Scripts/python.exe -m pytest        # 90 tests, no live model calls
+./.venv/Scripts/python.exe -m pytest        # 106 tests, no live model calls
 ```
 
 **What works without any API key.** The test suite, `/health`, `/docs` and the
@@ -1086,7 +1135,9 @@ overridable from the environment when you actually need to change one.
 | `POSTGRES_USER` | backend, compose | `techadvisor` | Fly secret (`SPRING_DATASOURCE_USERNAME`) |
 | `POSTGRES_PASSWORD` | backend, compose | `devpassword` | Fly secret (`SPRING_DATASOURCE_PASSWORD`) |
 | `DB_HOST` | backend | `localhost` | — (Fly uses the datasource URL) |
-| `DB_PORT` | backend, compose | `5433` | — |
+| `DB_PORT` | backend, compose | `5434` | — |
+| `VECTOR_STORE` | ai | `local` | not deployed yet |
+| `EMBEDDER` | ai | `model2vec` | not deployed yet |
 | `LLM_PROVIDER` | ai | `anthropic` | not deployed yet |
 | `LLM_MODEL` | ai | `claude-opus-5` | not deployed yet |
 | `ANTHROPIC_API_KEY` | ai | *(blank)* | not deployed yet |
@@ -1189,7 +1240,7 @@ Paid external AI calls should be mocked or replaced with deterministic test data
 
 ### AI layer tests
 
-`cd ai && ./.venv/Scripts/python.exe -m pytest` — 90 tests, **no live model
+`cd ai && ./.venv/Scripts/python.exe -m pytest` — 106 tests, **no live model
 calls**, no API key, no cost. They stub the model at two levels:
 
 - `ai/tests/conftest.py` replaces the whole `Llm` implementation, for testing
@@ -1203,6 +1254,12 @@ calls**, no API key, no cost. They stub the model at two levels:
   step-down between them, refusals, truncation, gateway errors, and the
   Anthropic request shape (cache breakpoint, effort, fallback betas, no
   sampling parameters).
+
+- `ai/tests/test_pgvector.py` is the only group needing a database. It
+  **skips** with an explicit reason when none is reachable (97 passed, 8
+  skipped on a laptop with nothing running) rather than silently passing
+  without touching Postgres. It writes to its own product ids and cleans up,
+  so it will not disturb the demo corpus.
 
 Plus configuration resolution from the root `.env`.
 

@@ -140,3 +140,23 @@ async def test_meta_records_retrieval_parameters(settings, store, assess_request
     assert response.meta.ai_model == "fake-model"
     assert response.meta.retrieval["chunk_char_cap"] == settings.chunk_char_cap
     assert response.meta.retrieval["vector_store"] == "local"
+
+
+async def test_retrieval_failure_degrades_rather_than_500(settings, assess_request):
+    """With pgvector the store is a network call. A database outage must not
+    cost the user the verdict and deterministic analysis they would otherwise
+    still get."""
+
+    class BrokenStore:
+        def search(self, product_id, query_embedding, k):
+            raise ConnectionError("pool timeout: database is not accepting connections")
+
+    llm = FakeLlm([])  # must never be reached
+    assessor = make_assessor(settings, BrokenStore(), llm)
+    response = await assessor.assess(assess_request)
+
+    assert response.evidence_grade == "-"
+    assert response.meta.degraded is True
+    assert response.meta.degraded_reason == "RETRIEVAL_FAILED"
+    assert "pool timeout" in response.system_log["message"]
+    assert llm.calls == []  # no money spent when there is nothing to grade

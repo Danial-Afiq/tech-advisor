@@ -80,10 +80,33 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 120.0
     llm_fallbacks_enabled: bool = True
 
-    # Retrieval
+    # --- Retrieval ------------------------------------------------------------
+    # "local" reads JSON files from disk; "pgvector" reads review_chunks.
     vector_store: str = "local"
     vector_store_path: str = "data/vector_store"
-    embedding_dim: int = 1536
+
+    # Which embedder produces query vectors. This MUST match whatever embedded
+    # the stored chunks - nothing downstream can detect a mismatch, it just
+    # returns confident nonsense. Ingestion stamps the name into
+    # review_chunks.embedder and startup verifies it.
+    embedder: str = "model2vec"
+    embedding_dim: int = 512
+    # Load the weights from this directory instead of the HuggingFace cache.
+    # The Docker image sets it; on a laptop it stays blank and the model is
+    # fetched and cached normally.
+    embedding_model_path: str = ""
+
+    # --- Database (pgvector only) ---------------------------------------------
+    # Field names match the root .env, which the backend and compose already
+    # use. Reading review_chunks means this service now holds database
+    # credentials, which it previously did not.
+    db_host: str = "localhost"
+    db_port: int = 5433
+    postgres_db: str = "techadvisor"
+    postgres_user: str = "techadvisor"
+    postgres_password: str = "devpassword"
+    # Set to override the five fields above with a single libpq URL.
+    database_url: str = ""
 
     # Guard rail described in the README: if the model declares more than this
     # fraction of the retrieved passages irrelevant, there was not enough
@@ -109,6 +132,22 @@ class Settings(BaseSettings):
                 return source_type
         return "UNKNOWN"
 
+
+    @property
+    def dsn(self) -> str:
+        """libpq connection string for the pgvector store."""
+        if self.database_url:
+            return self.database_url
+        return (
+            "host=%s port=%d dbname=%s user=%s password=%s"
+            % (
+                self.db_host,
+                self.db_port,
+                self.postgres_db,
+                self.postgres_user,
+                self.postgres_password,
+            )
+        )
 
     @property
     def resolved_vector_store_path(self) -> Path:

@@ -4,9 +4,9 @@ Two implementations behind one interface:
 
 * `LocalVectorStore` reads chunks from JSON files on disk. This is the dummy
   store standing in until pgvector is enabled. It starts empty.
-* `PgVectorStore` is the real one, built around `SEARCH_SQL` below. It is not
-  wired up yet because the `review_chunks` table and the vector extension do
-  not exist; the SQL is here so the two stores cannot drift apart.
+* `PgVectorStore` is the real one, built around `SEARCH_SQL` below. Selected
+  with `VECTOR_STORE=pgvector`; requires the `vector` extension and the tables
+  from migration V5.
 """
 
 from __future__ import annotations
@@ -23,13 +23,30 @@ from app.retrieval.embedder import Embedder, cosine_distance
 #: about other phones that happen to be semantically similar get retrieved and
 #: graded as if they described the candidate.
 SEARCH_SQL = """
-SELECT rc.id, rc.chunk_text, rd.published_at, rd.source_name
+SELECT rc.id, rc.chunk_text, rd.published_at, rd.source_name, rc.embedder
 FROM review_chunks rc
 JOIN review_documents rd ON rc.review_document_id = rd.id
 WHERE rd.product_id = %(product_id)s
-ORDER BY rc.embedding <=> %(query_embedding)s
+ORDER BY rc.embedding <=> %(query_embedding)s::vector
 LIMIT %(k)s
 """
+
+#: Distinct embedders present for one product. Used at startup and per search
+#: to catch the failure nothing else can: chunks embedded by one model being
+#: compared against a query embedded by another. pgvector compares the two
+#: happily and returns a confident, meaningless ranking.
+EMBEDDER_SQL = """
+SELECT DISTINCT rc.embedder
+FROM review_chunks rc
+JOIN review_documents rd ON rc.review_document_id = rd.id
+WHERE rd.product_id = %(product_id)s
+"""
+
+
+def to_pgvector(values: list[float]) -> str:
+    """pgvector's text input format. Sending a bare Python list makes psycopg
+    infer a Postgres array, which `<=>` will not accept."""
+    return "[" + ",".join(repr(float(v)) for v in values) + "]"
 
 
 @dataclass(frozen=True)
@@ -103,35 +120,60 @@ class LocalVectorStore:
         return candidates[:k]
 
 
-class PgVectorStore:
-    """Real store. Unused until the vector extension and `review_chunks` exist.
+class EmbedderMismatch(RuntimeError):
+    """Stored chunks were embedded by a different model than the one
+    embedding queries. Retrieval would still return rows - wrong ones."""
 
-    Kept in the tree so `SEARCH_SQL` has exactly one definition and the switch
-    is a config change rather than a rewrite.
+
+class PgVectorStore:
+    """The real store, over a psycopg connection pool.
+
+    A pool rather than one long-lived connection: the service is long-running
+    and a single connection dropped by the server would take every subsequent
+    assessment down with it.
     """
 
-    def __init__(self, connection: Any) -> None:
-        self.connection = connection
+    def __init__(self, pool: Any, embedder_name: str = "") -> None:
+        self.pool = pool
+        self.embedder_name = embedder_name
 
     def search(
         self, product_id: int, query_embedding: list[float], k: int
     ) -> list[Chunk]:
-        with self.connection.cursor() as cursor:
-            cursor.execute(
-                SEARCH_SQL,
-                {
-                    "product_id": product_id,
-                    "query_embedding": query_embedding,
-                    "k": k,
-                },
-            )
-            return [
-                Chunk(
-                    chunk_id=row[0],
-                    product_id=product_id,
-                    chunk_text=row[1],
-                    published_at=row[2].date() if row[2] else None,
-                    source_name=row[3],
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    SEARCH_SQL,
+                    {
+                        "product_id": product_id,
+                        "query_embedding": to_pgvector(query_embedding),
+                        "k": k,
+                    },
                 )
-                for row in cursor.fetchall()
-            ]
+                rows = cursor.fetchall()
+
+        for row in rows:
+            stored = row[4]
+            if self.embedder_name and stored != self.embedder_name:
+                raise EmbedderMismatch(
+                    "review_chunks were embedded by %r but queries are "
+                    "embedded by %r. Re-run the ingestion script."
+                    % (stored, self.embedder_name)
+                )
+
+        return [
+            Chunk(
+                chunk_id=row[0],
+                product_id=product_id,
+                chunk_text=row[1],
+                published_at=row[2],
+                source_name=row[3],
+            )
+            for row in rows
+        ]
+
+    def embedders_for(self, product_id: int) -> list[str]:
+        with self.pool.connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(EMBEDDER_SQL, {"product_id": product_id})
+                return [row[0] for row in cursor.fetchall()]

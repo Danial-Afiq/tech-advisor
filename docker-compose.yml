@@ -36,7 +36,18 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL}
       LLM_API_KEY: ${LLM_API_KEY}
       AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN}
-      VECTOR_STORE: local
+      VECTOR_STORE: ${VECTOR_STORE:-local}
+      EMBEDDER: ${EMBEDDER:-model2vec}
+      # Reaches postgres over the compose network by service name, so the
+      # host port mapping (5433) is irrelevant in here.
+      DB_HOST: postgres
+      DB_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "${AI_PORT:-8000}:8000"
     volumes:
