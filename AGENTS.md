@@ -1983,9 +1983,25 @@ The AI service's remaining tuning knobs (`K`, `CHUNK_CHAR_CAP`, `MAX_RETRIES`,
 `ai/app/config.py` rather than `.env` entries. Set them in the environment only to
 override a default.
 
-**Known inconsistency:** `.env.example` ships `DB_PORT=5434`, while
-`docker-compose.yml` defaults to `5433` and the table in §19 says `5433`. Confirm
-which the team intends before relying on either.
+**`DB_PORT` still differs between files** — `.env.example` ships `5434`,
+`docker-compose.yml` falls back to `5433`, and §19's table says `5433`. The team
+should still settle on one. It is no longer a silent trap, though:
+`application.properties` now does
+`spring.config.import=optional:file:../.env[.properties]`, so the backend reads the
+repo-root `.env` on the host and follows whatever `DB_PORT` you set there.
+
+Before that import existed, the claim in `.env.example` that the backend reads that
+file "via application.properties placeholders" was simply false: placeholders
+resolve from the environment, not from the file. A plain `mvnw test` therefore fell
+back to the `5433` default and hit whatever Postgres happened to be there — on a
+machine with a second, non-pgvector Postgres on `5433`, every database-backed test
+failed with `extension "vector" is not available`.
+
+Precedence is unchanged where it matters: real environment variables still outrank
+the file, so CI (which exports `DB_HOST`/`DB_PORT`/`POSTGRES_DB` and has no `.env`)
+and the Fly.io image are unaffected — `optional:` simply skips the missing file.
+`backend/pom.xml` pins `POSTGRES_DB=techadvisor_test` for the test phase only, so
+`mvnw test` can never run against the development database.
 
 ## 20.2 Frontend
 

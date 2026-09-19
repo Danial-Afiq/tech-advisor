@@ -28,6 +28,8 @@
 	</scm>
 	<properties>
 		<java.version>21</java.version>
+		<!-- Test database name; must end in _test. -->
+		<POSTGRES_DB>techadvisor_test</POSTGRES_DB>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -97,6 +99,23 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<!--
+						Tests delete rows, and both integration test classes refuse to run
+						unless the database name ends in _test. Host, port and credentials
+						come from the repo-root .env (or real environment variables in CI);
+						only the database name is pinned here, so a plain `mvnw test` can
+						never touch the development database. Override with
+						-DPOSTGRES_DB=... if you use a different test database.
+					-->
+					<systemPropertyVariables>
+						<POSTGRES_DB>${POSTGRES_DB}</POSTGRES_DB>
+					</systemPropertyVariables>
+				</configuration>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
