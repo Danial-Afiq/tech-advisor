@@ -1683,8 +1683,9 @@ V6__create_review_corpus.sql
 V7__create_recommendations.sql
 ```
 
-`V5` is owned by the authentication work and lands on `main` independently of the
-AI/RAG branches.
+`V5` comes from the authentication feature. It makes `users.password_hash` **NOT
+NULL**, so every seed, fixture or test that inserts a user must supply the column -
+including tests owned by unrelated features.
 
 `V6` adds `products`, `review_documents` and `review_chunks`, including
 `review_chunks.embedding vector(512)` and `review_chunks.embedder`.
@@ -1693,15 +1694,21 @@ AI/RAG branches.
 foreign keys; `current_device_id` and `trigger_event_id` are nullable `BIGINT` with
 **no** foreign key, because `user_devices` and `market_events` still do not exist.
 Whoever creates those tables adds the constraints in that migration, not by editing
-`V7`.
+`V7`. A partial unique index keeps one `ACTIVE` row per `(user_id,
+candidate_product_id)`; re-assessment supersedes the previous row.
 
 **Ordering is load-bearing.** `V7.recommendations.candidate_product_id` references
 `products`, which `V6` creates. The corpus migration must keep a lower version than
 the recommendations migration; renumbering one without the other fails on a fresh
 database with `relation "products" does not exist`, which is how CI sees it first.
 When a renumber is unavoidable, move the pair together and check §18.2 against
-`main` for the next free version. A partial unique index keeps one `ACTIVE` row per `(user_id,
-candidate_product_id)`; re-assessment supersedes the previous row.
+`main` for the next free version.
+
+**CI tests a merge preview, not your branch.** The `pull_request` trigger builds your
+branch merged into `main`, so it sees migrations and NOT NULL constraints that a
+branch behind `main` does not have locally. A green local run and a red CI run on the
+same commit usually means the branch needs `main` merged in - do that before
+debugging the failure itself.
 
 The `embedder` column is load-bearing, not bookkeeping: vectors from two different
 models share no space, and comparing across them returns a confident, meaningless

@@ -81,8 +81,14 @@ class RecommendationPersistenceTests {
         db.update("DELETE FROM users WHERE email LIKE 'recommendation-test%'");
         db.update("DELETE FROM products WHERE brand = 'TestBrand'");
 
+        // password_hash is NOT NULL from V5, which the authentication feature owns.
+        // These tests never authenticate as this user - the fixture only needs a row
+        // to hang recommendations off - so the column gets a placeholder that is
+        // deliberately not a valid encoded hash and can never verify against input.
         userId = db.queryForObject(
-                "INSERT INTO users (email, role) VALUES ('recommendation-test@example.com','USER') RETURNING id",
+                "INSERT INTO users (email, role, password_hash) "
+                        + "VALUES ('recommendation-test@example.com','USER','{noop}not-a-real-hash') "
+                        + "RETURNING id",
                 Long.class);
         productId = db.queryForObject(
                 "INSERT INTO products (brand, model_name, release_date) "
