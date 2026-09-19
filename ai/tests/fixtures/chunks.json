@@ -1,0 +1,37 @@
+[
+  {
+    "chunk_id": 4412,
+    "product_id": 812,
+    "source_name": "Reddit r/GalaxyS25",
+    "published_at": "2025-11-02",
+    "chunk_text": "Battery life has been noticeably worse since the November update. I get through maybe six hours of screen time now, down from eight when I bought it."
+  },
+  {
+    "chunk_id": 4418,
+    "product_id": 812,
+    "source_name": "GSMArena",
+    "published_at": "2025-02-10",
+    "chunk_text": "Camera quality in low light is a clear step up over the previous generation, with much less noise in night mode shots."
+  },
+  {
+    "chunk_id": 4420,
+    "product_id": 812,
+    "source_name": "Amazon verified purchase",
+    "published_at": "2025-09-14",
+    "chunk_text": "Eight months in and the battery still holds up through a full day of photography and gaming. No complaints on longevity so far."
+  },
+  {
+    "chunk_id": 4425,
+    "product_id": 812,
+    "source_name": "XDA forums",
+    "published_at": null,
+    "chunk_text": "Performance is fine for gaming but the phone gets warm during long sessions."
+  },
+  {
+    "chunk_id": 9001,
+    "product_id": 999,
+    "source_name": "Reddit r/Pixel",
+    "published_at": "2025-08-01",
+    "chunk_text": "Battery on this Pixel is terrible, it barely lasts until lunchtime even with light use."
+  }
+]

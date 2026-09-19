@@ -23,6 +23,29 @@ Additional rules:
 4. When proposing a major architectural or schema change, compare it against `AGENTS.md` first and call out any conflict.
 5. If a project decision changes, update `AGENTS.md` alongside the related implementation/docs where practical.
 
+## Working in the Python AI layer (`ai/`)
+
+See `AGENTS.md` §5.4, §13.5 and §18.7 for what this service is and its current state.
+
+Practical rules for this directory:
+
+1. **Use the venv.** `ai/.venv/Scripts/python.exe` on Windows. A bare `python` will
+   not have `pydantic`, `fastapi` or `model2vec` and fails on import.
+2. **Never spend API credits without explicit permission.** `python -m
+   scripts.manual_eval` makes one billed live model call per non-degraded case
+   against the key in the root `.env`. Ask first, every time — approval for one run
+   is not approval for the next. `ai/tests/` is mocked and always free to run.
+3. **`EMBEDDER` must match what ingested the corpus.** A mismatch does not error at
+   the vector level, it returns confidently ranked nonsense. `DeterministicEmbedder`
+   is a test stand-in only and must never touch a real corpus.
+4. **The model does not decide the verdict**, and it does not decide whether evidence
+   is sufficient. Both are code's job. If a change would move either judgement into
+   the prompt, stop and raise it.
+5. **Do not assert on a specific letter grade** in tests or docs. The same corpus can
+   produce an adjacent grade on a rerun (`AGENTS.md` §13.5).
+6. **Closed vocabularies live in `ai/app/factors.py`.** Changing a factor means
+   changing the Java preference vocabulary, validation and tests together.
+
 ## Mandatory pre-review / pre-merge maintenance
 
 Before handing a completed feature/task to the user for review, PR, or merge:
