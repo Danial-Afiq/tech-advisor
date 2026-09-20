@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 18 September 2026
+> **Last consolidated:** 20 September 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -151,9 +151,9 @@ A personalised technology upgrade recommender that answers:
 
 The product monitors changing technology/market conditions and reassesses whether a newer device or component is actually meaningful for a specific user's current setup, budget, priorities, pain points, and usage.
 
-The original broad vision included smartphones and PC hardware. The **current database design and implementation focus are smartphone-first**. PC/GPU support remains a future/expanded scope and appears in some older Jira/Architecture text.
+The current product and recommendation implementation remains **smartphone-first**. The canonical Sprint 1 database foundation nevertheless uses a generic `products` supertype with disjoint `phone` and `gpu` subtype tables so later category work does not require another product-identity model. GPU application flows remain future scope.
 
-Do not prematurely force GPU-specific fields into the smartphone-first core schema.
+Do not treat the presence of the `gpu` table as evidence that GPU ingestion, recommendation logic, or UI is implemented.
 
 ## 1.2 Core product behaviour
 
@@ -479,6 +479,33 @@ If the candidate has no meaningful path for this owned device/user:
 - return `NO_MEANINGFUL_CHANGE`,
 - do not retrieve/grade owner reviews,
 - do not spend an LLM call.
+
+### Deterministic candidate shortlisting - IMPLEMENTED (SCRUM-34)
+
+Before any of the above runs, the catalogue is reduced to a compatible and
+affordable candidate set by `recommendation/CandidatePruningService`, backed by
+`ProductRepository.findCompatibleCandidates(...)`.
+
+Rules, all enforced in SQL:
+- candidate `products.category` equals the owned device's category,
+- the product's **latest** `price_history` observation is `<=`
+  `device_preferences.budget` (inclusive),
+- the currently owned `product_id` is excluded,
+- products with **no** price history are excluded - affordability cannot be
+  verified, so they are not candidates,
+- products with `status <> 'VERIFIED'` are excluded.
+
+"Latest price" is `DISTINCT ON (product_id) ... ORDER BY product_id,
+observed_at DESC, id DESC`. The `id DESC` tiebreaker is required: without it two
+observations sharing an `observed_at` resolve arbitrarily and the step stops
+being reproducible.
+
+This step performs **no** embeddings, retrieval or model calls, and must stay
+that way - bounding the candidate set is what bounds every downstream AI cost.
+
+**Nothing populates these tables yet.** Ingestion still writes only to
+`system_log`, so the filter is exercised by tests and seeded data. Wiring a
+real source into the catalogue is separate work (Epic 01), not part of this.
 
 ## 7.2 Channel B — owner evidence grade
 
@@ -1025,11 +1052,11 @@ Do **not** wait for final production scraping sources before testing this layer.
 
 ---
 
-# 14. Database design — canonical 12-table target
+# 14. Database design — canonical 13-table Sprint 1 schema
 
-Current database design is **smartphone-focused** and intentionally keeps 12 core tables.
+The canonical schema keeps a generic product identity and category-specific `phone` / `gpu` subtype tables. Current application behaviour is still smartphone-first.
 
-The current codebase has not yet implemented all 12 tables. See §18 for actual migration state.
+The schema is implemented by V1-V6 on the schema-reconciliation branch. See §18 for the migration inventory.
 
 ## 14.1 `users`
 
@@ -1118,12 +1145,13 @@ Canonical field is **`release_date`**.
 Current core category:
 - `SMARTPHONE`
 
-## 14.5 `smartphone_specs`
+## 14.5 `phone`
 
 Fields:
 - `product_id`
 - `chipset`
 - `ram_gb`
+- `cpu_ghz`
 - `storage_gb`
 - `battery_mah`
 - `wired_charging_watts`
@@ -1131,12 +1159,31 @@ Fields:
 - `display_size_inches`
 - `refresh_rate_hz`
 - `weight_g`
+- `camera_specs`
+- `pixel_density`
+- `ip_rating`
 - `os`
 - `software_support_years`
 
 These are deterministic facts. Spring Boot should calculate differences.
 
-## 14.6 `price_history`
+## 14.6 `gpu`
+
+Fields:
+- `product_id`
+- `core_count`
+- `clock_speeds`
+- `vram`
+- `bus_width`
+- `memory_speed`
+- `total_bandwidth`
+- `pixel_fillrate`
+- `texture_fillrate`
+- `tgp`
+
+The table establishes the disjoint GPU subtype shape. GPU ingestion, recommendation logic, APIs, and UI are not yet implemented.
+
+## 14.7 `price_history`
 
 Fields:
 - `id`
@@ -1148,7 +1195,7 @@ Fields:
 
 Stores observations over time, not just one mutable current price.
 
-## 14.7 `benchmark_results`
+## 14.8 `benchmark_results`
 
 Fields:
 - `id`
@@ -1160,7 +1207,7 @@ Fields:
 - `source`
 - `observed_at`
 
-## 14.8 `market_events`
+## 14.9 `market_events`
 
 Fields:
 - `id`
@@ -1182,7 +1229,7 @@ Examples:
 
 A market event can trigger recommendation reassessment.
 
-## 14.9 `review_documents`
+## 14.10 `review_documents`
 
 Source-level review/article/forum item.
 
@@ -1199,7 +1246,7 @@ Important distinction:
 - `published_at` = age of external evidence
 - `ingested_at` = when Tech Advisor imported it
 
-## 14.10 `review_chunks`
+## 14.11 `review_chunks`
 
 Fields:
 - `id`
@@ -1207,14 +1254,16 @@ Fields:
 - `chunk_index`
 - `chunk_text`
 - `embedding`
+- `embedder`
 - `created_at`
 
 Current plan:
 - no LLM-generated factor tags at ingestion,
 - retrieval is semantic,
-- embedding dimension depends on chosen embedding model.
+- V6 uses `vector(512)` for the currently configured Sprint 1 embedder,
+- `embedder` records the model used so query-time retrieval can reject mismatches.
 
-## 14.11 `recommendations`
+## 14.12 `recommendations`
 
 Fields:
 - `id`
@@ -1280,7 +1329,7 @@ Keep deterministic and model evidence separate:
 
 Never collapse these into one opaque score.
 
-## 14.12 `system_log`
+## 14.13 `system_log`
 
 Fields:
 - `id`
@@ -1307,7 +1356,8 @@ users 1 ── N user_devices
 user_devices 1 ── 1 device_preferences
 
 products 1 ── N user_devices
-products 1 ── 1 smartphone_specs
+products 1 ── 0..1 phone
+products 1 ── 0..1 gpu
 products 1 ── N price_history
 products 1 ── N benchmark_results
 products 1 ── N market_events
@@ -1329,7 +1379,7 @@ user_devices
 device_preferences
   budget / priorities / urgency / pain points
         +
-products + smartphone_specs
+products + phone
   candidate facts
         +
 price_history + benchmark_results
@@ -1532,13 +1582,17 @@ V1__create_users_table.sql
 V2__create_system_log.sql
 V3__anchor_daily_ingestion_schedule.sql
 V4__enable_pgvector.sql
+V5__add_password_hash_to_users.sql
+V6__create_sprint_1_schema.sql
 ```
 
 Therefore:
-- the **12-table database design is target architecture**,
-- it is **not yet fully implemented in migrations on main**.
+- V1-V5 retain their original history,
+- V6 is the one canonical Sprint 1 domain migration,
+- the full 13-table foundation is represented exactly once,
+- feature branches must remove their competing V6/V7 schema migrations when rebased onto this migration.
 
-Do not tell a teammate/assistant “all 12 tables already exist.”
+This V6 is currently on the schema-reconciliation branch and is not on `main` until its PR is reviewed and merged.
 
 ## 18.3 Frontend currently contains
 Known files include:
@@ -2076,9 +2130,33 @@ Because the current “confidence” concept has become an evidence grade, notif
 Do not blindly reuse old “confidence > x” wording.
 
 ## 27.8 PC/GPU expansion
-The long-term concept can support PC components/peripherals, but the current 12-table DB is smartphone-first.
+The canonical V6 now includes the generic `products` table and a `gpu` subtype table alongside `phone`.
 
-Avoid expanding schema prematurely during Sprint 1 unless the team explicitly reprioritises.
+This is schema readiness only. GPU ingestion, business logic, recommendation rules, APIs, and UI remain future work and must not be presented as implemented.
+
+## 27.9 Currency handling in the budget gate - ASSUMPTION, NOT A DECISION
+
+Candidate shortlisting compares `device_preferences.budget` against
+`price_history.price` as **bare numbers, with no conversion**, on the assumption
+that the system runs in a single currency.
+
+That assumption is not enforced anywhere upstream: the ingestion `Price` payload
+accepts any ISO 4217 code. `CandidatePruningService` therefore logs a warning
+when a candidate's currency differs from the budget's, rather than converting -
+converting would mean inventing an exchange rate.
+
+`currency` columns exist and are persisted on both tables, so this can be made
+real later without a migration. **Do not read the current implementation as a
+team decision that the product is single-currency.**
+
+## 27.10 `device_preferences.budget` is NOT NULL - decided here, flagged onward
+
+Resolved by SCRUM-34: the budget ceiling is the entire basis of candidate
+shortlisting, so a preferences row without one cannot be evaluated.
+
+**Flag for SCRUM-20 (device inventory management):** the preferences UI must
+always collect a budget. If the product decides a budget should be optional,
+relax the constraint in a later migration rather than editing V6.
 
 ---
 
@@ -2444,12 +2522,11 @@ Not in current agreed baseline.
 
 ## 38.4 More hardware categories
 Later:
-- GPUs
 - laptops
 - monitors/TVs
 - keyboards/mice/peripherals
 
-Do not force these into Sprint 1 schema unless deliberately reprioritised.
+The GPU subtype schema exists, but GPU product behaviour is also still future work. Do not add further category tables during Sprint 1 unless deliberately reprioritised.
 
 ---
 
@@ -2529,7 +2606,7 @@ Recommended doc cleanup:
 
 If only reading one section, read this:
 
-> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. Final live ingestion sources are still not fully confirmed, so source adapters must remain replaceable.
+> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203, backed by a generic product catalogue with `phone` and `gpu` subtype tables for schema evolution. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. Final live ingestion sources are still not fully confirmed, so source adapters must remain replaceable.
 
 ---
 
