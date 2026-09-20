@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir .
 #
 # EMBEDDING_MODEL must match app.retrieval.embedder.MODEL2VEC_MODEL. The build
 # asserts the dimension, so a model swap cannot silently disagree with the
-# vector(512) column in migration V5. EMBEDDING_DIM is read by pydantic
+# vector(512) column in canonical migration V6. EMBEDDING_DIM is read by pydantic
 # Settings at runtime too, which keeps the two in step by construction.
 #
 # EMBEDDING_MODEL_PATH makes the weights a plain directory rather than a

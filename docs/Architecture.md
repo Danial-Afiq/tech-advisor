@@ -4,6 +4,10 @@
 
 **Document Status:** Draft Baseline
 
+> Historical reference only: this baseline predates the current decisions in
+> `AGENTS.md` and the canonical V6 schema. Where they conflict, `AGENTS.md` and
+> the implemented migrations are authoritative.
+
 **Last Updated:** Sep 14, 2026 (Week 4 Initialization)
 
 **Target Graded Milestone:** Week 7 Midterm Evaluation (10%)
@@ -125,7 +129,7 @@ Beyond being the correct thing to do, this is cheap credit in the demo Q&A: "how
 **3.3 Data Sanitization & Quarantine Flow**
 
 ```
-[Raw Scraped Payloads] ➔ [Sanitization Interceptor Interception] 
+[Raw Scraped Payloads] ➔ [Sanitization Interceptor Interception]
                              │
                              ├─── Valid / Schema Match ───> [ relational Product Tables ]
                              │
@@ -171,7 +175,7 @@ They are computed independently and may legitimately disagree. A spec-sheet-stro
 
 **4.2.1 Preference gate (multiplicative, 0…1)**
 
-Preference expresses how closely a product relates to this specific user: what they own, which slots they are willing to upgrade, and what they might want to add. 
+Preference expresses how closely a product relates to this specific user: what they own, which slots they are willing to upgrade, and what they might want to add.
 
 Inputs: owned inventory, per-slot upgrade willingness weights, declared expansion interests, and a hard compatibility check.
 
@@ -313,7 +317,7 @@ Every feature branch must clear automated repository blocks prior to code mergin
 - **Branch Standard:**
 
 ```
-feat-[TicketNumber]-[ShortTicketName] 
+feat-[TicketNumber]-[ShortTicketName]
 ```
 
   The `[TicketNumber]` is the Jira issue key, so every branch traces back to a tracked backlog item.

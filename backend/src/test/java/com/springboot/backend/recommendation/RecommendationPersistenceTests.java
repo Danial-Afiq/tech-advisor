@@ -163,7 +163,7 @@ class RecommendationPersistenceTests {
         assertEquals("claude-opus-5", row.get("ai_model"));
         assertEquals("v1", row.get("prompt_version"));
         assertEquals("ACTIVE", row.get("status"));
-        assertNull(row.get("current_device_id"), "no user_devices table exists yet to point at");
+        assertNull(row.get("current_device_id"), "the current caller did not supply an owned-device ID");
 
         Map<String, Object> factors = jsonColumn(id, "factor_analysis");
         assertEquals(

@@ -43,7 +43,7 @@ def _pool_or_skip() -> Any:
             with conn.cursor() as cur:
                 cur.execute("SELECT to_regclass('public.review_chunks')")
                 if cur.fetchone()[0] is None:
-                    pytest.skip("review_chunks does not exist; run migrations V4+V5")
+                    pytest.skip("review_chunks does not exist; run migrations V4+V6")
     except Exception as exc:  # noqa: BLE001 - any connection problem means skip
         pytest.skip(f"no database reachable at {settings.db_host}:{settings.db_port} ({exc})")
 

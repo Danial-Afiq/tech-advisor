@@ -10,7 +10,7 @@ import java.util.Map;
  * ticket, so this service takes its output as input rather than computing it.
  *
  * {@code deterministicFactors} becomes {@code factor_analysis.deterministic}
- * (AGENTS.md §14.11) - also caller-supplied for the same reason.
+ * (AGENTS.md §14.12) - also caller-supplied for the same reason.
  */
 public record RecommendationInput(
         long userId,

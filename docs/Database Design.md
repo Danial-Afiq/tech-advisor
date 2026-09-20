@@ -1,15 +1,15 @@
 # Database Design (From Confluence)
 
-# Database Design — Core 12-Table Schema
+# Database Design — Core 13-Table Schema
 
-This document defines the initial database design for the smartphone-focused Tech Advisor. It covers the 12 core tables required to support user accounts, owned-device tracking, **device-specific upgrade preferences**, smartphone product data, changing market information, RAG-based review retrieval, personalised upgrade recommendations, and ingestion observability.
+This document defines the canonical Sprint 1 database design for Tech Advisor. It covers the 13 core tables required to support user accounts, owned-device tracking, **device-specific upgrade preferences**, a generic product catalogue with `phone` and `gpu` subtypes, changing market information, RAG-based review retrieval, personalised upgrade recommendations, and ingestion observability.
 
-**Scope:** This remains the core 12-table design targeted for the current implementation phase. Personalisation has been revised so upgrade preferences belong to an owned device rather than to the user globally. The previous `user_profiles` table is therefore replaced by `device_preferences`, keeping the core schema at 12 tables. Account-wide settings such as notifications can be added later when those features are implemented.
+**Scope:** The current application behaviour remains smartphone-first. The database foundation includes disjoint category-specific `phone` and `gpu` subtype tables; GPU ingestion, recommendation logic, APIs, and UI are not yet implemented. Personalisation belongs to an owned device through `device_preferences`, not to a user-global profile.
 
 ## Design goals
 
 - Keep the Sprint 1 schema small enough to implement and understand.
-- Support smartphones first without prematurely modelling GPU or desktop-specific data.
+- Support smartphone-first application work while establishing explicit phone/GPU subtype boundaries in the shared catalogue.
 - Make the affected owned device, its current condition/use, its device-specific upgrade budget and priorities, candidate product data, price and benchmark differences, and retrieved review evidence available to the AI assessment.
 - Use structured columns for facts that the backend must calculate or compare deterministically.
 - Use JSONB only where the shape is flexible, such as per-device priority weights, use cases, pain points, input snapshots, and factor analysis.
@@ -18,7 +18,7 @@ This document defines the initial database design for the smartphone-focused Tec
 
 ## Entity-Relationship Model
 
-The relationship model below reflects the revised 12-table core schema. The key change is `users → user_devices → device_preferences`: a user may own several devices, and each owned device can have its own upgrade profile.
+The relationship model below reflects the 13-table core schema. A user may own several devices, and each owned device can have its own upgrade profile through `users → user_devices → device_preferences`.
 
 ## 1. User Account & Personalisation
 
@@ -88,7 +88,7 @@ Represents the smartphone devices owned by a user. The recommendation engine use
 | `created_at` | When the device was added to the user's inventory. |
 | `updated_at` | When the inventory record was last modified. |
 
-A catalogue-linked device uses `products` and `smartphone_specs` as its technical baseline. `spec_overrides` prevents the system from changing the global catalogue merely because one user's exact configuration differs. Its one-to-one `device_preferences` row then answers a different question: *what would make replacing this owned device worthwhile for this user?*
+A catalogue-linked smartphone uses `products` and `phone` as its technical baseline. `spec_overrides` prevents the system from changing the global catalogue merely because one user's exact configuration differs. Its one-to-one `device_preferences` row then answers a different question: *what would make replacing this owned device worthwhile for this user?*
 
 ## 3. Product Catalogue
 
@@ -107,7 +107,7 @@ The master list of products known to Tech Advisor. For the current scope, these 
 | `created_at` | When the product was added to the catalogue. |
 | `updated_at` | When the product metadata was last changed. |
 
-### `smartphone_specs`
+### `phone`
 
 Stores structured, typed smartphone specifications. These fields are deliberately kept separate from `products` so product identity and category-specific technical data do not become one oversized table.
 
@@ -116,6 +116,7 @@ Stores structured, typed smartphone specifications. These fields are deliberatel
 | `product_id` | Primary key and foreign key to `products.id`. One specification row belongs to one product. |
 | `chipset` | Processor/System-on-Chip model. |
 | `ram_gb` | RAM capacity in gigabytes. |
+| `cpu_ghz` | CPU clock value when available. |
 | `storage_gb` | Storage capacity in gigabytes. |
 | `battery_mah` | Battery capacity in milliamp-hours. |
 | `wired_charging_watts` | Maximum wired charging power when known. |
@@ -123,10 +124,30 @@ Stores structured, typed smartphone specifications. These fields are deliberatel
 | `display_size_inches` | Display size in inches. |
 | `refresh_rate_hz` | Display refresh rate, for example 60 Hz or 120 Hz. |
 | `weight_g` | Device weight in grams. |
+| `camera_specs` | Camera specification summary when available. |
+| `pixel_density` | Display pixel density when available. |
+| `ip_rating` | Ingress-protection rating when available. |
 | `os` | Operating system/platform information. |
 | `software_support_years` | Declared years of software support when available. |
 
 The backend should use structured fields like these to calculate exact differences. For example, a battery capacity change or refresh-rate difference should be calculated deterministically and then provided to the AI as trusted context rather than asking the model to perform basic arithmetic.
+
+### `gpu`
+
+Stores structured GPU-specific facts for catalogue products whose category is GPU. Its presence establishes the subtype boundary; GPU application flows remain future work.
+
+| Column | Purpose |
+| --- | --- |
+| `product_id` | Primary key and foreign key to `products.id`. |
+| `core_count` | GPU core count when available. |
+| `clock_speeds` | Recorded clock-speed value. |
+| `vram` | Video-memory capacity. |
+| `bus_width` | Memory-bus width. |
+| `memory_speed` | Memory-speed value. |
+| `total_bandwidth` | Total memory bandwidth. |
+| `pixel_fillrate` | Pixel fill-rate value. |
+| `texture_fillrate` | Texture fill-rate value. |
+| `tgp` | Total graphics power. |
 
 ## 4. Market Data & Change Detection
 
@@ -307,7 +328,8 @@ Example metadata:
 | `users` 1 → N `user_devices` | A user can own multiple devices. |
 | `user_devices` 1 → 1 `device_preferences` | Each owned device can have its own upgrade budget, priorities, urgency, brand flexibility, and pain points. |
 | `products` 1 → N `user_devices` | Many users may own the same catalogue model; the reference is optional for manual devices. |
-| `products` 1 → 1 `smartphone_specs` | Each smartphone catalogue product has one structured specification record. |
+| `products` 1 → 0..1 `phone` | A phone catalogue product may have one structured phone specification record. |
+| `products` 1 → 0..1 `gpu` | A GPU catalogue product may have one structured GPU specification record. |
 | `products` 1 → N `price_history` | A product can have many historical price observations. |
 | `products` 1 → N `benchmark_results` | A product can have many benchmark observations. |
 | `products` 1 → N `market_events` | A product may experience many detected real-world changes. |
@@ -330,7 +352,7 @@ user_devices
 device_preferences
   this device's budget + priorities + urgency + pain points
           +
-products + smartphone_specs
+products + phone
   candidate phone and structured differences
           +
 price_history + benchmark_results
@@ -356,4 +378,4 @@ The intended division of responsibility is:
 
 ## Flyway evolution
 
-This 12-table design is the core foundation. Additional tables should be introduced only when their corresponding application features are implemented, rather than creating the entire future schema upfront.
+This 13-table design is the canonical Sprint 1 foundation implemented by V1-V6. Additional tables should be introduced only when their corresponding application features are implemented.
