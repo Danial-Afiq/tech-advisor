@@ -1,0 +1,39 @@
+{
+  "request_id": "manual-701-positive",
+  "user_context": {
+    "owned_device": {
+      "name": "Pixel 8",
+      "device_age_months": 24,
+      "condition": "FAIR",
+      "satisfaction_score": 55,
+      "use_cases": ["general use", "photography"]
+    },
+    "preferences": {
+      "budget": 1000,
+      "currency": "SGD",
+      "upgrade_urgency": "SOMEWHAT_URGENT",
+      "brand_flexibility": "FLEXIBLE",
+      "priorities": {
+        "display": 5,
+        "battery": 5,
+        "value": 3
+      },
+      "pain_points": "Screen is dim outdoors, battery barely survives a workday",
+      "notes": null
+    }
+  },
+  "candidate": {
+    "product_id": 701,
+    "name": "Fixture Phone Positive",
+    "release_date": "2025-04-01",
+    "age_days": 170
+  },
+  "computed": {},
+  "analysis": {
+    "verdict": "STRONG_UPGRADE_CANDIDATE",
+    "relevance_score": 0.9,
+    "preference_score": 0.92,
+    "deciding_factors": ["display", "battery", "value"]
+  },
+  "retrieval": { "k": 6 }
+}
