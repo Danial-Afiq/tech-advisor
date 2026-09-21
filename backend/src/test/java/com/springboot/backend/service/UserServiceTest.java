@@ -42,7 +42,7 @@ class UserServiceTest {
         request.setEmail("faith@example.com");
         request.setPassword("password123");
 
-        when(userRepository.existsByEmail("faith@example.com"))
+        when(userRepository.existsByEmailIgnoreCase("faith@example.com"))
                 .thenReturn(false);
 
         when(passwordEncoder.encode("password123"))
@@ -67,7 +67,7 @@ class UserServiceTest {
         request.setEmail("faith@example.com");
         request.setPassword("password123");
 
-        when(userRepository.existsByEmail("faith@example.com"))
+        when(userRepository.existsByEmailIgnoreCase("faith@example.com"))
                 .thenReturn(true);
 
         IllegalArgumentException exception = assertThrows(
@@ -90,7 +90,7 @@ class UserServiceTest {
         request.setEmail("faith@example.com");
         request.setPassword("password123");
 
-        when(userRepository.existsByEmail("faith@example.com"))
+        when(userRepository.existsByEmailIgnoreCase("faith@example.com"))
                 .thenReturn(false);
 
         when(passwordEncoder.encode("password123"))
@@ -131,7 +131,7 @@ class UserServiceTest {
                 "USER"
         );
 
-        when(userRepository.findByEmail("test@example.com"))
+        when(userRepository.findByEmailIgnoreCase("test@example.com"))
                 .thenReturn(Optional.of(user));
 
         when(passwordEncoder.matches(
@@ -161,7 +161,7 @@ class UserServiceTest {
         request.setEmail("unknown@example.com");
         request.setPassword("password123");
 
-        when(userRepository.findByEmail("unknown@example.com"))
+        when(userRepository.findByEmailIgnoreCase("unknown@example.com"))
                 .thenReturn(Optional.empty());
 
         assertThrows(
@@ -185,7 +185,7 @@ class UserServiceTest {
                 "USER"
         );
 
-        when(userRepository.findByEmail("test@example.com"))
+        when(userRepository.findByEmailIgnoreCase("test@example.com"))
                 .thenReturn(Optional.of(user));
 
         when(passwordEncoder.matches(

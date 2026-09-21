@@ -19,12 +19,35 @@ public class JwtService {
     private final long expirationSeconds;
 
     public JwtService(
-            @Value("${jwt.secret}") String secret,
-            @Value("${jwt.expiration-seconds}") long expirationSeconds) {
+        @Value("${jwt.secret}") String secret,
+        @Value("${jwt.expiration-seconds}") long expirationSeconds) {
 
-        this.signingKey = Keys.hmacShaKeyFor(
-                Decoders.BASE64.decode(secret)
-        );
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalArgumentException(
+                    "JWT_SECRET is required and must be a Base64-encoded key of at least 32 bytes"
+            );
+        }
+
+        if (expirationSeconds <= 0) {
+            throw new IllegalArgumentException(
+                    "JWT_EXPIRATION_SECONDS must be greater than zero"
+            );
+        }
+
+        try {
+            byte[] keyBytes = Decoders.BASE64.decode(secret);
+
+            if (keyBytes.length < 32) {
+                throw new IllegalArgumentException("JWT_SECRET is too short");
+            }
+
+            this.signingKey = Keys.hmacShaKeyFor(keyBytes);
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException(
+                    "JWT_SECRET must be valid Base64 and decode to at least 32 bytes",
+                    exception
+            );
+        }
 
         this.expirationSeconds = expirationSeconds;
     }

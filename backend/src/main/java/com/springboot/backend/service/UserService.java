@@ -9,6 +9,7 @@ import com.springboot.backend.repository.UserRepository;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import java.util.Locale;
 
 @Service
 public class UserService {
@@ -28,54 +29,40 @@ public class UserService {
     }
 
     public UserResponse register(RegisterRequest request) {
+        String email = request.getEmail().trim().toLowerCase(Locale.ROOT);
 
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new IllegalArgumentException(
-                    "Email is already registered"
-            );
+        if (userRepository.existsByEmailIgnoreCase(email)) {
+                throw new IllegalArgumentException("Email is already registered");
         }
 
-        String hashedPassword =
-                passwordEncoder.encode(request.getPassword());
+        String hashedPassword = passwordEncoder.encode(request.getPassword());
 
-        User user = new User(
-                request.getEmail(),
-                hashedPassword,
-                "USER"
-        );
-
+        User user = new User(email, hashedPassword, "USER");
         User savedUser = userRepository.save(user);
 
         return new UserResponse(savedUser);
     }
 
     public LoginResponse login(LoginRequest request) {
+        String email = request.getEmail().trim().toLowerCase(Locale.ROOT);
 
-    User user = userRepository.findByEmail(request.getEmail())
-            .orElseThrow(() -> {
-                return new BadCredentialsException(
-                        "Invalid email or password"
-                );
-            });
+        User user = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() ->
+                        new BadCredentialsException("Invalid email or password"));
 
-    boolean passwordMatches = passwordEncoder.matches(
-            request.getPassword(),
-            user.getPasswordHash()
-    );
+        if (!passwordEncoder.matches(
+                request.getPassword(),
+                user.getPasswordHash())) {
+                throw new BadCredentialsException("Invalid email or password");
+        }
 
-    if (!passwordMatches) {
-        throw new BadCredentialsException(
-                "Invalid email or password"
+        String token = jwtService.generateToken(user);
+
+        return new LoginResponse(
+                token,
+                jwtService.getExpirationSeconds()
         );
     }
-
-    String token = jwtService.generateToken(user);
-
-    return new LoginResponse(
-            token,
-            jwtService.getExpirationSeconds()
-    );
-}
 
     public UserResponse getProfile(String email) {
 

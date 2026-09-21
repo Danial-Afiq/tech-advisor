@@ -66,19 +66,12 @@ class JwtServiceTest {
     }
 
     @Test
-    void expiredTokenShouldBeRejected() {
-
-        JwtService expiredJwtService = new JwtService(
-                TEST_SECRET,
-                -1L
+    void negativeExpirationShouldBeRejectedAtStartup() {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> new JwtService(TEST_SECRET, -1L)
         );
 
-        String expiredToken =
-                expiredJwtService.generateToken(user);
-
-        assertThrows(
-                JwtException.class,
-                () -> expiredJwtService.extractEmail(expiredToken)
-        );
+        assertTrue(exception.getMessage().contains("JWT_EXPIRATION_SECONDS"));
     }
 }
