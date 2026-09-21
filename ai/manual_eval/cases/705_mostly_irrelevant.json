@@ -1,0 +1,38 @@
+{
+  "request_id": "manual-705-irrelevant",
+  "user_context": {
+    "owned_device": {
+      "name": "Pixel 7",
+      "device_age_months": 28,
+      "condition": "FAIR",
+      "satisfaction_score": 50,
+      "use_cases": ["general use"]
+    },
+    "preferences": {
+      "budget": 900,
+      "currency": "SGD",
+      "upgrade_urgency": "NOT_URGENT",
+      "brand_flexibility": "FLEXIBLE",
+      "priorities": {
+        "performance": 4,
+        "camera": 3
+      },
+      "pain_points": null,
+      "notes": null
+    }
+  },
+  "candidate": {
+    "product_id": 705,
+    "name": "Fixture Phone Bad Corpus",
+    "release_date": "2025-01-10",
+    "age_days": 250
+  },
+  "computed": {},
+  "analysis": {
+    "verdict": "WORTH_WATCHING",
+    "relevance_score": 0.5,
+    "preference_score": 0.5,
+    "deciding_factors": ["performance", "camera"]
+  },
+  "retrieval": { "k": 6 }
+}

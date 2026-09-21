@@ -1,0 +1,39 @@
+{
+  "request_id": "manual-702-negative",
+  "user_context": {
+    "owned_device": {
+      "name": "OnePlus 11",
+      "device_age_months": 18,
+      "condition": "GOOD",
+      "satisfaction_score": 70,
+      "use_cases": ["gaming"]
+    },
+    "preferences": {
+      "budget": 1200,
+      "currency": "SGD",
+      "upgrade_urgency": "NOT_URGENT",
+      "brand_flexibility": "SOMEWHAT_FLEXIBLE",
+      "priorities": {
+        "thermals": 5,
+        "build_quality": 4,
+        "performance": 4
+      },
+      "pain_points": null,
+      "notes": "Mainly curious, not in a rush to switch"
+    }
+  },
+  "candidate": {
+    "product_id": 702,
+    "name": "Fixture Phone Negative",
+    "release_date": "2025-02-20",
+    "age_days": 210
+  },
+  "computed": {},
+  "analysis": {
+    "verdict": "WORTH_WATCHING",
+    "relevance_score": 0.6,
+    "preference_score": 0.4,
+    "deciding_factors": ["thermals", "build_quality"]
+  },
+  "retrieval": { "k": 6 }
+}
