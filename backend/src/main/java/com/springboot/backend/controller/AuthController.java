@@ -1,5 +1,7 @@
 package com.springboot.backend.controller;
 
+import com.springboot.backend.dto.LoginRequest;
+import com.springboot.backend.dto.LoginResponse;
 import com.springboot.backend.dto.RegisterRequest;
 import com.springboot.backend.dto.UserResponse;
 import com.springboot.backend.service.UserService;
@@ -30,5 +32,14 @@ public class AuthController {
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(newUser);
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<LoginResponse> login(
+            @Valid @RequestBody LoginRequest request) {
+
+        LoginResponse response = userService.login(request);
+
+        return ResponseEntity.ok(response);
     }
 }
