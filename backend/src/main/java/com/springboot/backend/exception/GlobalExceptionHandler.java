@@ -51,4 +51,17 @@ public class GlobalExceptionHandler {
                 .status(HttpStatus.BAD_REQUEST)
                 .body(errors);
     }
+
+    @ExceptionHandler(InvalidDeviceRequestException.class)
+        public ResponseEntity<Map<String, String>>
+                handleInvalidDeviceRequest(
+                        InvalidDeviceRequestException exception) {
+
+        Map<String, String> response = new HashMap<>();
+        response.put("error", exception.getMessage());
+
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(response);
+        }
 }
