@@ -1,0 +1,105 @@
+name: Telegram Actionable Notifications
+
+# Keep Telegram quiet unless a teammate needs attention.
+on:
+  pull_request:
+    types: [review_requested]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  review-requested:
+    name: Notify Review Request
+    if: github.event_name == 'pull_request' && github.event.action == 'review_requested'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send review request to Telegram
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REQUESTED_REVIEWER: ${{ github.event.requested_reviewer.login }}
+          REQUESTED_TEAM: ${{ github.event.requested_team.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REQUESTED_BY: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets are required."
+            exit 1
+          fi
+
+          if [ -n "${REQUESTED_REVIEWER:-}" ]; then
+            reviewer="@${REQUESTED_REVIEWER}"
+          elif [ -n "${REQUESTED_TEAM:-}" ]; then
+            reviewer="Team: ${REQUESTED_TEAM}"
+          else
+            reviewer="Unknown reviewer"
+          fi
+
+          message="$(printf '👀 REVIEW REQUESTED\n\nPR #%s: %s\nReviewer: %s\nRequested by: @%s\n\n%s' \
+            "$PR_NUMBER" "$PR_TITLE" "$reviewer" "$REQUESTED_BY" "$PR_URL")"
+
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${message}"
+
+  pr-mention:
+    name: Notify PR Mention
+    # Only PR conversation comments from repository collaborators can notify the group.
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      github.event.issue.pull_request != null &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Detect mentions and notify Telegram
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_URL: ${{ github.event.comment.html_url }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_TITLE: ${{ github.event.issue.title }}
+        run: |
+          set -euo pipefail
+
+          # Match GitHub-style @usernames while avoiding email-address fragments.
+          mentions="$(printf '%s\n' "$COMMENT_BODY" \
+            | grep -oP '(?<![A-Za-z0-9_.-])@[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?' \
+            | sort -u \
+            | tr '\n' ' ' \
+            | sed 's/[[:space:]]*$//' || true)"
+
+          # A normal PR comment should remain completely silent.
+          if [ -z "$mentions" ]; then
+            echo "No GitHub @mention found; no Telegram message sent."
+            exit 0
+          fi
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets are required."
+            exit 1
+          fi
+
+          message="$(printf '💬 PR MENTION\n\nPR #%s: %s\nMentioned: %s\nBy: @%s\n\n%s' \
+            "$PR_NUMBER" "$PR_TITLE" "$mentions" "$COMMENT_AUTHOR" "$COMMENT_URL")"
+
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${message}"

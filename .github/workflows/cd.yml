@@ -111,3 +111,37 @@ jobs:
 
           echo "::error::Deployed backend did not report status UP at $health_url"
           exit 1
+
+  notify-cd-failure:
+    name: Notify Telegram - CD Failure
+    runs-on: ubuntu-latest
+    needs: deploy
+    # If CI failed, deploy is skipped and this notification also stays silent.
+    if: ${{ always() && needs.deploy.result == 'failure' }}
+
+    steps:
+      - name: Send CD failure to Telegram
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets are required."
+            exit 1
+          fi
+
+          short_sha="${SOURCE_SHA:0:7}"
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          message="$(printf '❌ CD FAILED\n\nRepository: %s\nBranch: %s\nCommit: %s\n\n%s' \
+            "$GITHUB_REPOSITORY" "$SOURCE_BRANCH" "$short_sha" "$run_url")"
+
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${message}"
