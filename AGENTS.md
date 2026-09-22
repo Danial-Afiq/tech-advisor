@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 18 September 2026
+> **Last consolidated:** 22 September 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -151,9 +151,9 @@ A personalised technology upgrade recommender that answers:
 
 The product monitors changing technology/market conditions and reassesses whether a newer device or component is actually meaningful for a specific user's current setup, budget, priorities, pain points, and usage.
 
-The original broad vision included smartphones and PC hardware. The **current database design and implementation focus are smartphone-first**. PC/GPU support remains a future/expanded scope and appears in some older Jira/Architecture text.
+The current product and recommendation implementation remains **smartphone-first**. The canonical Sprint 1 database foundation nevertheless uses a generic `products` supertype with disjoint `phone` and `gpu` subtype tables so later category work does not require another product-identity model. GPU application flows remain future scope.
 
-Do not prematurely force GPU-specific fields into the smartphone-first core schema.
+Do not treat the presence of the `gpu` table as evidence that GPU ingestion, recommendation logic, or UI is implemented.
 
 ## 1.2 Core product behaviour
 
@@ -304,10 +304,20 @@ tech-advisor/
 │  └─ workflows/
 │     ├─ ci.yml
 │     └─ cd.yml
+├─ ai/                  # FastAPI AI layer (§5.4)
+│  ├─ app/              # service code: assess, prompt, validation, llm, retrieval
+│  ├─ scripts/          # ingest.py, manual_eval.py
+│  ├─ tests/            # pytest, mocked LLM
+│  ├─ manual_eval/      # live-model evaluation harness (§13.5)
+│  ├─ data/vector_store/# demo corpus for the file-backed store
+│  ├─ Dockerfile
+│  └─ bake_model.py     # bakes the embedding model into the image at build time
 ├─ backend/
 ├─ frontend/
 ├─ docs/
 ├─ scripts/
+├─ AGENTS.md
+├─ CLAUDE.md
 ├─ docker-compose.yml
 ├─ README.md
 └─ .gitignore
@@ -376,15 +386,22 @@ export const API_BASE_URL =
 - PostgreSQL
 - local: Docker Compose
 - hosted: Neon
-- `pgvector` extension enabled by Flyway V4; vector storage and RAG retrieval remain planned
+- `pgvector` extension enabled by Flyway V4
+- `review_documents` / `review_chunks` created by Flyway **V5**; retrieval over them is implemented (see §5.4)
 
 ## 5.4 AI service
-Planned/current design:
-- Python
-- FastAPI
-- hosted LLM API using SMU-X team budget
-- local model remains fallback if necessary
-- embeddings + pgvector semantic retrieval
+Implemented on branch `feat/3.4-llm_layer` (see §18.7 for the snapshot):
+- Python 3.13 + FastAPI, containerised by `ai/Dockerfile`
+- `POST /assess`, guarded by a shared `AI_SERVICE_TOKEN` bearer secret
+- multi-provider LLM seam: `LLM_PROVIDER=anthropic` uses the Claude SDK natively;
+  `openrouter` / `openai` / `custom` share one OpenAI-compatible adapter, so adding a
+  vendor is a base URL rather than code
+- structured output is tiered `json_schema -> json_object -> prompt instruction`,
+  stepping down only when a provider rejects the format
+- embeddings + pgvector semantic retrieval, with a file-backed stand-in store for local work
+
+The AI service is **not yet in the deployment chain in §4.2** — where it is hosted is
+still open (see §27.9).
 
 ## 5.5 DevOps
 - GitHub
@@ -479,6 +496,33 @@ If the candidate has no meaningful path for this owned device/user:
 - return `NO_MEANINGFUL_CHANGE`,
 - do not retrieve/grade owner reviews,
 - do not spend an LLM call.
+
+### Deterministic candidate shortlisting - IMPLEMENTED (SCRUM-34)
+
+Before any of the above runs, the catalogue is reduced to a compatible and
+affordable candidate set by `recommendation/CandidatePruningService`, backed by
+`ProductRepository.findCompatibleCandidates(...)`.
+
+Rules, all enforced in SQL:
+- candidate `products.category` equals the owned device's category,
+- the product's **latest** `price_history` observation is `<=`
+  `device_preferences.budget` (inclusive),
+- the currently owned `product_id` is excluded,
+- products with **no** price history are excluded - affordability cannot be
+  verified, so they are not candidates,
+- products with `status <> 'VERIFIED'` are excluded.
+
+"Latest price" is `DISTINCT ON (product_id) ... ORDER BY product_id,
+observed_at DESC, id DESC`. The `id DESC` tiebreaker is required: without it two
+observations sharing an `observed_at` resolve arbitrarily and the step stops
+being reproducible.
+
+This step performs **no** embeddings, retrieval or model calls, and must stay
+that way - bounding the candidate set is what bounds every downstream AI cost.
+
+**Nothing populates these tables yet.** Ingestion still writes only to
+`system_log`, so the filter is exercised by tests and seeded data. Wiring a
+real source into the catalogue is separate work (Epic 01), not part of this.
 
 ## 7.2 Channel B — owner evidence grade
 
@@ -592,18 +636,27 @@ IF review chunk count is below configured minimum
     → no LLM call
 ```
 
-Suggested initial configuration from the agreed spec:
+Configuration, split by which side owns it:
 
 ```text
-MATURITY_WINDOW_DAYS = 60
-MIN_CHUNKS = 8
-K = 12
-CHUNK_CHAR_CAP = 800
-PROMPT_VERSION = v1
-MAX_RETRIES = 1
+# Java-side, gates before the call is made — NOT YET IMPLEMENTED
+MATURITY_WINDOW_DAYS  = 60
+MIN_CHUNKS            = 8
+
+# Python-side, implemented as typed defaults in ai/app/config.py
+K                     = 12
+CHUNK_CHAR_CAP        = 800
+PROMPT_VERSION        = v1
+MAX_RETRIES           = 1
+IRRELEVANT_REF_LIMIT  = 0.75   # see §12
 ```
 
 These are configuration values, not permanent hardcoded truths.
+
+The maturity gate is **still Java-side work that has not been written**. Until it
+exists, nothing stops a thin corpus reaching the model — the Python guard rails
+(`NO_PASSAGES_RETRIEVED`, `INSUFFICIENT_RELEVANT_PASSAGES`) are a backstop for that
+case, not a replacement for the gate.
 
 When maturity fails:
 - preserve deterministic verdict,
@@ -673,17 +726,23 @@ Benefits:
 - lower chance of identifier corruption,
 - hallucination validation becomes a simple set-membership check.
 
-### Implementation note / ambiguity to keep visible
-The agreed spec says:
-- model-facing refs are `P1`, `P2`, etc.,
-- Spring should not rely on raw local refs,
-- Python maps them back to real chunk IDs.
+### RESOLVED — how `P*` refs cross the service boundary
 
-However, the sample FastAPI response in the source spec still shows `supporting_refs: ["P1"]`.
+This was previously flagged as an ambiguity. The implementation settles it by
+returning **both**, so nothing has to guess:
 
-**Preferred intent:** keep `P*` refs inside the Python/model boundary and map evidence references to real chunk IDs before persistence/service handoff, or explicitly document the service DTO if local refs are temporarily returned.
+- `supporting_refs` — the `P*` labels, kept for traceability against the prompt
+- `supporting_chunk_ids` — the same refs mapped back to real `review_chunks.id`
 
-Do not let different implementations silently choose different meanings.
+The same pairing exists for irrelevant passages (`irrelevant_refs` /
+`irrelevant_chunk_ids`).
+
+**Spring must persist the chunk IDs, never the refs.** `P*` labels are assigned per
+request by retrieval rank and are meaningless outside the request that produced them.
+
+Note for anyone tracing evidence by hand: `P1..Pn` are numbered in **retrieval-rank
+order**, not corpus or insertion order, so `P1` is simply the closest passage to the
+query embedding.
 
 ---
 
@@ -712,7 +771,7 @@ Representative request:
       "budget": 1200,
       "currency": "SGD",
       "upgrade_urgency": "WHEN_DEVICE_STRUGGLES",
-      "brand_flexibility": "SAME_ECOSYSTEM",
+      "brand_flexibility": "FLEXIBLE",
       "priorities": {
         "battery": 5,
         "camera": 4,
@@ -774,6 +833,10 @@ Representative request:
 ```
 
 Important semantics:
+- Every enum value above must come from `ai/app/factors.py`. An earlier version of
+  this example used `"brand_flexibility": "SAME_ECOSYSTEM"`, which is **not** in
+  `BRAND_FLEXIBILITIES` and is rejected with a 422 — the allowed values are
+  `EXTREMELY_FLEXIBLE`, `FLEXIBLE`, `SOMEWHAT_FLEXIBLE`, `NOT_FLEXIBLE`.
 - `vs_budget < 0` means candidate is under budget.
 - `spec_overrides` are folded into deltas before sending.
 - benchmark direction has already been normalized using `higher_is_better`.
@@ -805,17 +868,40 @@ Target logical response:
     }
   ],
   "irrelevant_refs": ["P2", "P9"],
+  "irrelevant_chunk_ids": [4415, 4430],
   "summary": "Plain-language explanation shown to the user.",
   "meta": {
     "ai_model": "model-id",
     "prompt_version": "v1",
     "retrieved_chunk_ids": [4412, 4418, 4420],
-    "retry_count": 0
-  }
+    "retry_count": 0,
+    "retrieval": {
+      "k": 12,
+      "chunk_char_cap": 800,
+      "vector_store": "pgvector",
+      "embedding_dim": 512
+    },
+    "degraded": false,
+    "degraded_reason": null
+  },
+  "system_log": null
 }
 ```
 
-The exact Java-facing handling of `P*` refs vs mapped chunk IDs should follow the implementation note in §8.6.
+Each entry in `evidence_findings` carries `supporting_chunk_ids` alongside
+`supporting_refs`; Spring persists the chunk IDs (§8.6).
+
+Two response fields exist because the AI service **never writes to the database**:
+
+- `meta.retrieval` — the retrieval parameters, for `recommendations.input_snapshot`.
+  Two recommendations sharing a `prompt_version` must also share these or
+  reproducibility is lost.
+- `system_log` — on a degraded assessment this carries a ready-formed `system_log`
+  row (§12) for **Spring** to persist, so the failure and the recommendation it
+  belongs to are written in one place. It is `null` on success.
+
+On any degraded path, `evidence_grade` is `"-"`, `summary` is `null`, and
+`evidence_findings` is empty. Never substitute a fabricated grade or summary.
 
 ---
 
@@ -884,7 +970,9 @@ so retrieved text cannot prematurely close/reopen the trusted boundary.
 
 ## 11.4 Output schema
 
-Allowed factors:
+Allowed factors — **12**, as implemented in `ai/app/factors.py`, which is the single
+source this vocabulary is generated from (the prompt, the JSON schema and the
+validator all read it):
 
 ```text
 battery
@@ -897,7 +985,12 @@ software_support
 connectivity
 audio
 value
+longevity
+portability
 ```
+
+An earlier version of this section listed only the first 10, which contradicted the
+`device_preferences.priorities` example in §14.2 that already used `longevity`.
 
 Allowed stances:
 
@@ -908,6 +1001,8 @@ MIXED
 ```
 
 This factor vocabulary must remain compatible with `device_preferences.priorities`.
+`ai/app/factors.py` and the Java-side preference vocabulary must be changed together;
+if they drift, the grade gets scoped to factors the user never expressed a view on.
 
 If the app adds a new preference factor, update:
 - preference vocabulary,
@@ -942,12 +1037,25 @@ Never:
 
 Fallback behaviour:
 
-| Failure | User still sees |
-|---|---|
-| Maturity gate fails | deterministic verdict, scores, deterministic factor analysis, template reasoning, grade `-` |
-| LLM call fails | same deterministic fallback |
-| LLM response fails validation twice | same deterministic fallback |
-| Deterministic verdict code fails | treat as application fault; do not fabricate a recommendation |
+| Failure | `degraded_reason` | User still sees |
+|---|---|---|
+| Maturity gate fails (Java-side, no call made) | n/a | deterministic verdict, scores, deterministic factor analysis, template reasoning, grade `-` |
+| Retrieval itself fails (DB down, pool exhausted, embedder mismatch) | `RETRIEVAL_FAILED` | same deterministic fallback |
+| No passages retrieved for the candidate | `NO_PASSAGES_RETRIEVED` | same deterministic fallback |
+| Model declares too many passages off-topic | `INSUFFICIENT_RELEVANT_PASSAGES` | same deterministic fallback |
+| LLM call fails | `LLM_CALL_FAILED` | same deterministic fallback |
+| LLM response fails validation twice | `VALIDATION_FAILED` | same deterministic fallback |
+| Deterministic verdict code fails | n/a | treat as application fault; do not fabricate a recommendation |
+
+### `INSUFFICIENT_RELEVANT_PASSAGES` — a guard rail code owns, not the model
+
+`IRRELEVANT_REF_LIMIT` (default **0.75**) is the fraction of retrieved passages the
+model may mark irrelevant before the assessment degrades to `-`.
+
+The model is **not** allowed to decide it has too little data — it would be grading
+its own sufficiency. It only reports which passages fail to describe the candidate;
+Python counts them and makes the call. This is what stops a letter grade resting on
+one stray passage when ingestion has attached the wrong corpus to a product.
 
 Every AI failure should be written to `system_log`, e.g.:
 
@@ -1023,13 +1131,74 @@ Under the agreed LLM design, dummy data should simulate:
 
 Do **not** wait for final production scraping sources before testing this layer.
 
+## 13.5 Manual evaluation harness — `ai/manual_eval/`
+
+Implemented 19 Sep 2026 for SCRUM-37. This is the "controlled manual evaluation"
+that §34 says live model calls belong in; `ai/tests/` stays mocked and hermetic.
+
+```powershell
+cd ai
+python -m scripts.manual_eval                  # all cases
+python -m scripts.manual_eval 704_injection_attempt
+```
+
+| Path | Purpose |
+|---|---|
+| `ai/manual_eval/README.md` | scenario table + the human judgment checklist |
+| `ai/manual_eval/fixtures/chunks.json` | fixture corpus, one `product_id` per scenario |
+| `ai/manual_eval/cases/*.json` | one `AssessRequest` body per scenario |
+| `ai/scripts/manual_eval.py` | runner; calls `Assessor` in-process, no FastAPI, no auth |
+| `ai/manual_eval/last_run.txt` | transcript, git-ignored, overwritten each run |
+
+Covered scenarios: clear positive, clear negative/defect, contested-mixed,
+prompt-injection attempt, mostly-irrelevant corpus, single-passage sparse evidence,
+and empty corpus.
+
+**It spends real API money.** Every run makes one live call per non-degraded case
+against whatever `LLM_PROVIDER` / `LLM_MODEL` the root `.env` points at. Do not run
+it in CI, and do not run it on someone's behalf without asking first.
+
+Settings come from `.env` as normal — `EMBEDDER` included, so passages rank the way
+the service ranks them. Only the vector store is pinned, to `fixtures/`, so no
+database is needed.
+
+### Findings from the 19 Sep 2026 runs
+
+1. **Injection defence holds.** The malicious passage was placed in `irrelevant_refs`
+   and its instruction ignored across two independent runs; one summary explicitly
+   stated the passage was excluded because it does not describe the product.
+2. **Degraded paths behave.** `INSUFFICIENT_RELEVANT_PASSAGES` and
+   `NO_PASSAGES_RETRIEVED` both returned `-` with a null summary, never a fabricated
+   grade.
+3. **The letter grade is not reproducible run-to-run.** One case graded `D` on the
+   first run and `E` on the second from *identical* evidence. `temperature` is
+   unavailable on this path (Opus 5 rejects it; depth is controlled by
+   `LLM_EFFORT`), so this variance is inherent. **Do not build UI copy, tests, or
+   assertions that assume a stable letter for a given corpus.** Adjacent-grade drift
+   is expected; the deterministic verdict is the stable half of the output.
+
+### Known gaps for whoever picks this up
+
+1. **Retrieval is not really exercised.** Every fixture product holds fewer chunks
+   than `k`, so *all* passages are returned every time and retrieval only orders
+   them, never selects. The harness tests grading and summarising, not retrieval
+   quality. To test retrieval, add more chunks per product than `k`.
+2. **The "10 consecutive calls" AC in SCRUM-37 (§13.4) is not yet satisfied.** The
+   harness runs 7 scenario cases once each. Repeat-run stability is exactly where the
+   grade variance in finding 3 shows up, so if the AC is read literally, run one case
+   10 times and record the spread rather than running 10 different cases.
+3. ~~No Java caller exists yet~~ — **resolved.** The Spring caller now exists
+   (§18.8) and the §9/§10 contract is exercised over real HTTP in
+   `RecommendationPersistenceTests`, against a stub AI service rather than a live
+   model. What remains unexercised is Spring against the *real* FastAPI process.
+
 ---
 
-# 14. Database design — canonical 12-table target
+# 14. Database design — canonical 13-table Sprint 1 schema
 
-Current database design is **smartphone-focused** and intentionally keeps 12 core tables.
+The canonical schema keeps a generic product identity and category-specific `phone` / `gpu` subtype tables. Current application behaviour is still smartphone-first.
 
-The current codebase has not yet implemented all 12 tables. See §18 for actual migration state.
+The schema is implemented by V1-V6 on the schema-reconciliation branch. See §18 for the migration inventory.
 
 ## 14.1 `users`
 
@@ -1118,12 +1287,13 @@ Canonical field is **`release_date`**.
 Current core category:
 - `SMARTPHONE`
 
-## 14.5 `smartphone_specs`
+## 14.5 `phone`
 
 Fields:
 - `product_id`
 - `chipset`
 - `ram_gb`
+- `cpu_ghz`
 - `storage_gb`
 - `battery_mah`
 - `wired_charging_watts`
@@ -1131,12 +1301,31 @@ Fields:
 - `display_size_inches`
 - `refresh_rate_hz`
 - `weight_g`
+- `camera_specs`
+- `pixel_density`
+- `ip_rating`
 - `os`
 - `software_support_years`
 
 These are deterministic facts. Spring Boot should calculate differences.
 
-## 14.6 `price_history`
+## 14.6 `gpu`
+
+Fields:
+- `product_id`
+- `core_count`
+- `clock_speeds`
+- `vram`
+- `bus_width`
+- `memory_speed`
+- `total_bandwidth`
+- `pixel_fillrate`
+- `texture_fillrate`
+- `tgp`
+
+The table establishes the disjoint GPU subtype shape. GPU ingestion, recommendation logic, APIs, and UI are not yet implemented.
+
+## 14.7 `price_history`
 
 Fields:
 - `id`
@@ -1148,7 +1337,7 @@ Fields:
 
 Stores observations over time, not just one mutable current price.
 
-## 14.7 `benchmark_results`
+## 14.8 `benchmark_results`
 
 Fields:
 - `id`
@@ -1160,7 +1349,7 @@ Fields:
 - `source`
 - `observed_at`
 
-## 14.8 `market_events`
+## 14.9 `market_events`
 
 Fields:
 - `id`
@@ -1182,7 +1371,7 @@ Examples:
 
 A market event can trigger recommendation reassessment.
 
-## 14.9 `review_documents`
+## 14.10 `review_documents`
 
 Source-level review/article/forum item.
 
@@ -1199,7 +1388,7 @@ Important distinction:
 - `published_at` = age of external evidence
 - `ingested_at` = when Tech Advisor imported it
 
-## 14.10 `review_chunks`
+## 14.11 `review_chunks`
 
 Fields:
 - `id`
@@ -1207,14 +1396,16 @@ Fields:
 - `chunk_index`
 - `chunk_text`
 - `embedding`
+- `embedder`
 - `created_at`
 
 Current plan:
 - no LLM-generated factor tags at ingestion,
 - retrieval is semantic,
-- embedding dimension depends on chosen embedding model.
+- V6 uses `vector(512)` for the currently configured Sprint 1 embedder,
+- `embedder` records the model used so query-time retrieval can reject mismatches.
 
-## 14.11 `recommendations`
+## 14.12 `recommendations`
 
 Fields:
 - `id`
@@ -1246,6 +1437,10 @@ This is an **evidence grade**, not a floating-point probability.
 When implementing/migrating, document this clearly.
 
 Longer-term naming may be cleaner as `evidence_grade`, but the agreed current plan says no new column is required.
+
+**Implemented in `V6`** as a nullable `TEXT` column holding `A`-`F` or `-`, with the
+semantics documented in a `COMMENT ON COLUMN` so the next reader does not mistake it
+for a probability.
 
 ### `input_snapshot`
 Preserve the generation-time inputs because:
@@ -1280,7 +1475,7 @@ Keep deterministic and model evidence separate:
 
 Never collapse these into one opaque score.
 
-## 14.12 `system_log`
+## 14.13 `system_log`
 
 Fields:
 - `id`
@@ -1307,7 +1502,8 @@ users 1 ── N user_devices
 user_devices 1 ── 1 device_preferences
 
 products 1 ── N user_devices
-products 1 ── 1 smartphone_specs
+products 1 ── 0..1 phone
+products 1 ── 0..1 gpu
 products 1 ── N price_history
 products 1 ── N benchmark_results
 products 1 ── N market_events
@@ -1329,7 +1525,7 @@ user_devices
 device_preferences
   budget / priorities / urgency / pain points
         +
-products + smartphone_specs
+products + phone
   candidate facts
         +
 price_history + benchmark_results
@@ -1453,6 +1649,16 @@ Do not ship the demo Basic Auth mechanism as the final production auth system.
 
 ---
 
+## 16.8 User JWT authentication
+
+New accounts store email addresses in trimmed, lowercase form. Login matches
+email addresses without case sensitivity, including older mixed-case accounts.
+
+The backend fails at startup with a clear error if the JWT secret is invalid
+or the token expiration is not positive. An integration test checks that
+`GET /api/profile` rejects missing or invalid tokens and returns the user's
+profile with a valid token.
+
 # 17. External data sources — current status
 
 ## 17.1 Important: final production sources are NOT fully confirmed
@@ -1532,13 +1738,42 @@ V1__create_users_table.sql
 V2__create_system_log.sql
 V3__anchor_daily_ingestion_schedule.sql
 V4__enable_pgvector.sql
+V5__add_password_hash_to_users.sql
+V6__create_sprint_1_schema.sql
 ```
 
-Therefore:
-- the **12-table database design is target architecture**,
-- it is **not yet fully implemented in migrations on main**.
+`V5` makes `users.password_hash` **NOT NULL**, so every seed, fixture, or test
+that inserts a user must supply the column, including tests owned by unrelated
+features.
 
-Do not tell a teammate/assistant “all 12 tables already exist.”
+`V6` adds `review_documents` and `review_chunks`, including
+`review_chunks.embedding vector(512)` and `review_chunks.embedder`.
+
+`V6` adds `recommendations` (§14.12). `user_id`, `candidate_product_id`,
+`current_device_id`, and `trigger_event_id` carry real foreign keys. The latter two
+remain nullable so current application paths can persist an assessment before an
+upstream device/event ID is available. A partial unique index keeps one `ACTIVE` row
+per `(user_id, candidate_product_id)`; re-assessment supersedes the previous row.
+
+**CI tests a merge preview, not your branch.** The `pull_request` trigger builds your
+branch merged into `main`, so it sees migrations and NOT NULL constraints that a
+branch behind `main` does not have locally. A green local run and a red CI run on the
+same commit usually means the branch needs `main` merged in - do that before
+debugging the failure itself.
+
+The `embedder` column is load-bearing, not bookkeeping: vectors from two different
+models share no space, and comparing across them returns a confident, meaningless
+ranking rather than an error. Ingestion stamps the name in; `PgVectorStore` checks it
+on every search and raises `EmbedderMismatch`. **Changing `EMBEDDER` requires
+re-ingesting the corpus.**
+
+Therefore:
+- V1-V5 retain their original history,
+- V6 is the one canonical Sprint 1 domain migration,
+- the full 13-table foundation is represented exactly once,
+- feature branches must remove their competing V6/V7 schema migrations when rebased onto this migration.
+
+This V6 is currently on the schema-reconciliation branch and is not on `main` until its PR is reviewed and merged.
 
 ## 18.3 Frontend currently contains
 Known files include:
@@ -1586,9 +1821,13 @@ Behaviour:
 - triggered only after CI on `main`,
 - deploy runs only if CI succeeded,
 - checks out the exact SHA that passed CI,
+- fails before deployment unless `JWT_SECRET` and the three
+  `SPRING_DATASOURCE_*` secret names are present in Fly,
 - uses `flyctl deploy --remote-only`,
 - deploys backend from `backend/`,
-- uses GitHub secret `FLY_API_TOKEN`.
+- uses GitHub secret `FLY_API_TOKEN`,
+- polls the public `/actuator/health` route after deployment and succeeds only
+  on a 2xx response whose JSON status is `UP`.
 
 ## 18.6 Ingestion framework
 The ingestion scheduler/orchestrator/admin/demo framework is significantly implemented and documented.
@@ -1600,6 +1839,112 @@ Current docs report verification from 16 Sep 2026:
 - persisted success and partial-failure demo runs survived backend restart.
 
 Treat exact historical test counts as evidence from that verification point, not a permanent guarantee.
+
+## 18.7 AI service snapshot — 19 Sep 2026, branch `feat/3.4-llm_layer`
+
+**Not yet merged to `main`.** Everything in §5.4, §8, §10, §12 and §13.5 describes
+this branch. Do not assume it is on `main` until the PR for SCRUM-37 lands.
+
+Implemented under `ai/app/`:
+
+| Module | Responsibility |
+|---|---|
+| `main.py` | FastAPI app, `POST /assess`, `GET /health`, bearer-token guard |
+| `assess.py` | orchestration: retrieve → prompt → call → validate → map refs → degrade |
+| `prompt.py` | five-block prompt assembly, delimiter/header sanitisation |
+| `validation.py` | structural validation + the retry instruction fed back to the model |
+| `llm.py` | provider adapters, tiered structured output |
+| `retrieval/query.py` | builds the retrieval query from the user's own priorities/pain points |
+| `retrieval/store.py` | `PgVectorStore` (real) and `LocalVectorStore` (file-backed stand-in) |
+| `retrieval/embedder.py` | `Model2VecEmbedder` (real) and `DeterministicEmbedder` (tests) |
+| `config.py` | all tuning knobs, env-settable, defaults typed here |
+| `factors.py` | the closed vocabularies shared by prompt, schema and validator |
+
+Supporting: `ai/tests/` (pytest, mocked LLM — no live calls), `ai/scripts/ingest.py`
+(loads a corpus into pgvector), `ai/scripts/manual_eval.py` (§13.5),
+`ai/Dockerfile` + `ai/bake_model.py`.
+
+Verified working on this branch: retrieval against the file-backed store, all six
+degraded paths, prompt-injection resistance against a live model, and the
+ref → `review_chunks.id` mapping.
+
+**Verified end-to-end 19 Sep 2026** — the full chain now runs: Spring → FastAPI over
+HTTP → pgvector retrieval → one live model call → validated structured output →
+`recommendations`. Both halves were exercised:
+
+- *Degraded path*, free: a product with no chunks returned `NO_PASSAGES_RETRIEVED`,
+  grade `-`, null summary, and the `system_log` row was persisted.
+- *Non-degraded path*, one billed `gpt-5.5` call against product 812's four chunks:
+  grade **C** on genuinely contested battery evidence, a grounded summary, and four
+  evidence findings carrying real `review_chunks.id` values. `retrieved_chunk_ids`
+  came back as `[3, 2, 1, 4]` — retrieval-rank order, not insertion order, which is
+  the §8.6 behaviour actually working rather than assumed.
+
+Two details worth knowing from that run:
+
+1. `meta.ai_model` persisted as `gpt-5.5-2026-04-23`, the id the provider resolved,
+   not the configured `gpt-5.5`. That is the more useful value for reproducibility.
+2. The model returned findings for `performance` and `thermals` — factors outside
+   the request's `deciding_factors`. That is correct: it grades what the evidence
+   actually discusses, and `factor_analysis.deterministic` stays separate.
+
+Still unverified: retrieval against a populated corpus at realistic scale (four
+chunks is fewer than `k`, so retrieval ordered rather than selected — the same gap
+§13.5 records for the manual harness).
+
+## 18.8 Backend AI caller and recommendation persistence — 19 Sep 2026
+
+Implemented under `backend/src/main/java/com/springboot/backend/recommendation/`.
+This is the Java half of the §9/§10 contract: it calls the AI layer and persists the
+result. It is **not** the deterministic verdict engine and **not** a trigger.
+
+| Class | Responsibility |
+|---|---|
+| `AssessRequest` / `AssessResponse` | records mirroring `ai/app/schemas.py` field for field |
+| `AiSettings` | `@ConfigurationProperties("ai")` — base URL, bearer token, timeout |
+| `RecommendationConfiguration` | the `RestClient` bean, bearer header, JDK HTTP client timeouts |
+| `AiAssessmentClient` | `POST /assess`; wraps transport failure as `AiServiceException` |
+| `RecommendationInput` | caller-supplied context: user/device/trigger ids + the `AssessRequest` + deterministic factor analysis |
+| `RecommendationRepository` | `JdbcTemplate` insert into `recommendations`, plus the degraded `system_log` row, in one transaction |
+| `RecommendationService` | orchestration: call, map, persist |
+
+Deliberate boundaries:
+
+- **Channel A is still absent.** `verdict`, `relevance_score`, `preference_score`,
+  `deciding_factors` and every figure in `computed` arrive as *input* on
+  `RecommendationInput`. Nothing here computes or second-guesses them, and the
+  verdict persisted is whatever the caller supplied (§7.1).
+- **The maturity gate (§8.3) is still not implemented.** Nothing in this package
+  checks evidence maturity before spending a call.
+- **No trigger.** No `@Scheduled`, no controller, no HTTP surface. The scheduled job
+  that will drive this calls `RecommendationService.assessAndPersist`.
+- **No JPA.** `spring-boot-starter-data-jpa` remains on the classpath and unused;
+  this package follows the `JdbcTemplate` precedent set by `RunStore` rather than
+  introducing the first `@Entity` for one write-once table.
+- `P*` refs are dropped at the persistence boundary — only `supporting_chunk_ids` /
+  `irrelevant_chunk_ids` are stored (§8.6).
+- A degraded response still persists the recommendation (verdict, scores,
+  deterministic factor analysis) with grade `-` and a null summary, and writes the
+  AI layer's ready-formed `system_log` row in the same transaction. A degraded
+  response carrying no `system_log` is treated as a contract violation and throws,
+  rather than silently losing the failure.
+
+Config added: `ai.service-url` / `ai.service-token` / `ai.timeout` in
+`application.properties`, bound to `AI_SERVICE_URL` / `AI_SERVICE_TOKEN` / `AI_TIMEOUT`.
+
+Two things the stub could not catch, found only by calling the real service — keep
+them in mind before changing the client:
+
+1. The JDK HTTP client defaults to HTTP/2 and attempts an h2c upgrade on cleartext.
+   uvicorn/h11 does not support it, the body is dropped, and FastAPI answers
+   `422 Field required, loc: body`. `RecommendationConfiguration` pins HTTP/1.1.
+2. `Content-Type: application/json` must be set explicitly, or FastAPI does not bind
+   the body at all — same misleading 422.
+
+Tests: `AssessContractTests` (no Spring context) pins the wire shape against
+`extra="forbid"`; `RecommendationPersistenceTests` runs the real client against a
+local `HttpServer` stub and asserts what lands in the database on the success,
+degraded, re-assessment and transport-failure paths. No live model call, no API cost.
 
 ---
 
@@ -1639,19 +1984,32 @@ npm run dev
 
 Current local services:
 
-| Service | Address |
-|---|---|
-| Frontend | `http://localhost:5173` |
-| Backend | `http://localhost:8080` |
-| PostgreSQL | `localhost:5433` |
+| Service | Address | Run via |
+|---|---|---|
+| Frontend | `http://localhost:5173` | `npm run dev` |
+| Backend | `http://localhost:8080` | `mvnw spring-boot:run` |
+| PostgreSQL | `localhost:5433` | Docker Compose |
+| AI service | `http://localhost:8000` | Docker Compose (or uvicorn, below) |
 
-Why only PostgreSQL in local Compose:
-- consistent DB version/config,
-- easy team setup,
-- avoids containerising everything before there is a real need,
-- React/Spring hot reload remains simpler.
+`docker compose up -d` now starts **postgres and the `ai` service**; an earlier
+version of this section said Compose ran PostgreSQL only. React and Spring Boot are
+still run directly for faster hot reload.
 
-The backend is containerised for Fly.io production using `backend/Dockerfile`.
+To work on the AI layer without rebuilding the image:
+
+```powershell
+cd ai
+python -m venv .venv; .\.venv\Scripts\Activate.ps1
+pip install -e .
+uvicorn app.main:app --reload
+```
+
+With `VECTOR_STORE=local` it reads `ai/data/vector_store/*.json` and needs no
+database. With `VECTOR_STORE=pgvector` it needs the corpus loaded — see
+`python -m scripts.ingest`.
+
+The backend is containerised for Fly.io production using `backend/Dockerfile`; the AI
+service has `ai/Dockerfile` but no hosting decision yet (§27.9).
 
 ---
 
@@ -1659,7 +2017,9 @@ The backend is containerised for Fly.io production using `backend/Dockerfile`.
 
 ## 20.1 Current `.env.example`
 
-Known local variables:
+The repo-root `.env` is the single source of truth for the whole project; the AI
+service reads it directly, and `docker-compose.yml` interpolates from it per service
+(listed explicitly, so the postgres container never sees LLM keys).
 
 ```text
 POSTGRES_DB
@@ -1667,13 +2027,57 @@ POSTGRES_USER
 POSTGRES_PASSWORD
 DB_HOST
 DB_PORT
-AI_API_KEY
-JWT_SECRET
+
+LLM_PROVIDER              # anthropic | openrouter | openai | custom
+LLM_MODEL
+ANTHROPIC_API_KEY         # only the credential matching LLM_PROVIDER is read
+OPENROUTER_API_KEY
+OPENAI_API_KEY
+LLM_BASE_URL              # LLM_PROVIDER=custom only
+LLM_API_KEY               # LLM_PROVIDER=custom only
+AI_SERVICE_TOKEN          # shared secret Spring sends to POST /assess
+AI_SERVICE_URL            # where Spring reaches the AI service
+AI_PORT
+VECTOR_STORE              # local | pgvector
+EMBEDDER                  # must match what ingested the corpus (§18.2)
+
+VITE_API_BASE_URL
+VITE_INGESTION_DEMO
 INGESTION_SCHEDULING_ENABLED
 INGESTION_ANCHOR
 INGESTION_ENABLED_SOURCES
-INGESTION_DEMO_PASSWORD   # local demo only
+JWT_SECRET
+JWT_EXPIRATION_SECONDS    # optional; defaults to 3600 and must be positive
 ```
+
+`AI_API_KEY` and `INGESTION_DEMO_PASSWORD` appeared in an earlier version of this
+section and are **no longer in `.env.example`** — do not reintroduce them. The AI
+credential is now provider-specific, per the list above.
+
+The AI service's remaining tuning knobs (`K`, `CHUNK_CHAR_CAP`, `MAX_RETRIES`,
+`LLM_EFFORT`, `IRRELEVANT_REF_LIMIT`, `EMBEDDING_DIM`, …) are typed defaults in
+`ai/app/config.py` rather than `.env` entries. Set them in the environment only to
+override a default.
+
+**`DB_PORT` still differs between files** — `.env.example` ships `5434`,
+`docker-compose.yml` falls back to `5433`, and §19's table says `5433`. The team
+should still settle on one. It is no longer a silent trap, though:
+`application.properties` now does
+`spring.config.import=optional:file:../.env[.properties]`, so the backend reads the
+repo-root `.env` on the host and follows whatever `DB_PORT` you set there.
+
+Before that import existed, the claim in `.env.example` that the backend reads that
+file "via application.properties placeholders" was simply false: placeholders
+resolve from the environment, not from the file. A plain `mvnw test` therefore fell
+back to the `5433` default and hit whatever Postgres happened to be there — on a
+machine with a second, non-pgvector Postgres on `5433`, every database-backed test
+failed with `extension "vector" is not available`.
+
+Precedence is unchanged where it matters: real environment variables still outrank
+the file, so CI (which exports `DB_HOST`/`DB_PORT`/`POSTGRES_DB` and has no `.env`)
+and the Fly.io image are unaffected — `optional:` simply skips the missing file.
+`backend/pom.xml` pins `POSTGRES_DB=techadvisor_test` for the test phase only, so
+`mvnw test` can never run against the development database.
 
 ## 20.2 Frontend
 
@@ -1701,11 +2105,16 @@ SPRING_DATASOURCE_URL
 SPRING_DATASOURCE_USERNAME
 SPRING_DATASOURCE_PASSWORD
 CORS_ALLOWED_ORIGINS
-AI_API_KEY / LLM_API_KEY
 JWT_SECRET
+JWT_EXPIRATION_SECONDS  # optional; defaults to 3600 and must be positive
+AI_SERVICE_TOKEN        # Spring's half of the shared secret for POST /assess
 ```
 
-Use one consistent AI key name when the AI service is implemented; do not proliferate aliases without reason.
+The old `AI_API_KEY / LLM_API_KEY` alias pair is superseded. The model credential now
+lives with the **AI service**, not the backend: Spring never calls a model provider
+directly, it calls `POST /assess`. Spring therefore needs `AI_SERVICE_TOKEN` and the
+AI service's base URL; the provider key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …)
+belongs only wherever the AI service runs (§27.9).
 
 ## 20.4 GitHub Actions
 
@@ -2031,19 +2440,41 @@ Need final selection for:
 - launch/change feeds,
 - owner reviews.
 
-## 27.2 LLM provider/model
-Hosted API planned, SMU-X budget available.
+## 27.2 LLM provider/model — mechanism resolved, choice still open
+Hosted API, SMU-X budget available.
 
-Exact model is not yet locked in this context.
+**Resolved:** the service is provider-agnostic. `LLM_PROVIDER` selects the adapter
+(`anthropic` native, everything else via the shared OpenAI-compatible adapter), so
+switching vendor is configuration, not code.
 
-## 27.3 Embedding model
-Not locked.
+**Still open:** which provider/model the team actually demos and deploys with.
+`.env.example` ships `anthropic` / `claude-opus-5`; the branch has been exercised
+against `openai` / `gpt-5.5`. Pick one before the demo so evidence is consistent.
 
-Must stay consistent between:
-- chunk embedding at ingestion,
-- retrieval query embedding.
+Be aware when comparing runs that the evidence grade is not reproducible run-to-run
+(§13.5).
 
-Embedding dimension depends on selected model.
+## 27.3 Embedding model — RESOLVED 19 Sep 2026
+
+Locked in, because it is baked into the image and the schema:
+
+```text
+EMBEDDER       = model2vec
+model          = minishlab/potion-retrieval-32M
+EMBEDDING_DIM  = 512          # must equal vector(N) in migration V6
+```
+
+Chosen because static embeddings need no GPU, no API key and no network at request
+time: a query embeds in single-digit milliseconds on CPU, so retrieval adds nothing
+meaningful next to the LLM call.
+
+The consistency requirement is unchanged and now enforced in code — ingestion stamps
+`review_chunks.embedder` and `PgVectorStore` raises `EmbedderMismatch` on drift
+(§18.2). Changing this model means re-ingesting the corpus **and** a new migration
+for the vector width if the dimension changes.
+
+`DeterministicEmbedder` is a test-only stand-in. It shares no vector space with any
+real model and must never be selected for a real corpus.
 
 ## 27.4 Maturity thresholds
 Suggested starting values:
@@ -2076,9 +2507,53 @@ Because the current “confidence” concept has become an evidence grade, notif
 Do not blindly reuse old “confidence > x” wording.
 
 ## 27.8 PC/GPU expansion
-The long-term concept can support PC components/peripherals, but the current 12-table DB is smartphone-first.
+The canonical V6 now includes the generic `products` table and a `gpu` subtype table alongside `phone`.
 
-Avoid expanding schema prematurely during Sprint 1 unless the team explicitly reprioritises.
+This is schema readiness only. GPU ingestion, business logic, recommendation rules, APIs, and UI remain future work and must not be presented as implemented.
+
+## 27.9 Currency handling in the budget gate - ASSUMPTION, NOT A DECISION
+
+Candidate shortlisting compares `device_preferences.budget` against
+`price_history.price` as **bare numbers, with no conversion**, on the assumption
+that the system runs in a single currency.
+
+That assumption is not enforced anywhere upstream: the ingestion `Price` payload
+accepts any ISO 4217 code. `CandidatePruningService` therefore logs a warning
+when a candidate's currency differs from the budget's, rather than converting -
+converting would mean inventing an exchange rate.
+
+`currency` columns exist and are persisted on both tables, so this can be made
+real later without a migration. **Do not read the current implementation as a
+team decision that the product is single-currency.**
+
+## 27.10 `device_preferences.budget` is NOT NULL - decided here, flagged onward
+
+Resolved by SCRUM-34: the budget ceiling is the entire basis of candidate
+shortlisting, so a preferences row without one cannot be evaluated.
+
+**Flag for SCRUM-20 (device inventory management):** the preferences UI must
+always collect a budget. If the product decides a budget should be optional,
+relax the constraint in a later migration rather than editing V6.
+
+## 27.11 Where the AI service is hosted — OPEN
+
+The deployment chain in §4.2 covers frontend, backend and database only. The AI
+service is containerised (`ai/Dockerfile`) and runs under local Compose, but **no
+hosting decision has been made or recorded**.
+
+Points the decision needs to account for:
+
+- the image carries the baked embedding model, so the container needs roughly
+  **512 MB–1 GB RAM**; a 256 MB instance is too small,
+- the provider API key must live wherever the service runs, not on the backend
+  (§20.3),
+- `AI_SERVICE_TOKEN` must match on both sides,
+- `VECTOR_STORE=pgvector` means this service also needs Neon credentials — it is the
+  first component besides the backend to hold database access.
+
+Fly.io alongside the backend is the obvious fit under §33's "keep infrastructure
+proportional" rule, but that is a recommendation, not a decision. Settle it before
+demo week and record it here.
 
 ---
 
@@ -2444,12 +2919,11 @@ Not in current agreed baseline.
 
 ## 38.4 More hardware categories
 Later:
-- GPUs
 - laptops
 - monitors/TVs
 - keyboards/mice/peripherals
 
-Do not force these into Sprint 1 schema unless deliberately reprioritised.
+The GPU subtype schema exists, but GPU product behaviour is also still future work. Do not add further category tables during Sprint 1 unless deliberately reprioritised.
 
 ---
 
@@ -2529,7 +3003,7 @@ Recommended doc cleanup:
 
 If only reading one section, read this:
 
-> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. Final live ingestion sources are still not fully confirmed, so source adapters must remain replaceable.
+> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203, backed by a generic product catalogue with `phone` and `gpu` subtype tables for schema evolution. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. Final live ingestion sources are still not fully confirmed, so source adapters must remain replaceable.
 
 ---
 

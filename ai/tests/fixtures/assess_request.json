@@ -1,0 +1,59 @@
+{
+  "request_id": "6f1d4a2e-0d0b-4f5c-9a2b-1c9f8e7d6a5b",
+  "user_context": {
+    "owned_device": {
+      "name": "Samsung Galaxy S22",
+      "device_age_months": 30,
+      "condition": "FAIR",
+      "satisfaction_score": 45,
+      "use_cases": ["photography", "gaming"]
+    },
+    "preferences": {
+      "budget": 1200,
+      "currency": "SGD",
+      "upgrade_urgency": "SOMEWHAT_URGENT",
+      "brand_flexibility": "SOMEWHAT_FLEXIBLE",
+      "priorities": {
+        "battery": 5,
+        "camera": 4,
+        "longevity": 4,
+        "performance": 2
+      },
+      "pain_points": "Battery drains by lunchtime; camera struggles in low light",
+      "notes": "Avoid launch-day pricing"
+    }
+  },
+  "candidate": {
+    "product_id": 812,
+    "name": "Samsung Galaxy S25",
+    "release_date": "2025-02-07",
+    "age_days": 588
+  },
+  "computed": {
+    "spec_deltas": {
+      "battery_mah": { "current": 3700, "candidate": 4900, "delta_pct": 32.4 },
+      "refresh_rate_hz": { "current": 120, "candidate": 120, "delta_pct": 0.0 },
+      "storage_gb": { "current": 128, "candidate": 256, "delta_pct": 100.0 }
+    },
+    "benchmark_uplift_pct": 61.2,
+    "price": {
+      "current": 1099,
+      "currency": "SGD",
+      "vs_budget": -101,
+      "change_pct": -8.3
+    },
+    "trigger_event": {
+      "event_type": "PRICE_CHANGE",
+      "title": "Galaxy S25 drops to S$1099",
+      "old_value": { "price": 1199 },
+      "new_value": { "price": 1099 }
+    }
+  },
+  "analysis": {
+    "verdict": "WORTH_CONSIDERING",
+    "relevance_score": 0.71,
+    "preference_score": 0.88,
+    "deciding_factors": ["battery", "camera", "value"]
+  },
+  "retrieval": { "k": 4 }
+}
