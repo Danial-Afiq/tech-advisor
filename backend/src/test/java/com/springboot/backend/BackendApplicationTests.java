@@ -2,9 +2,22 @@ package com.springboot.backend;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+
+import java.security.SecureRandom;
+import java.util.Base64;
 
 @SpringBootTest(properties = {"ingestion.reconciliation-enabled=false", "logging.level.root=WARN", "debug=false"})
 class BackendApplicationTests {
+
+    @DynamicPropertySource
+    static void validJwtTestConfiguration(DynamicPropertyRegistry registry) {
+        byte[] secret = new byte[32];
+        new SecureRandom().nextBytes(secret);
+        registry.add("jwt.secret", () -> Base64.getEncoder().encodeToString(secret));
+        registry.add("jwt.expiration-seconds", () -> 3600L);
+    }
 
     @org.springframework.beans.factory.annotation.Autowired
     org.springframework.web.context.WebApplicationContext web;
@@ -32,7 +45,7 @@ class BackendApplicationTests {
     }
 
 	@Test
-	void contextLoads() {
+	void contextLoadsWithValidJwtConfiguration() {
 	}
 
 }

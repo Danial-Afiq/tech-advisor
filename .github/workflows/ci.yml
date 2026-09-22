@@ -68,6 +68,7 @@ jobs:
           fi
 
           cd backend
+          export JWT_SECRET="$(openssl rand -base64 32)"
 
           # Prefer the Maven Wrapper so developers do not need
           # the same Maven version installed manually
