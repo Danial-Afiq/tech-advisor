@@ -1684,6 +1684,32 @@ The safe architectural decision is:
 - normalize into the shared ingestion contract,
 - keep AI/recommendation layers source-agnostic.
 
+## 17.1.1 Implemented real adapter + sink — smartphones (ticket 1.2)
+
+`MobileApiSmartphoneSource` (MobileAPI.dev, https://mobileapi.dev/docs/) and
+`SmartphoneCatalogSink` (writes to `products`/`phone` from
+`V6__create_sprint_1_schema.sql`) both exist. **Not** in
+`ingestion.enabled-sources` yet — the blocker is `sources.mobileapi.api-key`
+never being provisioned, not a missing sink anymore.
+
+- `Payload.Specifications` gained `brand`/`modelName`/`chipset` fields
+  (previously numeric-values-only) once the real schema proved `products`
+  requires brand+model_name as a NOT NULL unique pair, and `phone.chipset`
+  is TEXT, not numeric. This is a shared-contract change — any other
+  Specifications emitter (a future GPU source, ticket 1.3) picks up the new
+  fields too; `SimulatedSources.simulatedRelease()` was updated to match.
+- `phone.camera_specs` is TEXT ("48 MP + 12 MP + 12 MP"), not a numeric
+  column — the extractor's numeric camera-MP value has nowhere to go and is
+  currently just not persisted. Revisit if camera detail actually matters
+  to a recommendation, not before.
+- Base-object field names (`hardware`, `storage`, `battery_capacity`,
+  `camera`, `name`, `manufacturer_name`) are confirmed against a real
+  captured API response, not guessed — see `mobileapi-response.json` on the
+  ticket's branch history.
+- MobileAPI.dev isn't in the candidate list below (this section predates
+  that decision) — added here for traceability, not because §17.1's "not
+  fully confirmed" status has changed.
+
 ## 17.2 Compliance requirement
 Before scraping any real site:
 - inspect `robots.txt`,

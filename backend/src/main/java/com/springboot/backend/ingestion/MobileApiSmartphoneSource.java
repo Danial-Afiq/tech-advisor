@@ -16,12 +16,12 @@ import org.springframework.stereotype.Component;
 /**
  * Ticket 1.2 — smartphone specifications from MobileAPI.dev (https://mobileapi.dev/docs/).
  *
- * NOT added to ingestion.enabled-sources yet, and not meant to be until a real
- * product-catalogue sink exists: 1.1 only shipped SimulationSink behind the
- * ingestion-demo profile ("No extra domain tables or product schema are
- * created" — docs/ingestion.md). This adapter is fetch + translate only; being
- * a registered bean does not mean it runs (see SourceRegistry) — enabling it
- * live before a sink exists would fail loudly by design rather than silently.
+ * A real sink now exists (SmartphoneCatalogSink, writing to the canonical
+ * products/phone tables from V6__create_sprint_1_schema.sql) — still NOT
+ * added to ingestion.enabled-sources, because sources.mobileapi.api-key
+ * hasn't actually been provisioned yet, not because of a missing sink
+ * anymore. Being a registered bean does not mean it runs (see
+ * SourceRegistry); with apiKey blank, ingest() is a safe no-op (see below).
  *
  * Budget: exactly 1 HTTP request per run — the list endpoint already carries
  * every field this ticket needs (RAM/chipset via "hardware", storage, battery
@@ -71,18 +71,24 @@ public class MobileApiSmartphoneSource implements IngestionSource {
             if (processed >= DEVICE_LIMIT) break;
 
             String deviceId = text(device, "id");
-            if (deviceId == null) continue;
+            // Ticket AC: model name always non-null. Skip the device entirely rather than emit a
+            // Specifications payload that Payload.validate() would just reject anyway.
+            String modelName = text(device, "name");
+            String brand = text(device, "manufacturer_name");
+            if (deviceId == null || modelName == null || brand == null) { processed++; continue; }
 
+            String hardware = text(device, "hardware");
             Map<String, BigDecimal> values = new LinkedHashMap<>();
             Map<String, String> units = new LinkedHashMap<>();
-            putIfPresent(values, units, "ram", MobileApiFieldExtractor.ramGb(text(device, "hardware")), "GB");
+            putIfPresent(values, units, "ram", MobileApiFieldExtractor.ramGb(hardware), "GB");
             putIfPresent(values, units, "storage", MobileApiFieldExtractor.storageGb(text(device, "storage")), "GB");
             putIfPresent(values, units, "battery", MobileApiFieldExtractor.batteryMah(text(device, "battery_capacity")), "mAh");
             putIfPresent(values, units, "camera", MobileApiFieldExtractor.cameraMp(text(device, "camera")), "MP");
+            String chipset = MobileApiFieldExtractor.chipset(hardware).orElse(null);
 
             if (!values.isEmpty()) {
                 output.accept(new Payload(sourceId(), deviceId, context.now(),
-                        new Payload.Specifications(deviceId, values, units)));
+                        new Payload.Specifications(deviceId, brand, modelName, chipset, values, units)));
             }
 
             processed++;

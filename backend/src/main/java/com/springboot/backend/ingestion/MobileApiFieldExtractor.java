@@ -9,12 +9,13 @@ import java.util.regex.Pattern;
 /**
  * Pure parsing helpers for MobileAPI.dev responses (https://mobileapi.dev/docs/).
  *
- * The public docs describe category contents in prose, not exact JSON field
- * names/shapes (e.g. "Battery: type, charging" — no literal key given). These
- * methods are deliberately defensive: they scan for recognizable number+unit
- * patterns in whatever text is present rather than assuming a fixed schema.
- * VERIFY against a real response once an API key is available, and tighten
- * these patterns (or add real field-name lookups) if the live shape differs.
+ * Base-object field names (hardware/storage/battery_capacity/camera) are
+ * confirmed against a real captured response (mobileapi-response.json on
+ * this branch) — not guesses anymore. Display refresh-rate/price still scan
+ * defensively since those come from separate category endpoints this source
+ * doesn't call (dropped for request-budget reasons — see
+ * MobileApiSmartphoneSource), so they remain unverified against a real
+ * response and are kept implemented/tested for when that changes.
  *
  * No network, no Spring — safe to unit test with fixture JSON, no database.
  */
@@ -41,6 +42,19 @@ public final class MobileApiFieldExtractor {
 
     /** Base object's "camera" field, e.g. "48 MP + 12 MP + 12 MP" — takes the main sensor (first). */
     public static Optional<BigDecimal> cameraMp(String cameraText) { return firstMatch(cameraText, CAMERA_MP); }
+
+    /**
+     * Base object's "hardware" field with the RAM portion removed, e.g.
+     * "Snapdragon 8 Gen 3, 8GB RAM" -> "Snapdragon 8 Gen 3". Some real
+     * devices have no chipset recorded at all (just "2 GB RAM, ") -> empty.
+     */
+    public static Optional<String> chipset(String hardwareText) {
+        if (hardwareText == null) return Optional.empty();
+        Matcher m = RAM_GB.matcher(hardwareText);
+        String remainder = (m.find() ? hardwareText.substring(0, m.start()) : hardwareText).strip();
+        while (remainder.endsWith(",")) remainder = remainder.substring(0, remainder.length() - 1).strip();
+        return remainder.isEmpty() ? Optional.empty() : Optional.of(remainder);
+    }
 
     /** Display category's exact field name is undocumented — scans every text value in the response. */
     public static Optional<BigDecimal> refreshRateHz(JsonNode displayResponse) {

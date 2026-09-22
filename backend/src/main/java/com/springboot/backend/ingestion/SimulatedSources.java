@@ -20,7 +20,8 @@ public class SimulatedSources {
                         "demo-phone", "Demo phone announced", URI.create("https://example.com/demo-phone"),
                         context.now(), "Simulated review evidence; sentiment analysis happens downstream.")));
                 output.accept(new Payload(sourceId(), "specs-1", context.now(), new Payload.Specifications(
-                        "demo-phone", Map.of("battery", new BigDecimal("5000")), Map.of("battery", "mAh"))));
+                        "demo-phone", "DemoBrand", "Demo Phone", "Demo Chipset",
+                        Map.of("battery", new BigDecimal("5000")), Map.of("battery", "mAh"))));
                 output.accept(new Payload(sourceId(), "price-1", context.now(), new Payload.Price(
                         "demo-phone", new BigDecimal("999.00"), "SGD")));
             }
