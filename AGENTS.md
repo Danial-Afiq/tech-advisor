@@ -1649,6 +1649,16 @@ Do not ship the demo Basic Auth mechanism as the final production auth system.
 
 ---
 
+## 16.8 User JWT authentication
+
+New accounts store email addresses in trimmed, lowercase form. Login matches
+email addresses without case sensitivity, including older mixed-case accounts.
+
+The backend fails at startup with a clear error if the JWT secret is invalid
+or the token expiration is not positive. An integration test checks that
+`GET /api/profile` rejects missing or invalid tokens and returns the user's
+profile with a valid token.
+
 # 17. External data sources — current status
 
 ## 17.1 Important: final production sources are NOT fully confirmed
