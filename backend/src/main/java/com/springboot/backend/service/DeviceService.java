@@ -12,6 +12,7 @@ import com.springboot.backend.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.springboot.backend.exception.InvalidDeviceRequestException;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
 
@@ -21,6 +22,7 @@ public class DeviceService {
     private final UserDeviceRepository userDeviceRepository;
     private final UserRepository userRepository;
     private final ProductRepository productRepository;
+    private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
     public DeviceService(
             UserDeviceRepository userDeviceRepository,
@@ -39,6 +41,7 @@ public class DeviceService {
 
         User user = findUser(email);
         validateDeviceIdentity(request);
+        validateJsonFields(request);
 
         Product product = findOptionalProduct(
                 request.getProductId()
@@ -100,6 +103,7 @@ public class DeviceService {
 
         User user = findUser(email);
         validateDeviceIdentity(request);
+        validateJsonFields(request);
 
         UserDevice device = findOwnedCurrentDevice(
                 deviceId,
@@ -236,4 +240,19 @@ public class DeviceService {
                         : request.getSpecOverrides()
         );
     }
+
+    private void validateJsonFields(DeviceRequest request) {
+        try {
+                if (request.getUseCases() != null) {
+                jsonMapper.readTree(request.getUseCases());
+                }
+                if (request.getSpecOverrides() != null) {
+                jsonMapper.readTree(request.getSpecOverrides());
+                }
+        } catch (tools.jackson.core.JacksonException exception) {
+                throw new InvalidDeviceRequestException(
+                        "Use cases and spec overrides must contain valid JSON"
+                );
+        }
+        }
 }

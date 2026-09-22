@@ -19,4 +19,9 @@ public interface UserDeviceRepository
                     Long id,
                     Long userId
             );
+
+    Optional<UserDevice>
+            findByIdAndIsCurrentTrue(
+                    Long id
+            );
 }
