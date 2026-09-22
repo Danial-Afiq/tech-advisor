@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 20 September 2026
+> **Last consolidated:** 22 September 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -1821,9 +1821,13 @@ Behaviour:
 - triggered only after CI on `main`,
 - deploy runs only if CI succeeded,
 - checks out the exact SHA that passed CI,
+- fails before deployment unless `JWT_SECRET` and the three
+  `SPRING_DATASOURCE_*` secret names are present in Fly,
 - uses `flyctl deploy --remote-only`,
 - deploys backend from `backend/`,
-- uses GitHub secret `FLY_API_TOKEN`.
+- uses GitHub secret `FLY_API_TOKEN`,
+- polls the public `/actuator/health` route after deployment and succeeds only
+  on a 2xx response whose JSON status is `UP`.
 
 ## 18.6 Ingestion framework
 The ingestion scheduler/orchestrator/admin/demo framework is significantly implemented and documented.
@@ -2043,6 +2047,7 @@ INGESTION_SCHEDULING_ENABLED
 INGESTION_ANCHOR
 INGESTION_ENABLED_SOURCES
 JWT_SECRET
+JWT_EXPIRATION_SECONDS    # optional; defaults to 3600 and must be positive
 ```
 
 `AI_API_KEY` and `INGESTION_DEMO_PASSWORD` appeared in an earlier version of this
@@ -2101,6 +2106,7 @@ SPRING_DATASOURCE_USERNAME
 SPRING_DATASOURCE_PASSWORD
 CORS_ALLOWED_ORIGINS
 JWT_SECRET
+JWT_EXPIRATION_SECONDS  # optional; defaults to 3600 and must be positive
 AI_SERVICE_TOKEN        # Spring's half of the shared secret for POST /assess
 ```
 
