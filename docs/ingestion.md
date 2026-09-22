@@ -1,6 +1,6 @@
 # Ingestion runner: operation and source integration
 
-The runner provides a 24-hour schedule, asynchronous admin requests, source isolation and persistent run history. This ticket includes simulated adapters and receipts, not live market sources or catalogue/RAG processors.
+The runner provides a 14-day schedule, asynchronous admin requests, source isolation and persistent run history. This ticket includes simulated adapters and receipts, not live market sources or catalogue/RAG processors.
 
 ## Shared contract, different payloads
 
@@ -83,13 +83,13 @@ Limits currently live in `SourceContext` and `IngestionOrchestrator`; adapt them
 
 ## Scheduling and recovery
 
-The user replaced the original fortnightly cadence with daily runs on 2026-09-16. The first run is **17 September 2026 at 13:00 SGT (05:00 UTC)**, then every day at that time. Flyway V3 updates existing coordinator dates without deleting execution history.
+The schedule was temporarily set to daily on 2026-09-16 (Flyway V3) specifically to make the scheduler observable within a short testing window; that was never the target production cadence. As of 2026-09-22 it is reverted to the real intended cadence: every 14 days, via the `RunStore.INTERVAL` constant rather than a further data migration (no production data depended on the daily anchor). The first run is **17 September 2026 at 13:00 SGT (05:00 UTC)**, then every 14 days from that anchor.
 
 For the local scheduled run, keep the backend, Docker and computer running and awake. Closing the browser is fine. If the backend is offline at the due time, the catch-up runs after recovery. Scheduled results are available at `GET /api/admin/ingestion/runs?trigger=SCHEDULED`. The enabled simulated failure fixture intentionally makes the combined demo run report `PARTIAL_FAILURE` with 3 accepted payloads and 1 exception stack.
 
 Set `INGESTION_SCHEDULING_ENABLED=true`, `INGESTION_ANCHOR` to the first due UTC instant (for example `2026-09-17T05:00:00Z`), and an enabled-source list. Scheduling is disabled in the default production profile and enabled in `ingestion-demo`, unless explicitly overridden by `INGESTION_SCHEDULING_ENABLED=false`. The persisted anchor is authoritative after initialization; changing the environment does not silently reset an existing schedule. A deliberate schedule change needs a reviewed migration of coordinator state.
 
-The next slot is always previous scheduled slot +24 hours, independent of duration or manual runs. Spring TaskScheduler arms that instant. A ten-second reconciliation sweep repairs dispatch after restarts; it does not scrape every ten seconds. Concurrent replicas serialize admission through a short PostgreSQL row lock.
+The next slot is always previous scheduled slot +14 days, independent of duration or manual runs. Spring TaskScheduler arms that instant. A ten-second reconciliation sweep repairs dispatch after restarts; it does not scrape every ten seconds. Concurrent replicas serialize admission through a short PostgreSQL row lock.
 
 If the backend was offline, one run represents the most recent overdue slot; `missedSlots` records older coalesced slots. A due slot waits while another run is active. Run metadata captures actual start and lateness. One durable admission per due slot is guaranteed; exact execution at that instant requires a healthy running process and database.
 
@@ -151,7 +151,7 @@ $env:VITE_API_BASE_URL = 'http://localhost:8080'
 npm run dev
 ```
 
-Open `http://localhost:5173/admin/ingestion`, enter the configured password, select sources and click Run now. The default source fixtures produce three accepted payloads; selecting the failure fixture as well gives one captured exception. Production scheduling stays disabled in this manual demo. Fake-clock PostgreSQL tests exercise the scheduling admission path without shortening the real 24-hour interval.
+Open `http://localhost:5173/admin/ingestion`, enter the configured password, select sources and click Run now. The default source fixtures produce three accepted payloads; selecting the failure fixture as well gives one captured exception. Production scheduling stays disabled in this manual demo. Fake-clock PostgreSQL tests exercise the scheduling admission path without shortening the real 14-day interval.
 
 ## References
 
