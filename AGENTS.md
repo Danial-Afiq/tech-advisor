@@ -1610,16 +1610,16 @@ Keep real adapters inside this controlled framework.
 
 ## 16.5 Current scheduling decision
 
-Older Jira text says fortnightly.
+Cadence is **every 14 days** (`RunStore.INTERVAL`), matching the original ticket intent and the current live Jira ticket text.
 
-**Current implementation/docs override that:**
-- cadence changed to **every 24 hours**,
+**History, so this isn't re-litigated:** the interval was deliberately changed to every 24 hours on 2026-09-16, purely to make the scheduler observable within a short testing window — never the target production cadence. It was reverted back to 14 days on 2026-09-22 once that testing was done. There is no data migration for this change (no production data depended on the temporary daily anchor); it is a plain code constant.
+
 - initial anchor: **17 Sep 2026 13:00 SGT / 05:00 UTC**,
 - schedule state is persisted,
 - manual runs do not shift cadence,
 - restart recovery/catch-up is supported.
 
-Do not reintroduce a 14-day scheduler simply because old ticket text says so.
+Do not change this constant based on old references to "daily" in docs, commit messages, or comments predating 2026-09-22 — those describe the temporary testing window, not current behaviour.
 
 ## 16.6 Current simulated/demo ingestion
 Current runner includes simulated fixtures and persisted demo receipts.
@@ -2592,8 +2592,8 @@ Not part of the current plan.
 
 Chunks are embedded/stored; semantic retrieval happens later.
 
-## 28.6 14-day ingestion schedule
-Superseded by current 24-hour cadence in implementation/docs.
+## 28.6 24-hour ingestion schedule
+A deliberate short-term testing measure from 2026-09-16, not a design decision — superseded by the current, and original-intent, 14-day cadence (§16.5) on 2026-09-22.
 
 ## 28.7 Spring Boot 3.x
 Older Architecture wording.
