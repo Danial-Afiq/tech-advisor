@@ -6,7 +6,7 @@ import java.text.Normalizer;
 import java.util.*;
 import tools.jackson.databind.JsonNode;
 
-/** Fail closed on unknown suffixes and multiple distinct Google identities. */
+/** Fail closed on unknown suffixes and equally specific distinct Google identities. */
 public final class ProductMatcher {
     private ProductMatcher() {}
     public record Match(String externalId, String token, String title) {}
@@ -38,6 +38,9 @@ public final class ProductMatcher {
     }
     public static Match choose(String brand, String model, JsonNode results) {
         var matches = new TreeMap<String, Match>();
+        Comparator<Match> specificity = Comparator
+                .comparingInt((Match match) -> extraTokenCount(brand, model, match.title()))
+                .thenComparing(Match::title);
         for (JsonNode row : results) {
             String title = row.path("title").asText("");
             String id = row.path("product_id").asText("");
@@ -45,11 +48,21 @@ public final class ProductMatcher {
             if (!id.isBlank() && !token.isBlank() && title.length() <= 1000 && token.length() <= 16000
                     && accepts(brand, model, title)) {
                 Match match = new Match(id, token, title);
-                matches.merge(id, match, (a, z) -> a.title().compareTo(z.title()) <= 0 ? a : z);
+                matches.merge(id, match, (a, z) -> specificity.compare(a, z) <= 0 ? a : z);
             }
         }
         if (matches.isEmpty()) throw new IngestionFailure(SEARCHAPI_NO_MATCH);
-        if (matches.size() != 1) throw new IngestionFailure(SEARCHAPI_AMBIGUOUS_MATCH);
-        return matches.firstEntry().getValue();
+        int bestScore = matches.values().stream().mapToInt(
+                match -> extraTokenCount(brand, model, match.title())).min().orElseThrow();
+        var best = matches.values().stream().filter(
+                match -> extraTokenCount(brand, model, match.title()) == bestScore).toList();
+        if (best.size() != 1) throw new IngestionFailure(SEARCHAPI_AMBIGUOUS_MATCH);
+        return best.getFirst();
+    }
+
+    private static int extraTokenCount(String brand, String model, String title) {
+        var expected = new HashSet<>(tokens(brand));
+        expected.addAll(tokens(model));
+        return (int) tokens(title).stream().filter(token -> !expected.contains(token)).count();
     }
 }

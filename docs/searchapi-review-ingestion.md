@@ -46,9 +46,11 @@ Matching requires canonical brand/model tokens and contiguous ordered model text
 Extra words must be known storage/color/carrier/device suffixes, with core tokens
 comprising at least 40% of the title. Accessories, refurbished/used phones, unknown
 suffixes, repeated core tokens, conflicting variants (e.g. Pro Max vs Pro), and
-missing brand/model tokens are rejected. Multiple distinct matching Google product
-IDs fail with `SEARCHAPI_AMBIGUOUS_MATCH`; no match fails with `SEARCHAPI_NO_MATCH`.
-Repeated listings of the same Google ID resolve by title order.
+missing brand/model tokens are rejected. When valid results contain variants, the
+identity whose title has the fewest extra suffix tokens wins. Equally specific distinct
+Google product IDs fail with `SEARCHAPI_AMBIGUOUS_MATCH`; no match fails with
+`SEARCHAPI_NO_MATCH`. Repeated listings of the same Google ID use the same specificity
+rule, then title order as a stable tiebreaker.
 
 Mappings record matched title, external product ID, token, canonical name, locale,
 status and match/verification times. Canonical-name/locale changes miss the cache.

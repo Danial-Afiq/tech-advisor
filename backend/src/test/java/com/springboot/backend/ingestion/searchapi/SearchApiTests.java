@@ -45,12 +45,20 @@ class SearchApiTests {
         assertEquals(SEARCHAPI_NO_MATCH, assertThrows(IngestionFailure.class,
                 () -> ProductMatcher.choose("Apple", "iPhone 16 Pro", json.readTree("[]"))).code());
         var ambiguous = json.readTree("""
-                [{"title":"Apple iPhone 16 Pro","product_id":"one","product_token":"a"},
-                 {"title":"Apple iPhone 16 Pro Unlocked","product_id":"two","product_token":"b"}]
+                [{"title":"Apple iPhone 16 Pro Black Titanium","product_id":"one","product_token":"a"},
+                 {"title":"Apple iPhone 16 Pro Natural Titanium","product_id":"two","product_token":"b"}]
                 """);
         assertEquals(SEARCHAPI_AMBIGUOUS_MATCH, assertThrows(IngestionFailure.class,
                 () -> ProductMatcher.choose("Apple", "iPhone 16 Pro", ambiguous)).code());
         assertEquals("correct", ProductMatcher.choose("Apple", "iPhone 16 Pro", shopping()).externalId());
+    }
+
+    @Test void prefersTheLeastVariantSpecificValidIdentity() {
+        var variants = json.readTree("""
+                [{"title":"Apple iPhone 16 Pro Natural Titanium","product_id":"variant","product_token":"a"},
+                 {"title":"Apple iPhone 16 Pro Titanium","product_id":"canonical","product_token":"b"}]
+                """);
+        assertEquals("canonical", ProductMatcher.choose("Apple", "iPhone 16 Pro", variants).externalId());
     }
 
     @Test void normalizesDedupesDiscardsProfilesAndKeepsDatesRaw() {

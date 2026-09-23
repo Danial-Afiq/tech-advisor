@@ -1745,9 +1745,10 @@ startup. Production admin access stays closed; local manual tests use `ingestion
 
 Untargeted selection is VERIFIED SMARTPHONE products ordered by ID, default one per
 run (maximum two). A manual `productName` selects exactly one resolved canonical
-product instead. Matching requires brand/model tokens, rejects accessory/used/refurbished and
-conflicting or unknown wording, and refuses multiple distinct eligible Google IDs.
-The conservative policy may miss valid listings rather than guess their identity.
+product instead. Matching requires brand/model tokens and rejects accessory/used/refurbished
+and conflicting or unknown wording. Among valid variants, the Google identity with the
+fewest extra suffix tokens wins; equally specific distinct eligible IDs remain ambiguous.
+The conservative policy may miss valid listings rather than guess between tied identities.
 
 V7's `external_product_mapping` caches provider/product/locale mappings, canonical
 name and verification times. A changed canonical name or locale misses the cache.
