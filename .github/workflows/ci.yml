@@ -132,10 +132,12 @@ jobs:
     steps:
       # Download the repository so setup files can be checked
       - name: Checkout repository
+        id: repository_checkout
         uses: actions/checkout@v7
 
       # Make sure important project setup files are present
       - name: Verify required setup files
+        id: required_setup_files
         shell: bash
         run: |
           test -f README.md
@@ -145,6 +147,7 @@ jobs:
 
       # Prevent developers from accidentally committing the real local .env file
       - name: Ensure local env file is not committed
+        id: local_env_not_committed
         shell: bash
         run: |
           if git ls-files --error-unmatch .env >/dev/null 2>&1; then
@@ -156,14 +159,14 @@ jobs:
       # On successful CI this step is merely skipped inside the job and does not
       # appear as a separate PR check.
       - name: Notify Telegram on CI failure
-        if: ${{ always() && (needs.backend.result == 'failure' || needs.frontend.result == 'failure' || failure()) }}
+        if: ${{ always() && (needs.backend.result == 'failure' || needs.frontend.result == 'failure' || steps.repository_checkout.outcome == 'failure' || steps.required_setup_files.outcome == 'failure' || steps.local_env_not_committed.outcome == 'failure') }}
         shell: bash
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           BACKEND_RESULT: ${{ needs.backend.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
-          REPOSITORY_CHECKS_FAILED: ${{ failure() }}
+          REPOSITORY_CHECKS_FAILED: ${{ steps.repository_checkout.outcome == 'failure' || steps.required_setup_files.outcome == 'failure' || steps.local_env_not_committed.outcome == 'failure' }}
         run: |
           set -euo pipefail
 
