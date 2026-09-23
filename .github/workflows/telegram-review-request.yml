@@ -1,0 +1,62 @@
+name: Telegram - Review Request
+
+on:
+  pull_request:
+    types: [review_requested]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Notify Review Request
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send review request to Telegram
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REQUESTED_REVIEWER: ${{ github.event.requested_reviewer.login }}
+          REQUESTED_TEAM: ${{ github.event.requested_team.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REQUESTED_BY: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets are required."
+            exit 1
+          fi
+
+          telegram_handle() {
+            case "${1,,}" in
+              chuadongen) echo "@Ensombre" ;;
+              russelldesilva) echo "@russelldegolden" ;;
+              pestmant-uni) echo "@pestmant" ;;
+              zayna31) echo "@zayynnna" ;;
+              danial-afiq) echo "@muhd_danial_afiq" ;;
+              johntemothy) echo "@Temmoes" ;;
+              *) echo "@$1" ;;
+            esac
+          }
+
+          if [ -n "${REQUESTED_REVIEWER:-}" ]; then
+            reviewer="$(telegram_handle "$REQUESTED_REVIEWER")"
+          elif [ -n "${REQUESTED_TEAM:-}" ]; then
+            reviewer="Team: ${REQUESTED_TEAM}"
+          else
+            reviewer="Unknown reviewer"
+          fi
+
+          message="$(printf '👀 REVIEW REQUESTED\n\nPR #%s: %s\nReviewer: %s\nRequested by: @%s\n\n%s' \
+            "$PR_NUMBER" "$PR_TITLE" "$reviewer" "$REQUESTED_BY" "$PR_URL")"
+
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${message}"

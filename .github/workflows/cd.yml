@@ -111,3 +111,32 @@ jobs:
 
           echo "::error::Deployed backend did not report status UP at $health_url"
           exit 1
+
+      # Keep failure notification inside the existing deploy job so Telegram does
+      # not create an additional CD check.
+      - name: Notify Telegram on CD failure
+        if: failure()
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets are required."
+            exit 1
+          fi
+
+          short_sha="${SOURCE_SHA:0:7}"
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          message="$(printf '❌ CD FAILED\n\nRepository: %s\nBranch: %s\nCommit: %s\nBy: @%s\n\n%s' \
+            "$GITHUB_REPOSITORY" "$SOURCE_BRANCH" "$short_sha" "$GITHUB_ACTOR" "$run_url")"
+
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${message}"
