@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 22 September 2026
+> **Last consolidated:** 23 September 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -303,7 +303,9 @@ tech-advisor/
 ├─ .github/
 │  └─ workflows/
 │     ├─ ci.yml
-│     └─ cd.yml
+│     ├─ cd.yml
+│     ├─ telegram-pr-mention.yml
+│     └─ telegram-review-request.yml
 ├─ ai/                  # FastAPI AI layer (§5.4)
 │  ├─ app/              # service code: assess, prompt, validation, llm, retrieval
 │  ├─ scripts/          # ingest.py, manual_eval.py
@@ -1814,6 +1816,21 @@ Repo checks verify:
 - `.gitignore`
 - `.env` is not tracked
 
+CI failure notification is a step inside `Repository Checks`, so it does not
+create another PR check. The step runs when Backend, Frontend, or one of the
+explicit repository-validation steps fails. It reports repository-check failure
+from those local step outcomes rather than the broad `failure()` status function,
+which also becomes true when a dependency job fails.
+
+Telegram PR automation is split by event so irrelevant jobs are absent rather
+than shown as skipped:
+- `.github/workflows/telegram-review-request.yml` runs only for the
+  `pull_request.review_requested` event. Its `Notify Review Request` check appears
+  only after a reviewer is requested.
+- `.github/workflows/telegram-pr-mention.yml` runs for new issue comments, filters
+  to PR comments by repository collaborators, and sends only when the comment
+  contains a GitHub `@mention`.
+
 ## 18.5 CD currently exists
 `.github/workflows/cd.yml`
 
@@ -1827,7 +1844,9 @@ Behaviour:
 - deploys backend from `backend/`,
 - uses GitHub secret `FLY_API_TOKEN`,
 - polls the public `/actuator/health` route after deployment and succeeds only
-  on a 2xx response whose JSON status is `UP`.
+  on a 2xx response whose JSON status is `UP`,
+- sends Telegram CD-failure notification as a step inside the existing deploy
+  job, so it does not create a separate CD check.
 
 ## 18.6 Ingestion framework
 The ingestion scheduler/orchestrator/admin/demo framework is significantly implemented and documented.
@@ -2120,9 +2139,13 @@ belongs only wherever the AI service runs (§27.9).
 
 ```text
 FLY_API_TOKEN
+TELEGRAM_BOT_TOKEN
+TELEGRAM_CHAT_ID
 ```
 
-Never put the token value in the repo.
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are repository secrets used by the
+CI/CD failure steps and the review-request / PR-mention workflows. Never put any
+secret value in the repo.
 
 ## 20.5 Vercel
 Production frontend should use Vercel environment variable:
