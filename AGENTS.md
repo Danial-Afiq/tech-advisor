@@ -1686,27 +1686,55 @@ The safe architectural decision is:
 - normalize into the shared ingestion contract,
 - keep AI/recommendation layers source-agnostic.
 
-## 17.1.1 Implemented (not yet enabled) real adapters — 18 Sep 2026
+## 17.1.1 Implemented real adapters — 23 Sep 2026
 
-Two real `IngestionSource` adapters exist as of this branch, both fetch +
-translate only — neither is in `ingestion.enabled-sources` because no
-production sink exists yet for `Specifications`/`Article` payloads (see
-§16.3/§18.2: only `system_log` and the demo `SimulationSink` exist).
-
-- **`MobileApiSmartphoneSource`** (ticket 1.2) — MobileAPI.dev device list
-  endpoint (`/devices/` or `/devices/by-year/`), 1 request/run, up to 10
-  devices. RAM/storage/battery/camera parsed from list-response text fields.
-  Requires `sources.mobileapi.api-key` (not yet provisioned).
-- **`TechLaunchRssSource`** (ticket 1.4) — RSS 2.0 only, defaults to
-  Engadget + HardwareZone Singapore (`sources.tech-launch-rss.feed-urls`).
-  **The Verge was evaluated and rejected**: its `robots.txt` explicitly
-  disallows `ClaudeBot`/`anthropic-ai` outside one unrelated path
-  (`Allow: /sp/`, `Disallow: /`) — do not add it back without a human
-  re-clearing that. TechPowerUp (GPU specs, still unimplemented) has the
-  same kind of block and needs the same treatment before any adapter is
-  built against it.
+- **`MobileApiSmartphoneSource`** (ticket 1.2, PR #23, not yet merged as
+  of this writing) — MobileAPI.dev device list endpoint (`/devices/` or
+  `/devices/by-year/`), 1 request/run, up to 10 devices. RAM/storage/
+  battery/chipset parsed from list-response text fields. Has a real
+  production sink now (`SmartphoneCatalogSink`, upserts `products`/
+  `phone`). Requires `sources.mobileapi.api-key` (not yet provisioned),
+  so still not in `ingestion.enabled-sources` even once merged. Not
+  present on this branch (`feat/1.4-tech-launch-rss`) since it branched
+  off `main` before #23 landed.
+- **`HardwareZoneReviewSource`** (ticket 1.4, revised scope) — smartphone
+  and GPU **review** text (owner-evidence/sentiment pipeline, §7.2), not
+  the launch/change feed the ticket originally described. Fetch +
+  translate only: no production sink yet for `Article` payloads, so not in
+  `ingestion.enabled-sources`. Supersedes an earlier RSS-feed attempt
+  (`TechLaunchRssSource`, since removed) that was rejected mid-branch —
+  RSS snippets ran ~95 characters (no real body text), and GPU reviews are
+  too infrequent to reliably appear in the site's mixed, last-20-item feed
+  (verified: a real GPU review from three months prior never showed up in
+  either feed checked). Discovery instead walks the site's per-category
+  `/reviews` listing pages, which carry a real back-catalogue. Budget: 2
+  listing fetches + up to 4 smartphone + 4 GPU article fetches = 10
+  requests, exactly the shared `SourceContext` ceiling.
+  **The Verge was evaluated and rejected** for the earlier RSS attempt:
+  its `robots.txt` explicitly disallows `ClaudeBot`/`anthropic-ai` outside
+  one unrelated path (`Allow: /sp/`, `Disallow: /`) — do not add it back
+  without a human re-clearing that. **TechRadar was evaluated and
+  rejected**: permissive `robots.txt`, but Future plc's Terms of Service
+  (`futureplc.com/terms-and-conditions-uk/`) explicitly prohibit "text or
+  data mining or web scraping ... including development, training,
+  fine-tuning or validation of AI systems," with no academic exception —
+  found only by reading the actual ToS text, not just `robots.txt`.
+  **CNET** blocks `ClaudeBot`/`anthropic-ai` by name in `robots.txt`.
+  **Android Authority** has a general scraping ban. HardwareZone (SPH
+  Media) and Engadget (Static Media) were checked against the same
+  evidentiary bar (robots.txt **and** actual ToS text, not robots.txt
+  alone) and no AI-training/scraping-prohibition clause was found in
+  either, despite a real search effort. TechPowerUp (GPU specs, still
+  unimplemented) has a Verge-style block and needs the same treatment
+  before any adapter is built against it.
 - Neither adapter's exact field/source selection is a final decision —
   both are config-driven per §17.1's "keep source adapters replaceable."
+- **Mandatory standard going forward**: before recommending or building
+  against any external source, check both `robots.txt` **and** the
+  site's actual Terms of Service text for AI-training/scraping
+  restrictions — a permissive `robots.txt` alone is not sufficient
+  clearance (this is exactly how TechRadar was nearly built against
+  before its ToS prohibition was found).
 
 ## 17.2 Compliance requirement
 Before scraping any real site:
