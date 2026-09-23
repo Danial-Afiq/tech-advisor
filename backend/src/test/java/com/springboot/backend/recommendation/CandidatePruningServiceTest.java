@@ -55,7 +55,7 @@ class CandidatePruningServiceTest {
 
     @Test
     void rejectsAnUnknownDevice() {
-        when(userDeviceRepository.findById(DEVICE_ID)).thenReturn(Optional.empty());
+        when(userDeviceRepository.findByIdAndIsCurrentTrue(DEVICE_ID)).thenReturn(Optional.empty());
 
         var exception = assertThrows(ResourceNotFoundException.class,
                 () -> service.getViableCandidates(DEVICE_ID));
@@ -83,7 +83,7 @@ class CandidatePruningServiceTest {
         // returns nothing and looks indistinguishable from "no candidates".
         UserDevice device = mock(UserDevice.class);
         when(device.getProduct()).thenReturn(null);
-        when(userDeviceRepository.findById(DEVICE_ID)).thenReturn(Optional.of(device));
+        when(userDeviceRepository.findByIdAndIsCurrentTrue(DEVICE_ID)).thenReturn(Optional.of(device));
         when(devicePreferenceRepository.findById(DEVICE_ID))
                 .thenReturn(Optional.of(new DevicePreference(DEVICE_ID, new BigDecimal("900"), "SGD")));
 
@@ -95,6 +95,16 @@ class CandidatePruningServiceTest {
     }
 
 
+    @Test
+    void rejectsARemovedDevice() {
+        when(userDeviceRepository.findByIdAndIsCurrentTrue(DEVICE_ID))
+                .thenReturn(Optional.empty());
+
+        assertThrows(ResourceNotFoundException.class,
+                () -> service.getViableCandidates(DEVICE_ID));
+
+        verifyNoInteractions(devicePreferenceRepository, productRepository);
+    }
 
     private void givenDeviceWithProduct(String category, Long productId) {
         Product product = mock(Product.class);
@@ -104,7 +114,7 @@ class CandidatePruningServiceTest {
         UserDevice device = mock(UserDevice.class);
         lenient().when(device.getProduct()).thenReturn(product);
 
-        when(userDeviceRepository.findById(DEVICE_ID)).thenReturn(Optional.of(device));
+        when(userDeviceRepository.findByIdAndIsCurrentTrue(DEVICE_ID)).thenReturn(Optional.of(device));
     }
 
     private void givenBudget(BigDecimal budget, String currency) {

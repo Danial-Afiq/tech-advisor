@@ -13,7 +13,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Component
 public class RunStore {
-    public static final Duration INTERVAL = Duration.ofHours(24);
+    public static final Duration INTERVAL = Duration.ofDays(14);
     public static final Duration LEASE = Duration.ofSeconds(90);
     private final JdbcTemplate db;
     private final TransactionTemplate tx;
