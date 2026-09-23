@@ -26,6 +26,10 @@ jobs:
     # Only deploy if CI completed successfully
     if: github.event.workflow_run.conclusion == 'success'
 
+    env:
+      # GitHub injects the hidden app-scoped Fly deploy token here.
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
     steps:
       # Checkout the exact commit that CI tested
       - name: Checkout tested commit
@@ -37,10 +41,102 @@ jobs:
       - name: Set up Fly CLI
         uses: superfly/flyctl-actions/setup-flyctl@master
 
+      # Check secret names only. flyctl never returns their values.
+      - name: Verify required Fly secrets
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_secrets=(
+            JWT_SECRET
+            SPRING_DATASOURCE_URL
+            SPRING_DATASOURCE_USERNAME
+            SPRING_DATASOURCE_PASSWORD
+          )
+          secret_metadata="$(flyctl secrets list --json)"
+
+          for required_secret in "${required_secrets[@]}"; do
+            if ! jq -e --arg name "$required_secret" \
+              'any(.[]; .name == $name)' <<<"$secret_metadata" >/dev/null; then
+              echo "::error::Missing required Fly secret: $required_secret"
+              exit 1
+            fi
+          done
+
       # Deploy the Spring Boot backend from the backend/ directory
       - name: Deploy backend
         working-directory: backend
         run: flyctl deploy --remote-only
+
+      # Fly's service check gates the rollout; this separate check verifies the
+      # public route and the Actuator response after flyctl reports success.
+      - name: Smoke test deployed backend
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          fly_config="$(flyctl config show --local)"
+          if ! app_name="$(jq -er '.app | select(type == "string" and length > 0)' \
+            <<<"$fly_config")"; then
+            echo "::error::Could not determine the Fly app name from backend/fly.toml"
+            exit 1
+          fi
+
+          health_url="https://${app_name}.fly.dev/actuator/health"
+          max_attempts=12
+
+          for attempt in $(seq 1 "$max_attempts"); do
+            response_file="$(mktemp)"
+            http_status="$(curl --silent --show-error \
+              --output "$response_file" \
+              --write-out '%{http_code}' \
+              --max-time 10 \
+              "$health_url" || true)"
+
+            if [[ "$http_status" =~ ^2[0-9][0-9]$ ]] \
+              && jq -e '.status == "UP"' "$response_file" >/dev/null 2>&1; then
+              rm -f "$response_file"
+              echo "Backend health check passed (HTTP $http_status, status UP)."
+              exit 0
+            fi
+
+            rm -f "$response_file"
+            echo "Health check attempt ${attempt}/${max_attempts} not ready (HTTP ${http_status:-unreachable})."
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              sleep 10
+            fi
+          done
+
+          echo "::error::Deployed backend did not report status UP at $health_url"
+          exit 1
+
+      # Keep failure notification inside the existing deploy job so Telegram does
+      # not create an additional CD check.
+      - name: Notify Telegram on CD failure
+        if: failure()
+        shell: bash
         env:
-          # GitHub injects the hidden Fly deploy token here
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets are required."
+            exit 1
+          fi
+
+          short_sha="${SOURCE_SHA:0:7}"
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          message="$(printf '❌ CD FAILED\n\nRepository: %s\nBranch: %s\nCommit: %s\nBy: @%s\n\n%s' \
+            "$GITHUB_REPOSITORY" "$SOURCE_BRANCH" "$short_sha" "$GITHUB_ACTOR" "$run_url")"
+
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${message}"

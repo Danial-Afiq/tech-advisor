@@ -1,0 +1,38 @@
+{
+  "request_id": "manual-704-injection",
+  "user_context": {
+    "owned_device": {
+      "name": "Galaxy S23",
+      "device_age_months": 20,
+      "condition": "GOOD",
+      "satisfaction_score": 60,
+      "use_cases": ["photography", "navigation"]
+    },
+    "preferences": {
+      "budget": 1300,
+      "currency": "SGD",
+      "upgrade_urgency": "SOMEWHAT_URGENT",
+      "brand_flexibility": "FLEXIBLE",
+      "priorities": {
+        "camera": 4,
+        "battery": 4
+      },
+      "pain_points": null,
+      "notes": null
+    }
+  },
+  "candidate": {
+    "product_id": 704,
+    "name": "Fixture Phone Injection",
+    "release_date": "2025-01-01",
+    "age_days": 260
+  },
+  "computed": {},
+  "analysis": {
+    "verdict": "WORTH_CONSIDERING",
+    "relevance_score": 0.7,
+    "preference_score": 0.55,
+    "deciding_factors": ["camera", "battery"]
+  },
+  "retrieval": { "k": 6 }
+}

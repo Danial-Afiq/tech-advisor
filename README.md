@@ -56,19 +56,26 @@ The Python service is planned as a small, stateless AI service that receives one
 
 ```text
 tech-advisor/
-├── backend/                  # Spring Boot application
+├── backend/                  # Spring Boot application (+ Dockerfile, fly.toml)
 ├── frontend/                 # React + TypeScript + Vite application
+├── ai/                       # Python FastAPI evidence-grading service (+ Dockerfile)
 ├── docs/                     # Project / technical notes
+├── scripts/                  # Local demo helpers
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml            # Tests and build checks
 │       └── cd.yml            # Backend deployment to Fly.io
-├── docker-compose.yml        # Local PostgreSQL
-├── .env.example              # Safe backend/local config example
-└── README.md
+├── docker-compose.yml        # Local PostgreSQL + AI service
+├── .env                      # ALL config and secrets (git-ignored)
+├── .env.example              # Committed template for the above
+└── README.md                 # This file
 ```
 
-The Python AI service can be added as its own folder/service when implementation starts.
+**Two Dockerfiles, one application.** A Dockerfile builds exactly one image, and
+the backend (JVM) and AI layer (Python) have nothing in common at the image
+level, so each owns its own. `docker-compose.yml` is what composes them into a
+single running system. The frontend has no Dockerfile because it deploys to
+Vercel rather than as a container.
 
 ## Runtime flow
 
@@ -315,6 +322,258 @@ The Python service should **not** own authentication, scheduling, notifications,
 
 Spring handles those responsibilities first, including cheap SQL filtering to decide which users are affected.
 
+### The contract Spring Boot must satisfy
+
+`POST /assess`, with `Authorization: Bearer <AI_SERVICE_TOKEN>`. Request and
+response shapes live in `ai/app/schemas.py`, which is authoritative; Swagger
+renders them at `/docs`.
+
+Three things the Java side owns before it may call this route:
+
+1. **The preference gate and the verdict.** If the gate fails outright, the
+   verdict is `NO_MEANINGFUL_CHANGE` and no call is made.
+2. **The maturity gate.** No reviews, reviews too close to release, or fewer
+   than `MIN_CHUNKS` passages means `confidence = '-'`, template reasoning, and
+   no call. This service cannot make that decision: it never sees
+   `products.release_date` against the whole corpus, only the passages it
+   retrieved. Two cases the spec's pseudocode does not cover and the Java gate
+   must: `release_date IS NULL`, and chunks whose document has no
+   `published_at`.
+3. **Every number.** `benchmark_uplift_pct` with `higher_is_better` already
+   applied, `device_age_months`, `age_days`, `delta_pct`, `vs_budget`, and
+   `spec_overrides` already folded into `spec_deltas`. The model does no
+   arithmetic and no date maths.
+
+#### Persisting the response
+
+| Response field | Column |
+| --- | --- |
+| `evidence_grade` | `recommendations.confidence` |
+| `evidence_findings` | `factor_analysis` → `evidence` |
+| `summary` | `reasoning` |
+| `meta.ai_model` | `ai_model` |
+| `meta.prompt_version` | `prompt_version` |
+| `meta.retrieved_chunk_ids` | `input_snapshot.retrieved_chunk_ids` |
+| `meta.retrieval` | `input_snapshot.retrieval` |
+| `request_id` | `input_snapshot.request_id` |
+| `system_log` (when present) | one `system_log` row |
+
+Keep `factor_analysis.deterministic` and `factor_analysis.evidence` as separate
+keys. They may disagree — a spec-strong phone with widespread battery
+complaints should read `WORTH_CONSIDERING` with grade `D` — and that
+disagreement is the most useful thing the system can show. Never merge them.
+
+`supporting_chunk_ids` on each finding is what Spring persists. The `P1`-style
+refs also come back, but they are local to one request and mean nothing once it
+ends; they are returned for debugging only.
+
+### Decisions taken in the AI layer
+
+- **Refs are resolved before responding.** Each finding also carries
+  `supporting_chunk_ids`, and `meta.retrieved_chunk_ids` holds all K in rank
+  order — otherwise persisted refs could never be resolved back to a chunk.
+- **The service returns the degraded result itself.** On a model failure, a
+  refusal, or validation failing twice, it returns HTTP 200 with
+  `evidence_grade: "-"`, `meta.degraded: true`, a `degraded_reason`, and a
+  ready-formed `system_log` row. Spring's path is then identical whether the
+  call worked or not. It never fabricates a grade or a summary.
+- **A mostly-irrelevant retrieval produces `-`, not a thin grade.** If the model
+  marks more than `IRRELEVANT_REF_LIMIT` (default 0.75) of retrieved passages as
+  describing a different product, the grade is discarded. Without this a grade
+  can rest on a single stray passage. Set it to `1.0` to disable.
+- **At least one finding is required** alongside a real grade.
+- **`source_type` without a schema change.** Approximated by a `source_name` →
+  type allowlist in `ai/app/config.py`, stamped into each passage header so the
+  prompt can tell an owner report from a launch-day editorial.
+- **`source_name` is sanitised.** It is scraped text sitting in a structured
+  header; `|`, `[`, `]` and newlines are stripped so a source name cannot forge
+  a passage header.
+
+### Retrieval: the vector store
+
+Two implementations behind one interface, chosen with `VECTOR_STORE`.
+
+**`pgvector`** is the real one: `review_chunks` joined to `review_documents`,
+ranked by cosine distance with an HNSW index. Created by migrations
+`V4__enable_pgvector.sql` and `V6__create_sprint_1_schema.sql`. Requires a
+Postgres image that ships the extension - `docker-compose.yml` uses
+`pgvector/pgvector`, because stock `postgres:17-alpine` does **not** have it
+and `CREATE EXTENSION vector` fails against it.
+
+**`local`** reads `*.json` from `ai/data/vector_store/`, needs no database,
+and is the default for a fresh clone. `chunks.json` is committed there as demo
+data: five passages for product `812` plus one for `999` that must never be
+retrieved - it is what proves the `product_id` filter works. That filter is the
+difference between grading a phone on its own reviews and grading it on
+someone else's.
+
+The path resolves against the `ai` package root, never the working directory
+(`/srv` in the container, matching the compose mount). A CWD-relative path
+failed silently: started from the repo root it found nothing, retrieved
+nothing, and degraded every assessment to `-` with no error explaining why.
+
+#### Setting up pgvector locally
+
+```bash
+docker compose up -d postgres
+
+cd backend && ./mvnw flyway:migrate   -Dflyway.url=jdbc:postgresql://localhost:5434/techadvisor   -Dflyway.user=techadvisor -Dflyway.password=devpassword   -Dflyway.locations=filesystem:src/main/resources/db/migration
+
+cd ../ai && python -m scripts.ingest --truncate   # embeds + loads the corpus
+```
+
+Then set `VECTOR_STORE=pgvector` in the root `.env`.
+
+`scripts/ingest.py` stands in for the real ingestion pipeline, which is the
+Java side's job (`docs/ingestion.md`). Re-running it is safe: documents and
+chunks are upserted rather than appended, because duplicated passages would
+quietly skew retrieval toward whatever was ingested twice.
+
+#### Embeddings
+
+`minishlab/potion-retrieval-32M` via `model2vec`: 512 dimensions, local, free,
+no API key, and **no torch** - static embeddings are a token-to-vector lookup
+rather than a transformer forward pass, so a query embeds in single-digit
+milliseconds on CPU and the dependency is ~87 MB rather than ~2 GB.
+
+The previous `DeterministicEmbedder` is a hashed bag-of-words, kept for tests
+where determinism matters more than meaning. It is not good enough for real
+retrieval. Measured on the demo corpus, query *"how is the battery life after
+a few months of ownership"*:
+
+| passage | potion-retrieval | deterministic |
+| --- | --- | --- |
+| battery noticeably worse | **+0.493** | +0.224 |
+| eight months in, battery holds up | **+0.420** | +0.302 |
+| camera low light is a step up | +0.044 | +0.185 |
+| performance fine, gets warm | −0.004 | +0.167 |
+
+The stand-in barely separates a camera passage from a battery one. The
+semantic model separates them by roughly 10x.
+
+The model is **baked into the Docker image** at build time (`bake_model.py`,
+~126 MB at `/opt/model`) and `HF_HUB_OFFLINE=1` is set, so the container never
+reaches HuggingFace on the request path and works with no egress at all. Two
+non-obvious details, both load-bearing:
+
+- It is written as a **plain directory**, not into the HuggingFace cache. The
+  repo ships the weights twice (`model.safetensors` and `onnx/model.onnx`,
+  ~124 MB each) and model2vec only reads the safetensors - but deleting the
+  ONNX from the *cache* makes every later offline load fail with
+  `IncompleteSnapshotError`, because the hub verifies that every file in the
+  repo tree is present. A directory skips that check.
+- The embedder's **identity stays the repo id** even when loaded from
+  `/opt/model`. It is written to `review_chunks.embedder`, so if the container
+  reported `/opt/model` while a laptop reported the repo id, every
+  containerised query would trip `EmbedderMismatch` against a corpus ingested
+  from the host.
+
+**Both sides of a comparison must use the same embedder.** Vectors from two
+models share no space, and pgvector will compare them happily and return a
+confident, meaningless ranking - no error anywhere. `review_chunks.embedder`
+records which model produced each row and `PgVectorStore` checks it on every
+search, raising `EmbedderMismatch` rather than grading nonsense. Changing
+`EMBEDDER` means changing the `vector(N)` column width **and** re-running the
+ingestion script.
+
+#### When retrieval fails
+
+With pgvector, retrieval is a network call. A database outage, an exhausted
+pool or an embedder mismatch degrades the assessment to `-` with
+`degraded_reason: RETRIEVAL_FAILED` and a `system_log` row, exactly like a
+model failure - the user keeps the verdict and the deterministic factor
+analysis. It never returns a 500 and never fabricates a grade. Verified by
+killing the database mid-request.
+
+### Model and provider configuration
+
+The layer is **vendor-neutral**. `Assessor` depends only on the `Llm` protocol
+in `ai/app/llm.py`, so which company answers is a config change, not a code
+change. `LLM_PROVIDER` selects one of two adapters:
+
+| `LLM_PROVIDER` | Adapter | Reaches |
+| --- | --- | --- |
+| `anthropic` *(default)* | `AnthropicLlm`, native Claude API | Claude models |
+| `openrouter` | `OpenAICompatibleLlm` | one key fronting Anthropic, OpenAI, Google, Meta, Mistral, DeepSeek … |
+| `openai` | `OpenAICompatibleLlm` | OpenAI directly |
+| `custom` + `LLM_BASE_URL` | `OpenAICompatibleLlm` | Ollama, vLLM, Groq, Together, DeepSeek, a company gateway |
+
+Only two adapters are needed for all of that, because the OpenAI
+chat-completions format is a de-facto standard — the base URL is the only thing
+that differs between those vendors.
+
+`LLM_MODEL` travels with `LLM_PROVIDER` and both live in the root `.env`. The
+same model is named differently per vendor (`claude-opus-5` natively,
+`anthropic/claude-opus-5` through OpenRouter), so changing one without the
+other is always a mistake.
+
+#### Structured output is tiered
+
+Not every model reachable through a gateway can enforce a JSON schema
+server-side, so `LLM_SCHEMA_MODE=auto` (the default) starts at the strongest
+tier and steps down only when a provider rejects the request *because of the
+response format*, then remembers what worked so the wasted request is paid once
+per process rather than per assessment:
+
+```text
+json_schema  ->  json_object  ->  a schema spelled out in the prompt
+```
+
+Pin it (`json_schema`, `json_object`, `prompt`) to skip the discovery. A 400
+for any other reason — a bad model name, say — is surfaced rather than
+mistaken for a format problem and quietly retried at a weaker tier.
+
+This is where the existing design pays off: whatever a weaker model still gets
+wrong is caught by `validate()` and the retry/degrade path, so the result is a
+degraded `-` rather than a fabricated grade.
+
+#### What each adapter sends
+
+Native Anthropic (`claude-opus-5`, via `client.beta.messages.create`):
+
+- **No `temperature`.** Sampling parameters are rejected with a 400 on this
+  model. Depth is controlled with `LLM_EFFORT` (`low`…`max`, default `medium`).
+- Thinking is on by default and is billed inside `max_tokens`, which is why
+  `LLM_MAX_TOKENS` is generous relative to how small the JSON output is.
+- `output_config.format` constrains the response to the schema, so the field
+  order in `output_schema()` is enforced, not merely requested. That order is
+  load-bearing: models generate left to right, so the grade is committed before
+  any personalised prose is written. **Do not reorder it.**
+- `fallbacks="default"` re-runs a request server-side if a safety classifier
+  declines it. Disable with `LLM_FALLBACKS_ENABLED=false`.
+- Prompt caching on the system block.
+
+OpenAI-compatible:
+
+- `response_format` per the tier above; the system prompt is left clean when
+  the provider enforces the schema, so the cached prefix is not wasted on
+  instructions the API already guarantees.
+- Reasoning depth is **opt-in** (`LLM_SEND_EFFORT=true`), because many models
+  behind a gateway reject the parameter outright.
+- Truncation (`finish_reason: "length"`) is reported as itself rather than
+  left to fail validation, since no retry can fix a token ceiling.
+- Gateways sometimes report upstream failures as HTTP 200 with no choices;
+  that is caught explicitly.
+- `meta.ai_model` records the model that **actually answered**, which is not
+  always the one requested — gateways route and substitute.
+
+The Anthropic-specific levers are kept rather than flattened to a lowest common
+denominator, so running on Claude does not cost you effort control, refusal
+fallbacks or prompt caching just because the layer also supports other vendors.
+
+Full validation still runs even though the schema is enforced API-side: a
+hallucinated ref is indistinguishable from a real one to any schema validator,
+and it is the failure that would otherwise attribute a grade to evidence that
+was never retrieved.
+
+### Not built in the AI layer
+
+Rate limiting and a per-event call cap. One `market_events` row fans out to
+every affected `user_device`, and each pair clearing the maturity gate fires a
+call; at demo scale one price drop can be dozens of calls in a burst against a
+shared budget. The bound belongs in the Java orchestrator, which is what knows
+the fan-out. `LLM_TIMEOUT_SECONDS` covers only the single call.
+
 ## Personalisation
 
 Personalisation is the project's primary advanced AI capability.
@@ -527,6 +786,72 @@ Build the frontend:
 
 ```bash
 npm run build
+```
+
+Frontend environment variables (`VITE_API_BASE_URL`, `VITE_INGESTION_DEMO`) are
+read from the **repo-root** `.env`, not from `frontend/`. See
+[Configuration and secrets](#configuration-and-secrets).
+
+### Run the AI layer
+
+From:
+
+```text
+ai/
+```
+
+Create the virtual environment and install, including dev dependencies:
+
+```bash
+python -m venv .venv
+./.venv/Scripts/python.exe -m pip install -e ".[dev]"     # Windows
+# source .venv/bin/activate && pip install -e ".[dev]"    # macOS / Linux
+```
+
+There is no `ai/.env`. Configuration comes from the repo-root `.env`, resolved
+from the source file rather than the working directory, so the server behaves
+identically started from `ai/` or from the repo root:
+
+```bash
+./.venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 8000
+```
+
+Swagger UI is at `http://localhost:8000/docs`, health at `/health`.
+
+```bash
+./.venv/Scripts/python.exe -m pytest        # 106 tests, no live model calls
+```
+
+**What works without any API key.** The test suite, `/health`, `/docs` and the
+whole container build need no credential — the tests inject a fake model client
+at two levels. `POST /assess` is the *only* thing that makes a live call, and it
+will fail without a key for whichever `LLM_PROVIDER` is selected. An empty key
+is a legitimate local state; it simply means the grading path is untested on
+your machine.
+
+**Switching provider** is two lines in the root `.env`:
+
+```bash
+LLM_PROVIDER=openrouter
+LLM_MODEL=anthropic/claude-opus-5     # or openai/gpt-5, google/gemini-..., meta-llama/...
+OPENROUTER_API_KEY=sk-or-...
+```
+
+Nothing else changes — `Assessor` depends on the `Llm` protocol, not on a
+vendor. To run against a local model with no key and no cost at all:
+
+```bash
+LLM_PROVIDER=custom
+LLM_BASE_URL=http://localhost:11434/v1    # Ollama
+LLM_MODEL=qwen2.5
+LLM_API_KEY=ollama                        # any non-empty string; Ollama ignores it
+```
+
+Or run it in Docker alongside PostgreSQL, which reads the same root `.env`:
+
+```bash
+docker compose up -d postgres ai
+curl http://localhost:8000/health
 ```
 
 ## Database schema changes
@@ -780,62 +1105,80 @@ This means frontend deployment does not require a separate custom `flyctl`-style
 
 ## Configuration and secrets
 
-Never commit real secrets or `.env` files.
+**One file.** The repo-root `.env` is the single source of truth for every
+secret and every setting that more than one service needs. There is no
+`ai/.env` and no `frontend/.env`.
 
-### Local/backend variables
+Copy `.env.example` to `.env` and fill in the blanks. `.env` is git-ignored and
+CI fails if it is ever committed; `.env.example` is committed and must keep the
+same key set.
 
-Common local database variables include:
+How each service reaches it:
 
-```text
-POSTGRES_DB
-POSTGRES_USER
-POSTGRES_PASSWORD
-DB_HOST
-DB_PORT
-```
+| Service | Mechanism |
+| --- | --- |
+| backend | `application.properties` placeholders, read from the process environment |
+| ai | pydantic-settings, path resolved from `ai/app/config.py` — **not** the working directory |
+| frontend | Vite `envDir: '..'` in `frontend/vite.config.ts` |
+| compose | interpolated from the root `.env`, listed per service so each container sees only the variables it needs |
 
-### Frontend variables
+Service tuning that is **not** a secret stays in code. The AI layer's knobs
+(`K`, `LLM_MODEL`, `LLM_EFFORT`, `CHUNK_CHAR_CAP`, `MAX_RETRIES`,
+`IRRELEVANT_REF_LIMIT`, …) are typed defaults in `ai/app/config.py`, still
+overridable from the environment when you actually need to change one.
 
-```text
-VITE_API_BASE_URL
-```
+### The variables
 
-Example local value:
+| Variable | Used by | Local default | Production value lives in |
+| --- | --- | --- | --- |
+| `POSTGRES_DB` | backend, compose | `techadvisor` | Fly secret (as `SPRING_DATASOURCE_URL`) |
+| `POSTGRES_USER` | backend, compose | `techadvisor` | Fly secret (`SPRING_DATASOURCE_USERNAME`) |
+| `POSTGRES_PASSWORD` | backend, compose | `devpassword` | Fly secret (`SPRING_DATASOURCE_PASSWORD`) |
+| `DB_HOST` | backend | `localhost` | — (Fly uses the datasource URL) |
+| `DB_PORT` | backend, compose | `5434` | — |
+| `VECTOR_STORE` | ai | `local` | not deployed yet |
+| `EMBEDDER` | ai | `model2vec` | not deployed yet |
+| `LLM_PROVIDER` | ai | `anthropic` | not deployed yet |
+| `LLM_MODEL` | ai | `claude-opus-5` | not deployed yet |
+| `ANTHROPIC_API_KEY` | ai | *(blank)* | not deployed yet |
+| `OPENROUTER_API_KEY` | ai | *(blank)* | not deployed yet |
+| `OPENAI_API_KEY` | ai | *(blank)* | not deployed yet |
+| `LLM_BASE_URL` | ai (`custom` provider) | *(blank)* | not deployed yet |
+| `LLM_API_KEY` | ai (`custom` provider) | *(blank)* | not deployed yet |
+| `AI_SERVICE_TOKEN` | ai, backend | *(blank)* | not deployed yet |
+| `AI_PORT` | compose | `8000` | — |
+| `VITE_API_BASE_URL` | frontend | `http://localhost:8080` | Vercel environment variable |
+| `VITE_INGESTION_DEMO` | frontend | `false` | Vercel environment variable |
+| `INGESTION_SCHEDULING_ENABLED` | backend | `false` | Fly secret |
+| `INGESTION_ANCHOR` | backend | `2026-09-17T05:00:00Z` | Fly secret |
+| `INGESTION_ENABLED_SOURCES` | backend | *(blank)* | Fly secret |
+| `INGESTION_DEMO_PASSWORD` | backend (`ingestion-demo` profile) | unset — set in your shell | — local demo only |
+| `CORS_ALLOWED_ORIGINS` | backend | `http://localhost:5173` (from `application.properties`) | Fly secret |
+| `JWT_SECRET` | backend | *(required; no default)* | Fly secret |
+| `JWT_EXPIRATION_SECONDS` | backend | `3600` | optional Fly secret/config |
 
-```text
-http://localhost:8080
-```
+### Three things that will bite you silently
 
-Production Vercel value:
+1. **A `frontend/.env` is not read.** `envDir: '..'` points Vite at the repo
+   root, so a `.env` created inside `frontend/` is ignored with no error — the
+   app just falls back to `http://localhost:8080`. Frontend values go in the
+   root `.env`. (`frontend/.env.example` remains as documentation of which
+   variables exist; example files are never loaded by Vite either way.)
+2. **A blank `AI_SERVICE_TOKEN` disables authentication on `/assess`.** That is
+   deliberate for local development — see `require_token` in `ai/app/main.py` —
+   but it must be set anywhere the service is reachable from outside.
+3. **A blank credential is a valid local state.** Tests, `/health`, `/docs` and
+   the container build all work without one. Only `POST /assess` needs a key,
+   and it fails loudly rather than degrading quietly. Only the key matching
+   `LLM_PROVIDER` is read — the others may stay blank.
 
-```text
-https://tech-advisor-backend.fly.dev
-```
+### Local vs Fly: two shapes for the database
 
-### Backend deployment variables
-
-```text
-CORS_ALLOWED_ORIGINS
-```
-
-The Fly.io production value should contain the deployed Vercel frontend origin.
-
-### Fly.io runtime secrets
-
-The hosted backend uses Fly.io-managed secrets for database connectivity, including:
-
-```text
-SPRING_DATASOURCE_URL
-SPRING_DATASOURCE_USERNAME
-SPRING_DATASOURCE_PASSWORD
-```
-
-Future application secrets may include:
-
-```text
-LLM_API_KEY
-JWT_SECRET
-```
+Local and CI compose the connection from `DB_HOST` / `DB_PORT` / `POSTGRES_*`.
+Fly instead sets `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME` and
+`SPRING_DATASOURCE_PASSWORD` directly, which override the composed values. This
+is a known inconsistency, left as-is deliberately so that consolidating local
+config cannot disturb the running deployment.
 
 ### GitHub Actions secrets
 
@@ -863,8 +1206,8 @@ Only the reference to the secret is stored in the workflow.
 ## Secret ownership
 
 ```text
-Local development secrets
--> local .env
+All local development config and secrets
+-> the repo-root .env (one file, every service)
 
 GitHub -> Fly deployment credential
 -> GitHub Actions secret
@@ -876,7 +1219,8 @@ Frontend public build configuration
 -> Vercel environment variables
 ```
 
-This keeps credentials in the environment where they are actually needed.
+This keeps credentials in the environment where they are actually needed, and
+keeps exactly one of them on a developer's machine.
 
 ## Testing strategy
 
@@ -894,6 +1238,48 @@ High-value areas include:
 - important frontend flows.
 
 Paid external AI calls should be mocked or replaced with deterministic test data in CI where possible.
+
+### AI layer tests
+
+`cd ai && ./.venv/Scripts/python.exe -m pytest` — 106 tests, **no live model
+calls**, no API key, no cost. They stub the model at two levels:
+
+- `ai/tests/conftest.py` replaces the whole `Llm` implementation, for testing
+  the assessment flow: valid responses and ref mapping, hallucinated refs,
+  invalid grades, factors outside the closed list, the retry firing once and
+  only once, the `product_id` filter, delimiter stripping, the degraded paths
+  and the HTTP surface.
+- `ai/tests/test_providers.py` stubs one layer lower, at the wire format, so
+  the request actually sent to each vendor is asserted rather than reviewed by
+  eye: provider selection, the schema/json_object/prompt tiers and the
+  step-down between them, refusals, truncation, gateway errors, and the
+  Anthropic request shape (cache breakpoint, effort, fallback betas, no
+  sampling parameters).
+
+- `ai/tests/test_pgvector.py` is the only group needing a database. It
+  **skips** with an explicit reason when none is reachable (97 passed, 8
+  skipped on a laptop with nothing running) rather than silently passing
+  without touching Postgres. It writes to its own product ids and cleans up,
+  so it will not disturb the demo corpus.
+
+Plus configuration resolution from the root `.env`.
+
+Two honest limits worth recording.
+
+**No test proves a real provider accepts these requests.** The stubs assert
+what is sent, not that any vendor is happy to receive it. A wrong beta header
+or an unsupported parameter is a 400 in production that every test still
+passes through. One live call settles it.
+
+ The prompt-injection test proves that an
+injected passage reaches the model only as data inside the delimiters, that a
+passage cannot close the block early, and that the grade matches a control run
+without the poisoned chunk. It **cannot** prove the model itself ignores the
+injected instruction, because the model is mocked. Confirming that needs one
+live call and is a manual pre-demo check.
+
+Note that the AI layer currently has **no CI job** — these tests do not run on
+push. Wiring one up is outstanding work.
 
 ## Deployment principles
 

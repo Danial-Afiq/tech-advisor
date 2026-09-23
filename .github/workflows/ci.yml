@@ -68,6 +68,7 @@ jobs:
           fi
 
           cd backend
+          export JWT_SECRET="$(openssl rand -base64 32)"
 
           # Prefer the Maven Wrapper so developers do not need
           # the same Maven version installed manually
@@ -121,14 +122,22 @@ jobs:
   repository-checks:
     name: Repository Checks
     runs-on: ubuntu-latest
+    needs:
+      - backend
+      - frontend
+    # Always run the existing Repository Checks job so it can report a CI failure
+    # without creating a separate Telegram check.
+    if: always()
 
     steps:
       # Download the repository so setup files can be checked
       - name: Checkout repository
+        id: repository_checkout
         uses: actions/checkout@v7
 
       # Make sure important project setup files are present
       - name: Verify required setup files
+        id: required_setup_files
         shell: bash
         run: |
           test -f README.md
@@ -138,9 +147,47 @@ jobs:
 
       # Prevent developers from accidentally committing the real local .env file
       - name: Ensure local env file is not committed
+        id: local_env_not_committed
         shell: bash
         run: |
           if git ls-files --error-unmatch .env >/dev/null 2>&1; then
             echo "Error: .env must not be committed."
             exit 1
           fi
+
+      # Keep Telegram notification inside this existing CI check.
+      # On successful CI this step is merely skipped inside the job and does not
+      # appear as a separate PR check.
+      - name: Notify Telegram on CI failure
+        if: ${{ always() && (needs.backend.result == 'failure' || needs.frontend.result == 'failure' || steps.repository_checkout.outcome == 'failure' || steps.required_setup_files.outcome == 'failure' || steps.local_env_not_committed.outcome == 'failure') }}
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          REPOSITORY_CHECKS_FAILED: ${{ steps.repository_checkout.outcome == 'failure' || steps.required_setup_files.outcome == 'failure' || steps.local_env_not_committed.outcome == 'failure' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets are required."
+            exit 1
+          fi
+
+          failed_jobs=()
+          [ "$BACKEND_RESULT" = "failure" ] && failed_jobs+=("Backend")
+          [ "$FRONTEND_RESULT" = "failure" ] && failed_jobs+=("Frontend")
+          [ "$REPOSITORY_CHECKS_FAILED" = "true" ] && failed_jobs+=("Repository Checks")
+          failed_list="$(IFS=', '; echo "${failed_jobs[*]}")"
+
+          branch_name="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          message="$(printf '❌ CI FAILED\n\nRepository: %s\nBranch: %s\nFailed: %s\nBy: @%s\n\n%s' \
+            "$GITHUB_REPOSITORY" "$branch_name" "$failed_list" "$GITHUB_ACTOR" "$run_url")"
+
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${message}"
