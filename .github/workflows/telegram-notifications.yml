@@ -1,0 +1,224 @@
+name: Telegram Actionable Notifications
+
+# Keep Telegram quiet unless a teammate needs attention or a pipeline fails.
+on:
+  pull_request:
+    types: [review_requested]
+  issue_comment:
+    types: [created]
+  workflow_run:
+    workflows: ["CI", "CD"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  review-requested:
+    name: Notify Review Request
+    if: github.event_name == 'pull_request' && github.event.action == 'review_requested'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send review request to Telegram
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REQUESTED_REVIEWER: ${{ github.event.requested_reviewer.login }}
+          REQUESTED_TEAM: ${{ github.event.requested_team.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REQUESTED_BY: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets are required."
+            exit 1
+          fi
+
+          telegram_handle() {
+            case "${1,,}" in
+              chuadongen) echo "@Ensombre" ;;
+              russelldesilva) echo "@russelldegolden" ;;
+              pestmant-uni) echo "@pestmant" ;;
+              zayna31) echo "@zayynnna" ;;
+              danial-afiq) echo "@muhd_danial_afiq" ;;
+              johntemothy) echo "@Temmoes" ;;
+              *) echo "@$1" ;;
+            esac
+          }
+
+          if [ -n "${REQUESTED_REVIEWER:-}" ]; then
+            reviewer="$(telegram_handle "$REQUESTED_REVIEWER")"
+          elif [ -n "${REQUESTED_TEAM:-}" ]; then
+            reviewer="Team: ${REQUESTED_TEAM}"
+          else
+            reviewer="Unknown reviewer"
+          fi
+
+          message="$(printf '👀 REVIEW REQUESTED\n\nPR #%s: %s\nReviewer: %s\nRequested by: @%s\n\n%s' \
+            "$PR_NUMBER" "$PR_TITLE" "$reviewer" "$REQUESTED_BY" "$PR_URL")"
+
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${message}"
+
+  pr-mention:
+    name: Notify PR Mention
+    # Only PR conversation comments from repository collaborators can notify the group.
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      github.event.issue.pull_request != null &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Map mentions and send full comment to Telegram
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_URL: ${{ github.event.comment.html_url }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_TITLE: ${{ github.event.issue.title }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import os
+          import re
+          import urllib.parse
+          import urllib.request
+
+          token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          comment = os.environ.get("COMMENT_BODY", "")
+          comment_url = os.environ.get("COMMENT_URL", "")
+          author = os.environ.get("COMMENT_AUTHOR", "")
+          pr_number = os.environ.get("PR_NUMBER", "")
+          pr_title = os.environ.get("PR_TITLE", "")
+
+          mapping = {
+              "chuadongen": "@Ensombre",
+              "russelldesilva": "@russelldegolden",
+              "pestmant-uni": "@pestmant",
+              "zayna31": "@zayynnna",
+              "danial-afiq": "@muhd_danial_afiq",
+              "johntemothy": "@Temmoes",
+          }
+
+          mention_pattern = re.compile(
+              r"(?<![A-Za-z0-9_.-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)",
+              re.IGNORECASE,
+          )
+          github_mentions = mention_pattern.findall(comment)
+
+          if not github_mentions:
+              print("No GitHub @mention found; no Telegram message sent.")
+              raise SystemExit(0)
+
+          if not token or not chat_id:
+              raise SystemExit(
+                  "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets are required."
+              )
+
+          def mapped_handle(username: str) -> str:
+              return mapping.get(username.lower(), f"@{username}")
+
+          # Replace known GitHub mentions inside the comment itself so Telegram
+          # pings the teammate's Telegram account rather than their GitHub username.
+          mapped_comment = mention_pattern.sub(
+              lambda match: mapped_handle(match.group(1)),
+              comment,
+          )
+
+          # Keep mention order while removing duplicates.
+          seen = set()
+          mapped_mentions = []
+          for username in github_mentions:
+              handle = mapped_handle(username)
+              key = handle.lower()
+              if key not in seen:
+                  seen.add(key)
+                  mapped_mentions.append(handle)
+
+          full_message = (
+              f"💬 PR MENTION\n\n"
+              f"PR #{pr_number}: {pr_title}\n"
+              f"Mentioned: {' '.join(mapped_mentions)}\n"
+              f"By: @{author}\n\n"
+              f"Comment:\n{mapped_comment}\n\n"
+              f"{comment_url}"
+          )
+
+          # Telegram limits a single message to 4096 characters. Split only
+          # when necessary so even very long PR comments are delivered in full.
+          def chunks(text: str, limit: int = 4000):
+              remaining = text
+              while len(remaining) > limit:
+                  cut = remaining.rfind("\n", 0, limit)
+                  if cut < limit // 2:
+                      cut = remaining.rfind(" ", 0, limit)
+                  if cut < limit // 2:
+                      cut = limit
+                  yield remaining[:cut]
+                  remaining = remaining[cut:]
+              if remaining:
+                  yield remaining
+
+          endpoint = f"https://api.telegram.org/bot{token}/sendMessage"
+          for chunk in chunks(full_message):
+              payload = urllib.parse.urlencode(
+                  {"chat_id": chat_id, "text": chunk}
+              ).encode()
+              request = urllib.request.Request(endpoint, data=payload, method="POST")
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  if response.status != 200:
+                      raise RuntimeError(
+                          f"Telegram API returned HTTP {response.status}"
+                      )
+          PY
+
+  pipeline-failure:
+    name: Notify Pipeline Failure
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send pipeline failure to Telegram
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_ACTOR: ${{ github.event.workflow_run.actor.login }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets are required."
+            exit 1
+          fi
+
+          short_sha="${SOURCE_SHA:0:7}"
+          message="$(printf '❌ %s FAILED\n\nRepository: %s\nBranch: %s\nCommit: %s\nBy: @%s\n\n%s' \
+            "$WORKFLOW_NAME" "$GITHUB_REPOSITORY" "$SOURCE_BRANCH" "$short_sha" "$SOURCE_ACTOR" "$RUN_URL")"
+
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${message}"
