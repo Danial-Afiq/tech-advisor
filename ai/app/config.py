@@ -117,6 +117,7 @@ class Settings(BaseSettings):
     # passage header can distinguish an owner report from a launch editorial.
     # Stands in for the optional `source_type` column (spec section 12).
     source_types: dict[str, str] = {
+        "google shopping reviews via searchapi": "USER_REVIEW",
         "reddit": "FORUM",
         "xda": "FORUM",
         "gsmarena": "PROFESSIONAL_REVIEW",

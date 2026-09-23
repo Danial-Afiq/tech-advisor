@@ -9,7 +9,9 @@ Run them for real with:
 
     docker compose up -d postgres
     cd backend && ./mvnw flyway:migrate -Dflyway.url=... (see README)
-    cd ai && python -m scripts.ingest
+    # Set TEST_DATABASE_URL to the migrated database (name must end _test).
+    # Optionally set TEST_EMBEDDING_MODEL_PATH for baked model weights.
+    cd ai && python -m pytest tests/test_pgvector.py
 
 Everything here writes to its own product ids (see PRODUCT_*) and cleans up
 after itself, so it will not disturb the demo corpus.
@@ -18,6 +20,7 @@ after itself, so it will not disturb the demo corpus.
 from __future__ import annotations
 
 from typing import Any, Iterator
+import os
 
 import pytest
 
@@ -30,8 +33,18 @@ PRODUCT_MAIN = 990001
 PRODUCT_OTHER = 990002
 
 
+def database_settings() -> Settings:
+    # An explicit test DSN survives the general Settings-env isolation fixture.
+    # Never write fixtures into the developer's normal database.
+    dsn = os.environ.get("TEST_DATABASE_URL", "")
+    if not dsn:
+        pytest.skip("set TEST_DATABASE_URL to a dedicated database ending _test")
+    return Settings(_env_file=None, database_url=dsn,
+                    embedding_model_path=os.environ.get("TEST_EMBEDDING_MODEL_PATH", ""))
+
+
 def _pool_or_skip() -> Any:
-    settings = Settings()
+    settings = database_settings()
     try:
         import psycopg
         from psycopg_pool import ConnectionPool
@@ -41,11 +54,14 @@ def _pool_or_skip() -> Any:
     try:
         with psycopg.connect(settings.dsn, connect_timeout=3) as conn:
             with conn.cursor() as cur:
+                cur.execute("SELECT current_database()")
+                if not cur.fetchone()[0].endswith("_test"):
+                    pytest.fail("pgvector integration requires a database ending _test")
                 cur.execute("SELECT to_regclass('public.review_chunks')")
                 if cur.fetchone()[0] is None:
                     pytest.skip("review_chunks does not exist; run migrations V4+V6")
     except Exception as exc:  # noqa: BLE001 - any connection problem means skip
-        pytest.skip(f"no database reachable at {settings.db_host}:{settings.db_port} ({exc})")
+        pytest.skip("test database unavailable or migrations not applied")
 
     return ConnectionPool(settings.dsn, min_size=1, max_size=2, open=True, timeout=5.0)
 
@@ -59,8 +75,8 @@ def pool() -> Iterator[Any]:
 
 @pytest.fixture(scope="module")
 def embedder() -> Any:
-    settings = Settings()
-    return build_embedder(settings.embedder, settings.embedding_dim)
+    settings = database_settings()
+    return build_embedder(settings.embedder, settings.embedding_dim, settings.embedding_model_path)
 
 
 @pytest.fixture(scope="module")
@@ -179,7 +195,7 @@ def test_mismatched_embedder_raises_rather_than_ranking_nonsense(
 def test_vector_column_width_matches_the_configured_embedder(pool: Any) -> None:
     """A width mismatch is a write-time error that would only surface during
     ingestion, long after the config was changed."""
-    settings = Settings()
+    settings = database_settings()
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(

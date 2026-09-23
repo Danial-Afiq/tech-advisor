@@ -93,7 +93,7 @@ public class IngestionOrchestrator {
                                     else {
                                         var matching = sinks.stream().filter(sink -> sink.supports(adapter, payload.body())).toList();
                                         if (matching.size() != 1) throw new IllegalStateException("Exactly one typed sink must accept this source payload");
-                                        if (matching.getFirst().accept(run.runId, payload) == IngestionSink.Result.DUPLICATE) duplicate(run, result);
+                                        if (matching.getFirst().accept(run.runId, payload, context) == IngestionSink.Result.DUPLICATE) duplicate(run, result);
                                         else { result.processedPayloadCount++; run.processedPayloadCount++; }
                                     }
                                     store.progress(run, owner);
@@ -113,6 +113,7 @@ public class IngestionOrchestrator {
                         result.status = "FAILED"; result.errorCount++; result.errorStackCount++;
                         run.errorCount++; run.errorStackCount++;
                         result.errors.add(error.getClass().getSimpleName());
+                        if (error instanceof IngestionFailure failure) result.errors.add(failure.code().name());
                         Arrays.stream(error.getStackTrace()).filter(frame -> frame.getClassName().startsWith("com.springboot.backend.ingestion"))
                                 .limit(5).map(StackTraceElement::toString).forEach(result.errors::add);
                     }

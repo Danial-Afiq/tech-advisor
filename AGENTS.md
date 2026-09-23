@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 23 September 2026
+> **Last consolidated:** 24 September 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -389,12 +389,14 @@ export const API_BASE_URL =
 - local: Docker Compose
 - hosted: Neon
 - `pgvector` extension enabled by Flyway V4
-- `review_documents` / `review_chunks` created by Flyway **V5**; retrieval over them is implemented (see §5.4)
+- `review_documents` / `review_chunks` created by Flyway **V6**; V7 adds external-review identity/provenance and product-token mappings
 
 ## 5.4 AI service
-Implemented on branch `feat/3.4-llm_layer` (see §18.7 for the snapshot):
+Implemented on `main` (originally branch `feat/3.4-llm_layer`; see §18.7):
 - Python 3.13 + FastAPI, containerised by `ai/Dockerfile`
 - `POST /assess`, guarded by a shared `AI_SERVICE_TOKEN` bearer secret
+- SearchAPI branch: `POST /internal/embed`, using the same token and configured
+  embedder for 1–100 texts of up to 8000 characters. No LLM initialization or DB writes.
 - multi-provider LLM seam: `LLM_PROVIDER=anthropic` uses the Claude SDK natively;
   `openrouter` / `openai` / `custom` share one OpenAI-compatible adapter, so adding a
   vendor is a base URL rather than code
@@ -522,9 +524,9 @@ being reproducible.
 This step performs **no** embeddings, retrieval or model calls, and must stay
 that way - bounding the candidate set is what bounds every downstream AI cost.
 
-**Nothing populates these tables yet.** Ingestion still writes only to
-`system_log`, so the filter is exercised by tests and seeded data. Wiring a
-real source into the catalogue is separate work (Epic 01), not part of this.
+**Catalogue population remains separate work.** The filter is exercised by tests
+and seeded data. SearchAPI ingestion attaches review evidence to existing VERIFIED
+smartphones; it does not create products or price observations.
 
 ## 7.2 Channel B — owner evidence grade
 
@@ -1200,7 +1202,7 @@ database is needed.
 
 The canonical schema keeps a generic product identity and category-specific `phone` / `gpu` subtype tables. Current application behaviour is still smartphone-first.
 
-The schema is implemented by V1-V6 on the schema-reconciliation branch. See §18 for the migration inventory.
+The foundation is implemented by V1-V6 on `main`; the SearchAPI feature branch adds V7. See §18 for the migration inventory.
 
 ## 14.1 `users`
 
@@ -1386,6 +1388,12 @@ Fields:
 - `published_at`
 - `ingested_at`
 
+V7 adds nullable `provider` / `external_fingerprint` and default-empty JSONB
+`metadata`, with uniqueness on `(product_id, provider, external_fingerprint)`.
+SearchAPI maps one customer review to one document and one index-0 chunk. Metadata
+contains only source domain, rating, raw date and exact retrieval time. Reviewer
+profile fields are discarded. Relative dates leave `published_at = NULL`.
+
 Important distinction:
 - `published_at` = age of external evidence
 - `ingested_at` = when Tech Advisor imported it
@@ -1560,6 +1568,7 @@ The runner supports typed payload bodies:
 - `Specifications`
 - `Price`
 - `Benchmark`
+- `ReviewBatch` — at most 100 normalized reviews for one canonical product
 
 Each payload has:
 - source ID,
@@ -1593,6 +1602,12 @@ It must:
 - fail visibly if there is no valid sink.
 
 Do not install a production sink that silently discards data.
+
+`ReviewBatchSink` batches embeddings over FastAPI before opening a short database
+transaction for documents/chunks. Existing fingerprints are skipped before embedding;
+database uniqueness resolves races. The runner counts product batches, not reviews.
+The context-aware sink overload checks cancellation/ownership before and after
+embedding and before commit. Existing sinks retain their original contract.
 
 ## 16.4 Current load/failure policy
 Current ingestion docs specify safeguards including:
@@ -1709,6 +1724,36 @@ Review evidence should preserve:
 
 No ingestion-time LLM stance classification under the current plan.
 
+## 17.4 SearchAPI owner reviews — implemented on `feat/searchapi-review-ingestion`
+
+The selected owner-review source for this slice is the documented SearchAPI API,
+using Bearer authorization, never scraping. Source ID: `searchapi-google-product-reviews`.
+It is opt-in via `INGESTION_ENABLED_SOURCES`; enabling it without a key fails at
+startup. Production admin access stays closed; local manual tests use `ingestion-demo`.
+
+Selection is VERIFIED SMARTPHONE products ordered by ID, default one per run (maximum
+two). Matching requires brand/model tokens, rejects accessory/used/refurbished and
+conflicting or unknown wording, and refuses multiple distinct eligible Google IDs.
+The conservative policy may miss valid listings rather than guess their identity.
+
+V7's `external_product_mapping` caches provider/product/locale mappings, canonical
+name and verification times. A changed canonical name or locale misses the cache.
+A clear invalid/expired cached-token HTTP 400 allows one rediscovery/retry; no TTL
+or refresh schedule is introduced. Normal runs use one discovery plus `most_relevant`
+and `most_recent` (three searches, two cached); no pagination. SourceContext retains
+its 60-second deadline, ten-attempt budget, pacing and 429/503 retries/cooldowns.
+Authenticated GETs validate the exact host, require HTTPS and never follow redirects.
+Only code-owned error enums, never provider messages/credentials, enter diagnostics.
+
+Normalization uses NFKC/whitespace collapsing, strips prompt delimiters, and rejects
+under-20-character, clearly logistics-only, invalid-rating/domain or oversized reviews.
+Identity is SHA-256 over length-prefixed product ID, normalized source domain, title,
+text and rating, excluding dates. No raw provider response/profile data is persisted.
+Spring requires the returned embedder identity to match `AI_INGESTION_EMBEDDER`
+(default `minishlab/potion-retrieval-32M`) and 512 finite components per nonzero vector.
+No ingestion-time LLM call or synchronous recommendation fetch occurs.
+Full limits, verification and live steps: `docs/searchapi-review-ingestion.md`.
+
 ---
 
 # 18. Current implementation snapshot on `main` — 18 Sep 2026
@@ -1742,6 +1787,7 @@ V3__anchor_daily_ingestion_schedule.sql
 V4__enable_pgvector.sql
 V5__add_password_hash_to_users.sql
 V6__create_sprint_1_schema.sql
+V7__add_external_review_ingestion.sql  # SearchAPI feature branch
 ```
 
 `V5` makes `users.password_hash` **NOT NULL**, so every seed, fixture, or test
@@ -1775,7 +1821,8 @@ Therefore:
 - the full 13-table foundation is represented exactly once,
 - feature branches must remove their competing V6/V7 schema migrations when rebased onto this migration.
 
-This V6 is currently on the schema-reconciliation branch and is not on `main` until its PR is reviewed and merged.
+V6 is now on `main`. V7 on the SearchAPI branch is additive and preserves existing
+manual/demo documents, the ingestion script and the 512-dimensional vector schema.
 
 ## 18.3 Frontend currently contains
 Known files include:
@@ -1861,8 +1908,8 @@ Treat exact historical test counts as evidence from that verification point, not
 
 ## 18.7 AI service snapshot — 19 Sep 2026, branch `feat/3.4-llm_layer`
 
-**Not yet merged to `main`.** Everything in §5.4, §8, §10, §12 and §13.5 describes
-this branch. Do not assume it is on `main` until the PR for SCRUM-37 lands.
+**Now present on `main`.** This historical snapshot describes the original SCRUM-37
+branch; SearchAPI ingestion extends its existing embedder and review store.
 
 Implemented under `ai/app/`:
 
@@ -2065,6 +2112,12 @@ VITE_INGESTION_DEMO
 INGESTION_SCHEDULING_ENABLED
 INGESTION_ANCHOR
 INGESTION_ENABLED_SOURCES
+SEARCHAPI_API_KEY          # backend only; required only when source enabled
+SEARCHAPI_GL               # sg
+SEARCHAPI_HL               # en
+SEARCHAPI_LOCATION         # Singapore
+SEARCHAPI_MAX_PRODUCTS_PER_RUN # 1 (allowed 1–2)
+AI_INGESTION_EMBEDDER       # minishlab/potion-retrieval-32M
 JWT_SECRET
 JWT_EXPIRATION_SECONDS    # optional; defaults to 3600 and must be positive
 ```
@@ -2097,6 +2150,10 @@ the file, so CI (which exports `DB_HOST`/`DB_PORT`/`POSTGRES_DB` and has no `.en
 and the Fly.io image are unaffected — `optional:` simply skips the missing file.
 `backend/pom.xml` pins `POSTGRES_DB=techadvisor_test` for the test phase only, so
 `mvnw test` can never run against the development database.
+Tests also clear live source selection/SearchAPI credentials and disable scheduling;
+fixture tests supply their own source configuration. AI pgvector tests now require
+`TEST_DATABASE_URL` pointing to an actual database ending `_test` and optionally
+`TEST_EMBEDDING_MODEL_PATH` for baked weights.
 
 ## 20.2 Frontend
 
@@ -2461,7 +2518,9 @@ Need final selection for:
 - price,
 - benchmark data,
 - launch/change feeds,
-- owner reviews.
+
+Owner reviews are selected for this vertical slice: SearchAPI Google Shopping
+reviews (§17.4). Other source categories remain open; adapters remain replaceable.
 
 ## 27.2 LLM provider/model — mechanism resolved, choice still open
 Hosted API, SMU-X budget available.

@@ -290,11 +290,17 @@ The simulator / admin path is useful for reliable demos when live data is insuff
 ## Data ingestion
 
 The ingestion runner implementation and source integration guide are in
-[docs/ingestion.md](docs/ingestion.md). It supports an anchored 24-hour schedule,
+[docs/ingestion.md](docs/ingestion.md). It supports an anchored 14-day schedule,
 asynchronous admin-triggered runs, typed source payloads, and persistent execution
 history. Local simulated sources demonstrate the pipeline; production admin
 activation depends on the account authentication integration. The admin panel is
 available at `/admin/ingestion`.
+
+The opt-in `searchapi-google-product-reviews` source now attaches customer reviews
+to existing VERIFIED smartphones, discovers/caches Google product tokens, deduplicates
+reviews, batch-embeds through FastAPI and stores them in pgvector. It uses the existing
+runner and makes no LLM calls. See [the complete SearchAPI live-test guide](docs/searchapi-review-ingestion.md)
+for configuration, local-only seeding, admin triggering, SQL and semantic retrieval checks.
 
 The current architecture defines two main ingestion paths:
 
@@ -1257,10 +1263,10 @@ calls**, no API key, no cost. They stub the model at two levels:
   sampling parameters).
 
 - `ai/tests/test_pgvector.py` is the only group needing a database. It
-  **skips** with an explicit reason when none is reachable (97 passed, 8
-  skipped on a laptop with nothing running) rather than silently passing
-  without touching Postgres. It writes to its own product ids and cleans up,
-  so it will not disturb the demo corpus.
+  requires `TEST_DATABASE_URL` pointing to a migrated database ending `_test`.
+  It **skips** explicitly when that opt-in is absent or the database is unavailable.
+  Set `TEST_EMBEDDING_MODEL_PATH` to use baked weights if needed. It writes to its
+  own product IDs and cleans up. Never point integration tests at a production DB.
 
 Plus configuration resolution from the root `.env`.
 

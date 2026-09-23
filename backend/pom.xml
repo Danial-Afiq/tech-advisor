@@ -140,6 +140,10 @@
 					-->
 					<systemPropertyVariables>
 						<POSTGRES_DB>${POSTGRES_DB}</POSTGRES_DB>
+						<!-- Tests must not inherit a developer's live source opt-in or key. -->
+						<ingestion.enabled-sources></ingestion.enabled-sources>
+						<ingestion.scheduling-enabled>false</ingestion.scheduling-enabled>
+						<searchapi.api-key></searchapi.api-key>
 					</systemPropertyVariables>
 				</configuration>
 			</plugin>

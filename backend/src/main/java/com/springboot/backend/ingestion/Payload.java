@@ -4,10 +4,17 @@ import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Instant;
 import java.util.Map;
+import java.util.List;
 
 /** Common envelope, different typed bodies. Review collection does not infer sentiment. */
 public record Payload(String sourceId, String externalId, Instant observedAt, Body body) {
-    public sealed interface Body permits Article, Specifications, Price, Benchmark {}
+    public sealed interface Body permits Article, Specifications, Price, Benchmark, ReviewBatch {}
+    /** One bounded product batch is one durable runner item. No raw provider objects. */
+    public record ReviewBatch(long productId, List<Review> reviews) implements Body {
+        public ReviewBatch { reviews = List.copyOf(reviews); }
+    }
+    public record Review(String fingerprint, String sourceDomain, String title, String text,
+                         BigDecimal rating, String rawDate, Instant retrievedAt) {}
     public record Article(String productReference, String title, URI url, Instant publishedAt,
                           String text) implements Body {}
     public record Specifications(String productReference, Map<String, BigDecimal> values,
@@ -21,6 +28,19 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
                 || externalId.length() > 500 || observedAt == null || body == null)
             throw new IllegalArgumentException("Invalid payload envelope");
         switch (body) {
+            case ReviewBatch batch -> {
+                if (batch.productId() <= 0 || batch.reviews().isEmpty() || batch.reviews().size() > 100)
+                    throw new IllegalArgumentException("Invalid review batch");
+                for (Review r : batch.reviews()) {
+                    if (r.fingerprint() == null || !r.fingerprint().matches("[a-f0-9]{64}")
+                            || blank(r.text()) || r.text().length() > 8000 || blank(r.sourceDomain())
+                            || r.sourceDomain().length() > 253 || r.title() == null || r.title().length() > 500
+                            || r.rawDate() == null || r.rawDate().length() > 100 || r.retrievedAt() == null
+                            || r.rating() == null || r.rating().compareTo(BigDecimal.ONE) < 0
+                            || r.rating().compareTo(BigDecimal.valueOf(5)) > 0)
+                        throw new IllegalArgumentException("Invalid review");
+                }
+            }
             case Article a -> {
                 if (blank(a.title()) || a.url() == null || !a.url().isAbsolute()
                         || !("https".equals(a.url().getScheme()) || "http".equals(a.url().getScheme()))

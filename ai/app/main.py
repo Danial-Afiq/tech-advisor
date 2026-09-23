@@ -1,7 +1,8 @@
 """FastAPI entry point.
 
-One route that matters: POST /assess, called by Spring Boot once per
+POST /assess is called by Spring Boot once per
 (user_device, candidate_product) pair that has cleared the maturity gate.
+POST /internal/embed supplies bounded ingestion embeddings without an LLM call.
 
 The service is stateless. With VECTOR_STORE=pgvector it holds read
 credentials for review_chunks; it still writes nothing. It never writes to
@@ -13,9 +14,12 @@ recommendation it belongs to are written in one place.
 from __future__ import annotations
 
 import logging
-from typing import Any
+import math
+from functools import lru_cache
+from typing import Any, Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from app.assess import Assessor
 from app.config import Settings, get_settings
@@ -35,8 +39,21 @@ app = FastAPI(
 _assessor: Assessor | None = None
 
 
+@lru_cache(maxsize=2)
+def configured_embedder(name: str, dimension: int, path: str):
+    return build_embedder(name, dimension, path)
+
+
+def get_embedder(settings: Settings = Depends(get_settings)):
+    # Independent of Assessor: embedding never initializes or calls an LLM.
+    try:
+        return configured_embedder(settings.embedder, settings.embedding_dim, settings.embedding_model_path)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Embedding unavailable") from None
+
+
 def build_assessor(settings: Settings) -> Assessor:
-    embedder = build_embedder(
+    embedder = configured_embedder(
         settings.embedder, settings.embedding_dim, settings.embedding_model_path
     )
 
@@ -92,3 +109,32 @@ def health() -> dict[str, str]:
 @app.post("/assess", response_model=AssessResponse, dependencies=[Depends(require_token)])
 async def assess(request: AssessRequest) -> AssessResponse:
     return await get_assessor().assess(request)
+
+
+class EmbedRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    texts: list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=8000)]] = Field(
+        min_length=1, max_length=100
+    )
+
+
+class EmbedResponse(BaseModel):
+    embedder: str
+    dimension: int
+    vectors: list[list[float]]
+
+
+@app.post("/internal/embed", response_model=EmbedResponse, dependencies=[Depends(require_token)])
+def embed(request: EmbedRequest, embedder=Depends(get_embedder)) -> EmbedResponse:
+    """Bounded ingestion batch, using the very same vector space as retrieval."""
+    try:
+        vectors = (embedder.embed_many(request.texts) if hasattr(embedder, "embed_many")
+                   else [embedder.embed(text) for text in request.texts])
+        if len(vectors) != len(request.texts) or any(
+            len(v) != embedder.dim or not all(math.isfinite(x) for x in v)
+            or not any(x != 0 for x in v) for v in vectors
+        ):
+            raise ValueError("Invalid embedding output")
+        return EmbedResponse(embedder=embedder.name, dimension=embedder.dim, vectors=vectors)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Embedding unavailable") from None

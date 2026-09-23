@@ -1,6 +1,6 @@
 # Ingestion runner: operation and source integration
 
-The runner provides a 14-day schedule, asynchronous admin requests, source isolation and persistent run history. This ticket includes simulated adapters and receipts, not live market sources or catalogue/RAG processors.
+The runner provides a 14-day schedule, asynchronous admin requests, source isolation and persistent run history. It includes simulated adapters and the opt-in SearchAPI owner-review source and RAG sink. See [SearchAPI review ingestion](searchapi-review-ingestion.md) for configuration and a complete local live test.
 
 ## Shared contract, different payloads
 
@@ -24,6 +24,7 @@ Every `IngestionSource` identifies itself and implements `ingest(context, output
 | `Specifications` | Product reference, numeric measurements and explicit units | Typed catalogue updates and domain-specific range validation |
 | `Price` | Product reference, amount, ISO-style currency code | Price history and change detection |
 | `Benchmark` | Product reference, benchmark name, score, unit | Benchmark storage/comparison |
+| `ReviewBatch` | Canonical product ID and up to 100 normalized reviews | Batch embeddings through FastAPI, then atomic review document/chunk persistence |
 
 An RSS article is not forced into specification fields. Sources offering the same type translate to the same body. A source can emit several types. Review collection preserves evidence; sentiment inference belongs downstream. Product resolution and type-specific domain validation remain the sink's responsibility.
 
@@ -81,6 +82,11 @@ Then add `hackfeed-rss` to `INGESTION_ENABLED_SOURCES`, configure its feed URL, 
 
 Limits currently live in `SourceContext` and `IngestionOrchestrator`; adapt them deliberately with tests when a real source needs a different policy. A Java process cannot forcibly stop arbitrary code that ignores interruption, and it cannot promise exactly-once external effects during a crash. Do not implement adapters with independent executors or irreversible external actions.
 
+SearchAPI's sink accepts one product batch per payload. Run counters count batches;
+query the review tables for review counts. Its context-aware sink checks ownership
+around the embedding call and before commit. SourceContext authenticated GETs retain
+all existing limits and validate the exact trusted credential destination host.
+
 ## Scheduling and recovery
 
 The schedule was temporarily set to daily on 2026-09-16 (Flyway V3) specifically to make the scheduler observable within a short testing window; that was never the target production cadence. As of 2026-09-22 it is reverted to the real intended cadence: every 14 days, via the `RunStore.INTERVAL` constant rather than a further data migration (no production data depended on the daily anchor). The first run is **17 September 2026 at 13:00 SGT (05:00 UTC)**, then every 14 days from that anchor.
@@ -99,7 +105,7 @@ Accepted work is durable before dispatch. If dispatch never occurs, the next swe
 
 ## Database and metadata
 
-Flyway V2 creates `system_log`. The reserved `INGESTION_COORDINATOR` row stores scheduling, active ownership and source cooldowns. `INGESTION_RUN` rows store execution history. `INGESTION_DEMO_PAYLOAD` rows are simulation receipts only. No extra domain tables or product schema are created.
+Flyway V2 creates `system_log`. The reserved `INGESTION_COORDINATOR` row stores scheduling, active ownership and source cooldowns. `INGESTION_RUN` rows store execution history. `INGESTION_DEMO_PAYLOAD` rows are simulation receipts only. V6 owns the review corpus; V7 adds external product mappings and review identity/provenance for SearchAPI.
 
 ```sql
 SELECT id, status, created_at,
