@@ -22,7 +22,9 @@ public class SearchApiSource implements IngestionSource {
     }
     @Override public String sourceId() { return ID; }
     @Override public void ingest(SourceContext context, Consumer<Payload> output) throws Exception {
-        var products = repository.products(settings.maxProductsPerRun());
+        var products = context.product() == null ? repository.products(settings.maxProductsPerRun())
+                : repository.eligibleProduct(context.product().productId()).stream()
+                    .filter(p -> p.name().equals(context.product().productName())).toList();
         if (products.isEmpty()) throw new IngestionFailure(SEARCHAPI_NO_ELIGIBLE_PRODUCT);
         for (var product : products) {
             context.check();

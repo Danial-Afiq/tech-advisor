@@ -7,6 +7,9 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.dao.DataAccessException;
+import com.springboot.backend.ingestion.searchapi.SearchApiRepository;
+import com.springboot.backend.ingestion.searchapi.SearchApiSource;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/admin/ingestion")
@@ -15,17 +18,38 @@ public class IngestionController {
     private final RunStore store;
     private final SourceRegistry registry;
     private final IngestionSettings settings;
-    public IngestionController(IngestionOrchestrator runner, RunStore store, SourceRegistry registry, IngestionSettings settings) {
+    private final SearchApiRepository products;
+    public IngestionController(IngestionOrchestrator runner, RunStore store, SourceRegistry registry,
+                               IngestionSettings settings, SearchApiRepository products) {
         this.runner = runner; this.store = store; this.registry = registry; this.settings = settings;
+        this.products = products;
     }
-    public record Request(List<String> sources, String reason) {}
+    public record Request(List<String> sources, String reason, String productName) {}
     @GetMapping("/session")
     public Map<String, String> session(Principal user, CsrfToken csrf) {
         return Map.of("username", user.getName(), "csrfHeader", csrf.getHeaderName(), "csrfToken", csrf.getToken());
     }
     @PostMapping("/runs")
     public ResponseEntity<RunLog> start(@RequestBody Request request, @RequestHeader("Idempotency-Key") String key, Principal user) {
-        var run = runner.manual(request.sources(), user.getName(), key, request.reason());
+        var ids = registry.select(request.sources());
+        RunLog.ProductTarget target = null;
+        if (request.productName() != null) {
+            if (!ids.contains(SearchApiSource.ID))
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select SearchAPI customer reviews to specify a product.");
+            String name = request.productName().replaceAll("[\\p{Z}\\s]+", " ").trim();
+            if (name.isEmpty() || name.length() > 200)
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter a product name of 1 to 200 characters.");
+            var matches = products.namedProducts(name.toLowerCase(Locale.ROOT));
+            if (matches.isEmpty())
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "No verified smartphone matches that name. Enter its exact catalogue model or brand and model.");
+            if (matches.size() > 1)
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "More than one verified smartphone matches that name. Include the brand and full model name.");
+            var product = matches.getFirst();
+            target = new RunLog.ProductTarget(product.id(), product.name());
+        }
+        var run = runner.manual(ids, user.getName(), key, request.reason(), target);
         return ResponseEntity.accepted().location(URI.create("/api/admin/ingestion/runs/" + run.runId)).body(run);
     }
     @GetMapping("/runs/{id}") public RunLog get(@PathVariable String id) { return store.get(id); }

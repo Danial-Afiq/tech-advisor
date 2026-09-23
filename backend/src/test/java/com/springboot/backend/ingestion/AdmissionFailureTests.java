@@ -15,7 +15,7 @@ class AdmissionFailureTests {
         when(source.sourceId()).thenReturn("source");
         when(source.cooldown()).thenReturn(java.time.Duration.ofMinutes(15));
         var registry = new SourceRegistry(List.of(source), new IngestionSettings(false, null, List.of("source")));
-        when(store.admit(anyList(), anyString(), anyString(), isNull(), eq(false), eq(false)))
+        when(store.admit(anyList(), anyString(), anyString(), isNull(), eq(false), eq(false), isNull()))
                 .thenThrow(new DataAccessResourceFailureException("offline"));
         var runner = new IngestionOrchestrator(store, registry, List.of(), Clock.systemUTC(), new ThreadPoolTaskScheduler());
         try {

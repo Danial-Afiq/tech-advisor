@@ -45,6 +45,11 @@ public class RunStore {
 
     public RunLog admit(List<String> ids, String actor, String key, String reason, boolean scheduled,
                         boolean simulation) {
+        return admit(ids, actor, key, reason, scheduled, simulation, null);
+    }
+
+    public RunLog admit(List<String> ids, String actor, String key, String reason, boolean scheduled,
+                        boolean simulation, RunLog.ProductTarget product) {
         return locked(state -> {
             Instant now = clock.instant();
             recover(state, now);
@@ -54,7 +59,8 @@ public class RunStore {
                         (rs, row) -> json.readValue(rs.getString(1), RunLog.class), actor, key);
                 if (!existing.isEmpty()) {
                     var run = existing.getFirst();
-                    if (!run.sourceIds.equals(ids) || !Objects.equals(run.reason, reason))
+                    if (!run.sourceIds.equals(ids) || !Objects.equals(run.reason, reason)
+                            || !Objects.equals(run.product, product))
                         throw new ResponseStatusException(HttpStatus.CONFLICT, "Idempotency key used for a different request");
                     return run;
                 }
@@ -69,6 +75,7 @@ public class RunStore {
             run.triggerType = scheduled ? "SCHEDULED" : "MANUAL";
             run.requestedBy = actor; run.reason = reason; run.idempotencyKey = key;
             run.requestedAt = now; run.simulation = simulation;
+            run.product = product;
             if (scheduled) {
                 run.missedSlots = Duration.between(state.nextDue, now).dividedBy(INTERVAL);
                 run.scheduledFor = state.nextDue.plus(INTERVAL.multipliedBy(run.missedSlots));

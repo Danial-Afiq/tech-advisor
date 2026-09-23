@@ -20,6 +20,22 @@ public class SearchApiRepository {
                 + "AND category='SMARTPHONE' ORDER BY id LIMIT ?",
                 (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)), limit);
     }
+    public Optional<Product> eligibleProduct(long productId) {
+        return db.query("SELECT id, brand, model_name FROM products WHERE id=? "
+                + "AND status='VERIFIED' AND category='SMARTPHONE'",
+                (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)), productId).stream().findFirst();
+    }
+    /** Exact catalogue names only. Two rows suffice to detect an ambiguous model-only name. */
+    public List<Product> namedProducts(String normalizedName) {
+        return db.query("""
+                SELECT id, brand, model_name FROM products
+                WHERE status='VERIFIED' AND category='SMARTPHONE'
+                  AND (lower(regexp_replace(trim(brand || ' ' || model_name), '\\s+', ' ', 'g'))=?
+                    OR lower(regexp_replace(trim(model_name), '\\s+', ' ', 'g'))=?)
+                ORDER BY id LIMIT 2
+                """, (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)),
+                normalizedName, normalizedName);
+    }
     public Optional<String> token(Product p, SearchApiSettings s) {
         return db.query("""
                 SELECT product_token FROM external_product_mapping

@@ -79,6 +79,23 @@ the same cap. The normal source cooldown is 15 minutes, including manual runs.
 No live SearchAPI request occurs in automated tests. Maven test configuration
 clears live source selection and credentials and disables scheduling.
 
+Manual UI runs can override that default: check **SearchAPI customer reviews** and
+enter an existing verified smartphone's exact model or brand/model name. Matching
+against the local catalogue ignores case and repeated whitespace; ambiguous
+model-only names require the brand. The optional API `productName` resolves before
+admission to a durable canonical ID/name, selects exactly one phone, and is included
+in idempotency checks. Missing/ineligible products fail before SearchAPI calls;
+eligibility and the canonical name are rechecked when the worker starts.
+
+To use the frontend after the local setup below, set root `.env`
+`VITE_INGESTION_DEMO=true` and `VITE_API_BASE_URL=http://localhost:18087`, then run
+`npm run dev` from `frontend/`. Open `http://localhost:5173/admin/ingestion`, connect
+with the demo admin password, check **SearchAPI customer reviews**, enter the name,
+and click **Run now**. If the checkbox is disabled, enable the source in the backend
+configuration and restart it. The existing 15-minute source cooldown still applies.
+This replaces the helper in step 9 when using the UI; remaining SQL/retrieval checks
+are the same. No additional migration is required for the optional JSONB run metadata.
+
 ## Optional live smoke test — PowerShell, local only
 
 Prerequisites: Docker Desktop, Java 21. Run commands from the repository root
@@ -314,7 +331,8 @@ uses a separate `techadvisor_searchapi_demo` database and leaves other databases
   new evidence; old versions are retained. Dedupe does not merge different retailers.
 - Short reviews, unknown domains and unusually long text can be missed. Long accepted
   reviews remain one chunk; the existing downstream prompt cap still applies.
-- Lowest-ID selection can starve later products. Refresh selection and scheduling
+- Untargeted lowest-ID selection can starve later products; the named manual UI
+  selects a specific phone. Automatic refresh selection and scheduling
   policy are explicitly future work; the existing generic runner schedule is unchanged.
 - Unknown publication dates cannot establish evidence maturity. No maturity-gate or
   recommendation changes are made here.
@@ -357,3 +375,19 @@ Ordinary Java tests never require the AI service. AI DB tests require
 Official contracts checked during implementation:
 [Google Shopping](https://www.searchapi.io/docs/google-shopping) and
 [Google Product Reviews](https://www.searchapi.io/docs/google-product-reviews).
+
+### Named-product admin UI follow-up (24 September 2026)
+
+The frontend now exposes the SearchAPI checkbox, a required smartphone name when
+checked, inline server validation errors, and the canonical product in run history.
+The optional request target is saved in existing run JSONB; no new migration.
+Untargeted clients remain compatible. Tests verify that selecting a later catalogue
+product does not fetch the earlier one, invalid/ambiguous names cause no external
+calls, the target survives durable admission, and changing it conflicts with a reused
+idempotency key. Frontend tests cover validation, payloads, toggling, retry keys and
+disabled sources.
+
+Follow-up results: backend `mvnw verify` **96 passed, 1 optional real-AI test skipped**;
+frontend **7 passed**, production build passed, and ESLint passed. SearchAPI calls
+were mocked; no paid API or LLM calls were made. The AI service code was unchanged
+in this follow-up, so its previously recorded suite was not rerun.

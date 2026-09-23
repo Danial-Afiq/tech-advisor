@@ -1660,6 +1660,18 @@ Known route:
 
 Current local/demo auth is intentionally temporary.
 
+The SearchAPI source is labelled **SearchAPI customer reviews** in the source list.
+Selecting it shows a required **Smartphone name** field. The backend accepts an
+optional `productName` on `POST /api/admin/ingestion/runs`, resolves an exact
+case-insensitive, whitespace-normalized brand/model or unique model-only name to an
+existing VERIFIED SMARTPHONE, and rejects unknown/ambiguous/ineligible names before
+admission. This UI does not create catalogue products. The resolved ID and canonical
+name are persisted in `RunLog.product` in the existing JSONB metadata, participate in
+idempotency comparison, survive dispatch/restarts, and appear in run history.
+SearchAPI rechecks the selected ID/name/eligibility at execution. API clients omitting
+the field and scheduled runs retain the source's default selection. No migration is
+needed for this optional run metadata. Existing auth, CSRF and cooldowns remain in force.
+
 Production routes should remain protected until the real account/auth ticket supplies a trusted `ADMIN` identity.
 
 Do not ship the demo Basic Auth mechanism as the final production auth system.
@@ -1731,8 +1743,9 @@ using Bearer authorization, never scraping. Source ID: `searchapi-google-product
 It is opt-in via `INGESTION_ENABLED_SOURCES`; enabling it without a key fails at
 startup. Production admin access stays closed; local manual tests use `ingestion-demo`.
 
-Selection is VERIFIED SMARTPHONE products ordered by ID, default one per run (maximum
-two). Matching requires brand/model tokens, rejects accessory/used/refurbished and
+Untargeted selection is VERIFIED SMARTPHONE products ordered by ID, default one per
+run (maximum two). A manual `productName` selects exactly one resolved canonical
+product instead. Matching requires brand/model tokens, rejects accessory/used/refurbished and
 conflicting or unknown wording, and refuses multiple distinct eligible Google IDs.
 The conservative policy may miss valid listings rather than guess their identity.
 

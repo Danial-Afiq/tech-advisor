@@ -14,6 +14,8 @@
 .ingestion-admin .source-choice { display: flex; gap: 12px; align-items: flex-start; }
 .ingestion-admin input[type=checkbox] { width: 18px; height: 18px; accent-color: #a18aff; }
 .ingestion-admin small { display: block; color: #adbad3; font-size: 12px; }
+.ingestion-product { padding: 16px; border-left: 3px solid #a18aff; background: #0c1426; border-radius: 6px; }
+.ingestion-product small { margin-top: 10px; line-height: 1.5; }
 .ingestion-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 28px; }
 .ingestion-summary div { padding: 18px; border-left: 3px solid #a18aff; background: #141f35; }
 .ingestion-summary span { display: block; color: #adbad3; font-size: 13px; }

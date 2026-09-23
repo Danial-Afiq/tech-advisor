@@ -124,6 +124,20 @@ ORDER BY created_at DESC;
 
 ## Admin access and UI
 
+For a named SearchAPI import, check **SearchAPI customer reviews**, enter the existing
+verified smartphone's exact model name (for example **Apple iPhone 16 Pro**), then
+click **Run now**. This field appears only when SearchAPI is selected. It selects
+one canonical product; it never creates a product. Unknown or ambiguous names are
+shown as validation errors without contacting SearchAPI. Include the brand if two
+products share a model name. The Product column records the resolved canonical name.
+
+The existing run request accepts optional `productName`; omit it to keep source-default
+selection. When supplied it requires SearchAPI among the enabled selected sources.
+Resolved product ID/name are durable run metadata and part of idempotency checking.
+Changing the product with the same idempotency key returns 409. SearchAPI validates
+the product again before fetching, so deleted, renamed or unverified products fail
+instead of silently falling back to another phone. Existing source cooldowns still apply.
+
 The panel is at `/admin/ingestion`. It displays source choices, optional reason, next scheduled time and recent results. Requests are asynchronous (`202` plus a Location header). The browser polls results, handles conflicts and retains an idempotency key for retrying a failed submission with the same body. Server admission also blocks overlapping requests, including from different browser tabs.
 
 Production routes are deliberately denied until the account-auth ticket supplies the trusted ADMIN identity. Replace the scoped `closedIngestion` chain with the account integration, retain server-side role checks and appropriate CSRF protection, and rerun security tests. Do not enable `ingestion-demo` in production to bypass this dependency. The demo uses a localhost-bound HTTP Basic admin account with a required environment password and CSRF-protected writes. Credentials are held only in browser memory; do not put them in Vite configuration or localStorage. `VITE_INGESTION_DEMO=true` exposes the local demo login form, not a production authorization mechanism.

@@ -29,10 +29,13 @@ public class IngestionOrchestrator {
         this.store = store; this.registry = registry; this.sinks = sinks; this.clock = clock; this.scheduler = scheduler;
     }
     public RunLog manual(List<String> sources, String actor, String key, String reason) {
+        return manual(sources, actor, key, reason, null);
+    }
+    public RunLog manual(List<String> sources, String actor, String key, String reason, RunLog.ProductTarget product) {
         if (key == null || !key.matches("[A-Za-z0-9_-]{8,128}") || reason != null && reason.length() > 500)
             throw new IllegalArgumentException("Provide an 8-128 character idempotency key and a reason of at most 500 characters");
         var ids = registry.select(sources);
-        var run = store.admit(ids, actor, key, reason, false, ids.stream().allMatch(id -> registry.get(id).simulation()));
+        var run = store.admit(ids, actor, key, reason, false, ids.stream().allMatch(id -> registry.get(id).simulation()), product);
         kick(); return run;
     }
     public void scheduled() {
@@ -74,7 +77,7 @@ public class IngestionOrchestrator {
                     store.progress(run, owner); continue;
                 }
                 store.progress(run, owner);
-                try (var context = new SourceContext(clock, check)) {
+                try (var context = new SourceContext(clock, check, run.product)) {
                     Future<?> future = sourceWorker.submit(() -> {
                         try {
                             var seen = new HashSet<String>();

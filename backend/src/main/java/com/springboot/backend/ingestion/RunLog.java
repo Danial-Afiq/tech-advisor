@@ -12,6 +12,9 @@ public class RunLog {
     public int processedPayloadCount, duplicatePayloadCount, rejectedPayloadCount, errorCount, errorStackCount;
     public int skippedSourceCount;
     public boolean simulation;
+    public ProductTarget product;
+    /** Canonical identity selected at manual admission; null keeps source defaults. */
+    public record ProductTarget(long productId, String productName) {}
     public List<String> sourceIds = new ArrayList<>();
     public List<SourceResult> sources = new ArrayList<>();
 

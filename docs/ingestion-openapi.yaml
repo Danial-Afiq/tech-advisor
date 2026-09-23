@@ -50,6 +50,16 @@ paths:
                   description: Registered enabled source IDs; absent or empty selects all enabled sources.
                   items: { type: string }
                 reason: { type: string, nullable: true, maxLength: 500 }
+                productName:
+                  type: string
+                  nullable: true
+                  minLength: 1
+                  maxLength: 200
+                  description: >-
+                    Optional for SearchAPI manual runs. Exact verified smartphone brand/model or unique
+                    model-only name, ignoring case and repeated whitespace. Requires SearchAPI among the
+                    selected enabled sources. Unknown, ambiguous, blank or ineligible names return 400
+                    before admission. Omission/null retains source-default product selection.
       responses:
         '202':
           description: Durable run admission, or an existing run for the same actor/key/body.
@@ -143,8 +153,8 @@ paths:
                 type: object
                 properties:
                   enabled: { type: boolean }
-                  intervalDays: { type: integer, enum: [1] }
-                  intervalHours: { type: integer, enum: [24] }
+                  intervalDays: { type: integer, enum: [14] }
+                  intervalHours: { type: integer, enum: [336] }
                   anchor: { type: string, format: date-time, nullable: true }
                   nextScheduledAt: { type: string, format: date-time, nullable: true }
                   activeRunId: { type: string, nullable: true }
@@ -186,6 +196,13 @@ components:
         triggerType: { type: string, enum: [MANUAL, SCHEDULED] }
         requestedBy: { type: string }
         reason: { type: string, nullable: true }
+        product:
+          type: object
+          nullable: true
+          description: Canonical product selected at admission; included in idempotency comparison and preserved across dispatch/restarts.
+          properties:
+            productId: { type: integer, format: int64 }
+            productName: { type: string }
         idempotencyKey: { type: string, nullable: true }
         status:
           type: string

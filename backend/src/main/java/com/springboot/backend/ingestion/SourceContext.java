@@ -22,14 +22,22 @@ public final class SourceContext implements AutoCloseable {
     private long lastRequest;
     private int requests;
     private final HttpClient http;
+    private final RunLog.ProductTarget product;
 
     public SourceContext(Clock clock, Runnable ownershipCheck) {
+        this(clock, ownershipCheck, (RunLog.ProductTarget) null);
+    }
+    public SourceContext(Clock clock, Runnable ownershipCheck, RunLog.ProductTarget product) {
         this(clock, ownershipCheck, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
-                .followRedirects(HttpClient.Redirect.NEVER).build());
+                .followRedirects(HttpClient.Redirect.NEVER).build(), product);
     }
     SourceContext(Clock clock, Runnable ownershipCheck, HttpClient http) {
-        this.clock = clock; this.ownershipCheck = ownershipCheck; this.http = http;
+        this(clock, ownershipCheck, http, null);
     }
+    private SourceContext(Clock clock, Runnable ownershipCheck, HttpClient http, RunLog.ProductTarget product) {
+        this.clock = clock; this.ownershipCheck = ownershipCheck; this.http = http; this.product = product;
+    }
+    public RunLog.ProductTarget product() { return product; }
     public static final class HttpFailure extends RuntimeException {
         public final int status;
         public final boolean invalidToken;
