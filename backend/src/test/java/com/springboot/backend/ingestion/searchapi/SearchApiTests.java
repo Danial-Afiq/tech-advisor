@@ -112,6 +112,7 @@ class SearchApiTests {
         when(client.shopping(any(), eq(product.name()))).thenReturn(shopping());
         when(client.reviews(any(), anyString(), anyString())).thenReturn(reviews("5 months ago"));
         var source = new SearchApiSource(settings, repository, client, new IngestionSettings(false, null, List.of()));
+        assertEquals(Duration.ZERO, source.cooldown());
         try (var context = new SourceContext(Clock.fixed(now, ZoneOffset.UTC), () -> {})) {
             var output = new ArrayList<Payload>(); source.ingest(context, output::add);
             assertEquals(1, output.size()); output.getFirst().validate(SearchApiSource.ID);

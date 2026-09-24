@@ -141,6 +141,13 @@ class IngestionIntegrationTests {
                 adapter, new IllegalArgumentException("invalid source input")));
         assertEquals(Duration.ofMinutes(15), IngestionOrchestrator.failureCooldown(
                 adapter, new IngestionFailure(IngestionFailure.Code.EMBEDDING_FAILED)));
+        var noCooldown = new IngestionSource() {
+            public String sourceId() { return "no-cooldown-source"; }
+            public Duration cooldown() { return Duration.ZERO; }
+            public void ingest(SourceContext context, java.util.function.Consumer<Payload> output) {}
+        };
+        assertEquals(Duration.ZERO, IngestionOrchestrator.failureCooldown(
+                noCooldown, new SourceContext.TransportFailure()));
     }
     @Test void manualRunPersistsMixedTypedPayloadsAndFailureMetadata() throws Exception {
         var admitted = runner.manual(List.of("simulated-release", "simulated-failure"), "admin", "sample-run-key", "Mid-cycle demo");

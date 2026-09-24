@@ -133,7 +133,8 @@ public class IngestionOrchestrator {
         } finally { heartbeat.cancel(false); }
     }
     static Duration failureCooldown(IngestionSource source, Throwable error) {
-        if (error instanceof SourceContext.TransportFailure) return Duration.ofMinutes(1);
+        if (error instanceof SourceContext.TransportFailure)
+            return source.cooldown().isZero() ? Duration.ZERO : Duration.ofMinutes(1);
         if (error instanceof IllegalArgumentException) return Duration.ZERO;
         if (error instanceof IngestionFailure failure && switch (failure.code()) {
             case SEARCHAPI_NO_MATCH, SEARCHAPI_AMBIGUOUS_MATCH, SEARCHAPI_NO_ELIGIBLE_PRODUCT -> true;

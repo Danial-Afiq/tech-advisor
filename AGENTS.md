@@ -1762,9 +1762,9 @@ or refresh schedule is introduced. Normal runs use one discovery plus `most_rele
 and `most_recent` (three searches, two cached); the manual picker adds one preview
 search. There is no pagination. SourceContext retains
 its 60-second deadline, ten-attempt budget, pacing and 429/503 retries/cooldowns.
-External requests use a five-second connect and 20-second request timeout. Cooldowns
-are assigned after outcomes: completed runs use 15 minutes, transport/timeouts one
-minute, validation/no-match failures none, and provider Retry-After remains authoritative.
+External requests use a five-second connect and 20-second request timeout. SearchAPI
+overrides the application cooldown to zero after success and local failures, allowing
+consecutive product runs. Provider Retry-After remains authoritative and is persisted.
 Authenticated GETs validate the exact host, require HTTPS and never follow redirects.
 Only code-owned error enums, never provider messages/credentials, enter diagnostics.
 

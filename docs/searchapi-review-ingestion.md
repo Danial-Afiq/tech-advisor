@@ -81,9 +81,10 @@ uses four successful searches when uncached.
 Default one product/run; configuration allows at most two. The existing HTTP rules
 still apply: 60-second source budget, ten total attempts, one-second pacing,
 five-second connect and 20-second request timeout, 1 MiB responses, bounded 429/503
-retries and Retry-After cooldown. Invalid-token recovery can add searches within
-the same cap. Completed runs use the normal 15-minute source cooldown; transport
-failures use one minute, while validation/no-match failures are immediately retryable.
+retries and provider-directed Retry-After deferral. Invalid-token recovery can add
+searches within the same cap. SearchAPI has no application-imposed cooldown after
+success, transport failure, validation failure or no match, so consecutive manual
+product runs are allowed.
 No live SearchAPI request occurs in automated tests. Maven test configuration
 clears live source selection and credentials and disables scheduling.
 
@@ -101,7 +102,7 @@ To use the frontend after the local setup below, set root `.env`
 `npm run dev` from `frontend/`. Open `http://localhost:5173/admin/ingestion`, connect
 with the demo admin password, check **SearchAPI customer reviews**, enter the name,
 click **Find matching products**, choose a result, and click **Run now**. If the checkbox is disabled, enable the source in the backend
-configuration and restart it. The outcome-based source cooldown still applies.
+configuration and restart it. Only provider-directed Retry-After can defer another run.
 This replaces the helper in step 9 when using the UI; remaining SQL/retrieval checks
 are the same. No additional migration is required for the optional JSONB run metadata.
 
@@ -309,7 +310,7 @@ uses a separate `techadvisor_searchapi_demo` database and leaves other databases
     The command fails if it retrieves no SearchAPI evidence or if those IDs leak to
     the unrelated product query. It directly uses the existing `PgVectorStore`.
 
-14. Check counts, **wait for the 15-minute successful-run cooldown**, rerun step 9,
+14. Check counts, rerun step 9 immediately,
     then repeat the counts. The helper reports the exact next allowed timestamp.
 
     ```powershell

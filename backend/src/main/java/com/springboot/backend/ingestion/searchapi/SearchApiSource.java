@@ -2,6 +2,7 @@ package com.springboot.backend.ingestion.searchapi;
 
 import com.springboot.backend.ingestion.*;
 import static com.springboot.backend.ingestion.IngestionFailure.Code.*;
+import java.time.Duration;
 import java.util.List;
 import java.util.function.Consumer;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -22,6 +23,7 @@ public class SearchApiSource implements IngestionSource {
             throw new IllegalArgumentException("SEARCHAPI_API_KEY is required when SearchAPI ingestion is enabled");
     }
     @Override public String sourceId() { return ID; }
+    @Override public Duration cooldown() { return Duration.ZERO; }
     @Override public void ingest(SourceContext context, Consumer<Payload> output) throws Exception {
         boolean createdDuringRun = context.product() != null && context.product().productId() == null;
         var products = context.product() == null ? repository.products(settings.maxProductsPerRun())
