@@ -10,6 +10,7 @@ import tools.jackson.databind.JsonNode;
 public final class ProductMatcher {
     private ProductMatcher() {}
     public record Match(String externalId, String token, String title) {}
+    public record Candidate(String externalProductId, String title) {}
     private static final Set<String> REJECT = Set.of("case", "cover", "protector", "screen", "charger",
             "cable", "replacement", "refurbished", "renewed", "used", "preowned", "pre", "bundle", "replica");
     private static final Set<String> SUFFIX = Set.of("unlocked", "locked", "new", "smartphone", "phone",
@@ -37,20 +38,7 @@ public final class ProductMatcher {
         return (double) core / t.size() >= 0.4;
     }
     public static Match choose(String brand, String model, JsonNode results) {
-        var matches = new TreeMap<String, Match>();
-        Comparator<Match> specificity = Comparator
-                .comparingInt((Match match) -> extraTokenCount(brand, model, match.title()))
-                .thenComparing(Match::title);
-        for (JsonNode row : results) {
-            String title = row.path("title").asText("");
-            String id = row.path("product_id").asText("");
-            String token = row.path("product_token").asText("");
-            if (!id.isBlank() && !token.isBlank() && title.length() <= 1000 && token.length() <= 16000
-                    && accepts(brand, model, title)) {
-                Match match = new Match(id, token, title);
-                matches.merge(id, match, (a, z) -> specificity.compare(a, z) <= 0 ? a : z);
-            }
-        }
+        var matches = validMatches(brand, model, results);
         if (matches.isEmpty()) throw new IngestionFailure(SEARCHAPI_NO_MATCH);
         int bestScore = matches.values().stream().mapToInt(
                 match -> extraTokenCount(brand, model, match.title())).min().orElseThrow();
@@ -58,6 +46,36 @@ public final class ProductMatcher {
                 match -> extraTokenCount(brand, model, match.title()) == bestScore).toList();
         if (best.size() != 1) throw new IngestionFailure(SEARCHAPI_AMBIGUOUS_MATCH);
         return best.getFirst();
+    }
+
+    public static Match choose(String brand, String model, JsonNode results, String externalProductId) {
+        Match selected = validMatches(brand, model, results).get(externalProductId);
+        if (selected == null) throw new IngestionFailure(SEARCHAPI_NO_MATCH);
+        return selected;
+    }
+
+    public static List<Candidate> candidates(String brand, String model, JsonNode results) {
+        return validMatches(brand, model, results).values().stream().limit(20)
+                .map(match -> new Candidate(match.externalId(), match.title())).toList();
+    }
+
+    private static Map<String, Match> validMatches(String brand, String model, JsonNode results) {
+        var matches = new LinkedHashMap<String, Match>();
+        Comparator<Match> specificity = Comparator
+                .comparingInt((Match match) -> extraTokenCount(brand, model, match.title()))
+                .thenComparing(Match::title);
+        for (JsonNode row : results) {
+            String title = row.path("title").asText("");
+            String id = row.path("product_id").asText("");
+            String token = row.path("product_token").asText("");
+            if (!id.isBlank() && id.length() <= 1000 && !token.isBlank()
+                    && title.length() <= 1000 && token.length() <= 16000
+                    && accepts(brand, model, title)) {
+                Match match = new Match(id, token, title);
+                matches.merge(id, match, (a, z) -> specificity.compare(a, z) <= 0 ? a : z);
+            }
+        }
+        return matches;
     }
 
     private static int extraTokenCount(String brand, String model, String title) {

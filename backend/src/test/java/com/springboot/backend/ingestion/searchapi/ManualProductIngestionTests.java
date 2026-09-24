@@ -93,7 +93,42 @@ class ManualProductIngestionTests {
                 Long.class, brand, model, category, status);
     }
     String body(String name) {
-        return json.writeValueAsString(Map.of("sources", java.util.List.of(SearchApiSource.ID), "productName", name));
+        return json.writeValueAsString(Map.of("sources", java.util.List.of(SearchApiSource.ID),
+                "productName", name, "externalProductId", "mock-product"));
+    }
+
+    @Test void listsCandidatesWithoutTokensAndIngestsTheSelectedIdentity() throws Exception {
+        doReturn(json.readTree("""
+                [{"title":"AutoCreateTest Choice Phone 256GB","product_id":"choice-256","product_token":"hidden-a"},
+                 {"title":"AutoCreateTest Choice Phone 512GB","product_id":"choice-512","product_token":"hidden-b"}]
+                """)).when(api).shopping(any(), eq("AutoCreateTest Choice Phone"));
+
+        mvc.perform(post("/api/admin/ingestion/searchapi/candidates")
+                .with(user("admin").roles("ADMIN")).with(csrf()).contentType("application/json")
+                .content("{\"productName\":\"AutoCreateTest Choice Phone\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].externalProductId").value("choice-256"))
+                .andExpect(jsonPath("$[1].externalProductId").value("choice-512"))
+                .andExpect(content().string(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("hidden-"))));
+
+        String request = json.writeValueAsString(Map.of("sources", java.util.List.of(SearchApiSource.ID),
+                "productName", "AutoCreateTest Choice Phone", "externalProductId", "choice-512"));
+        String result = mvc.perform(post("/api/admin/ingestion/runs")
+                .with(user("admin").roles("ADMIN")).with(csrf()).header("Idempotency-Key", "selected-choice-key")
+                .contentType("application/json").content(request)).andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.product.externalProductId").value("choice-512"))
+                .andReturn().getResponse().getContentAsString();
+        String id = json.readTree(result).path("runId").asText();
+        await(id);
+        assertEquals("choice-512", db.queryForObject("""
+                SELECT m.external_product_id FROM external_product_mapping m
+                JOIN products p ON p.id=m.product_id
+                WHERE p.brand='AutoCreateTest' AND p.model_name='Choice Phone'
+                """, String.class));
+        String changedSelection = json.writeValueAsString(Map.of("sources", java.util.List.of(SearchApiSource.ID),
+                "productName", "AutoCreateTest Choice Phone", "externalProductId", "choice-256"));
+        mvc.perform(post("/api/admin/ingestion/runs")
+                .with(user("admin").roles("ADMIN")).with(csrf()).header("Idempotency-Key", "selected-choice-key")
+                .contentType("application/json").content(changedSelection)).andExpect(status().isConflict());
     }
 
     @Test void resolvesNamePersistsTargetAndExecutesOnlyTheRequestedProduct() throws Exception {
@@ -133,7 +168,11 @@ class ManualProductIngestionTests {
         }
         mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
                 .header("Idempotency-Key", "wrong-source-key").contentType("application/json")
-                .content("{\"sources\":[\"simulated-release\"],\"productName\":\"Later Phone\"}"))
+                .content("{\"sources\":[\"simulated-release\"],\"productName\":\"Later Phone\",\"externalProductId\":\"mock-product\"}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
+                .header("Idempotency-Key", "missing-selection-key").contentType("application/json")
+                .content("{\"sources\":[\"searchapi-google-product-reviews\"],\"productName\":\"ManualTargetTest Later Phone\"}"))
                 .andExpect(status().isBadRequest());
         assertTrue(store.history(0, 20, "", "").isEmpty());
         verifyNoInteractions(api);

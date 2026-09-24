@@ -526,7 +526,8 @@ that way - bounding the candidate set is what bounds every downstream AI cost.
 
 **Broad scheduled catalogue discovery remains separate work.** The filter is exercised
 by tests and seeded data. A named admin SearchAPI run can create a VERIFIED smartphone
-only after one unambiguous provider match; it does not create price observations.
+only after the admin selects a validated provider identity and the worker revalidates
+that choice; it does not create price observations.
 
 ## 7.2 Channel B — owner evidence grade
 
@@ -1661,15 +1662,18 @@ Known route:
 Current local/demo auth is intentionally temporary.
 
 The SearchAPI source is labelled **SearchAPI customer reviews** in the source list.
-Selecting it shows a required **Smartphone name** field. The backend accepts an
-optional `productName` on `POST /api/admin/ingestion/runs`. Existing exact
+Selecting it shows a required **Smartphone name** field. `POST
+/api/admin/ingestion/searchapi/candidates` returns up to 20 validated product titles
+and external IDs; provider product tokens never reach the browser. The admin selects
+one candidate before starting the run. The backend accepts `productName` plus that
+`externalProductId` on `POST /api/admin/ingestion/runs`. Existing exact
 case-insensitive, whitespace-normalized brand/model or unique model-only names resolve
 to a VERIFIED SMARTPHONE. An unknown brand/full-model name is admitted with a null
-product ID; the worker creates its VERIFIED product, phone subtype and provider mapping
-transactionally only after one unambiguous SearchAPI match. No-match or ambiguous
-provider results create nothing, while known ineligible catalogue rows are rejected
-before admission. The target persists in `RunLog.product`, participates in idempotency,
-survives restarts and appears in history. API clients omitting the field and scheduled
+product ID; the worker re-fetches results, revalidates the selected external ID, then
+creates its VERIFIED product, phone subtype and provider mapping transactionally.
+Missing/stale selections create nothing, while known ineligible catalogue rows are
+rejected before admission. The target persists in `RunLog.product`, participates in
+idempotency, survives restarts and appears in history. API clients omitting both fields and scheduled
 runs retain default selection. No migration is needed. Existing auth, CSRF and cooldowns remain.
 
 Production routes should remain protected until the real account/auth ticket supplies a trusted `ADMIN` identity.
@@ -1744,18 +1748,19 @@ It is opt-in via `INGESTION_ENABLED_SOURCES`; enabling it without a key fails at
 startup. Production admin access stays closed; local manual tests use `ingestion-demo`.
 
 Untargeted selection is VERIFIED SMARTPHONE products ordered by ID, default one per
-run (maximum two). A manual `productName` selects one existing product or requests
-provider-validated creation when the catalogue has no match. The first word is the
-brand and the remainder is the full model. Matching requires brand/model tokens and rejects accessory/used/refurbished
-and conflicting or unknown wording. Among valid variants, the Google identity with the
-fewest extra suffix tokens wins; equally specific distinct eligible IDs remain ambiguous.
-The conservative policy may miss valid listings rather than guess between tied identities.
+run (maximum two). Manual discovery returns validated candidate titles/external IDs;
+the admin-selected ID is persisted with the canonical `productName` and revalidated by
+the worker before its server-only token is cached. The first word is the brand and the
+remainder is the full model. Matching requires brand/model tokens and rejects
+accessory/used/refurbished and conflicting or unknown wording. Untargeted runs retain
+least-extra-suffix ranking and fail on equally specific distinct IDs.
 
 V7's `external_product_mapping` caches provider/product/locale mappings, canonical
 name and verification times. A changed canonical name or locale misses the cache.
 A clear invalid/expired cached-token HTTP 400 allows one rediscovery/retry; no TTL
 or refresh schedule is introduced. Normal runs use one discovery plus `most_relevant`
-and `most_recent` (three searches, two cached); no pagination. SourceContext retains
+and `most_recent` (three searches, two cached); the manual picker adds one preview
+search. There is no pagination. SourceContext retains
 its 60-second deadline, ten-attempt budget, pacing and 429/503 retries/cooldowns.
 External requests use a five-second connect and 20-second request timeout. Cooldowns
 are assigned after outcomes: completed runs use 15 minutes, transport/timeouts one

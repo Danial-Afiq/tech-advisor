@@ -14,6 +14,10 @@ async function connectAsAdmin() {
 function searchApiServer(post: (init: RequestInit) => { ok: boolean; status?: number; data: unknown }, enabled = true) {
   return vi.fn(async (url: string, init: RequestInit) => {
     const path = url.split('/api/admin/ingestion')[1]
+    if (path === '/searchapi/candidates' && init.method === 'POST') return { ok: true, json: async () => [
+      { externalProductId: 'iphone-128', title: 'Apple iPhone 16 Pro 128GB' },
+      { externalProductId: 'iphone-256', title: 'Apple iPhone 16 Pro 256GB' },
+    ] }
     if (path === '/runs' && init.method === 'POST') {
       const response = post(init)
       return { ...response, json: async () => response.data }
@@ -43,11 +47,15 @@ describe('Ingestion admin', () => {
     await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
     expect(screen.getByRole('button', { name: 'Run now' })).toBeDisabled()
     await userEvent.type(screen.getByRole('textbox', { name: 'Smartphone name' }), '  Apple iPhone 16 Pro  ')
+    await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
+    expect(await screen.findByRole('radio', { name: /Apple iPhone 16 Pro 128GB/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Run now' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('radio', { name: /Apple iPhone 16 Pro 256GB/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Run now' }))
-    await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init.method === 'POST')).toBe(true))
-    const submitted = fetcher.mock.calls.find(([, init]) => init.method === 'POST')![1]
+    await waitFor(() => expect(fetcher.mock.calls.some(([url, init]) => url.endsWith('/runs') && init.method === 'POST')).toBe(true))
+    const submitted = fetcher.mock.calls.find(([url, init]) => url.endsWith('/runs') && init.method === 'POST')![1]
     expect(JSON.parse(submitted.body as string)).toEqual({ sources: ['searchapi-google-product-reviews'],
-      productName: 'Apple iPhone 16 Pro', reason: null })
+      productName: 'Apple iPhone 16 Pro', externalProductId: 'iphone-256', reason: null })
     expect(submitted.headers).toMatchObject({ 'X-CSRF-TOKEN': 'test-token', 'Idempotency-Key': expect.any(String) })
     expect(screen.getByRole('cell', { name: 'Apple iPhone 16 Pro' })).toBeInTheDocument()
   })
@@ -78,15 +86,20 @@ describe('Ingestion admin', () => {
     await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
     const input = screen.getByRole('textbox', { name: 'Smartphone name' })
     await userEvent.type(input, 'Unknown phone')
+    await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
+    await userEvent.click(await screen.findByRole('radio', { name: /128GB/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Run now' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('No verified smartphone matches that name.')
     await waitFor(() => expect(screen.getByRole('button', { name: 'Run now' })).toBeEnabled())
     await userEvent.click(screen.getByRole('button', { name: 'Run now' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Run now' })).toBeEnabled())
     await userEvent.clear(input); await userEvent.type(input, 'Apple iPhone 16 Pro')
+    expect(screen.getByRole('button', { name: 'Run now' })).toBeDisabled()
+    await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
+    await userEvent.click(await screen.findByRole('radio', { name: /128GB/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Run now' }))
-    await waitFor(() => expect(fetcher.mock.calls.filter(([, init]) => init.method === 'POST')).toHaveLength(3))
-    const keys = fetcher.mock.calls.filter(([, init]) => init.method === 'POST')
+    await waitFor(() => expect(fetcher.mock.calls.filter(([url, init]) => url.endsWith('/runs') && init.method === 'POST')).toHaveLength(3))
+    const keys = fetcher.mock.calls.filter(([url, init]) => url.endsWith('/runs') && init.method === 'POST')
       .map(([, init]) => (init.headers as Record<string, string>)['Idempotency-Key'])
     expect(keys[0]).toBe(keys[1]); expect(keys[2]).not.toBe(keys[0])
   })

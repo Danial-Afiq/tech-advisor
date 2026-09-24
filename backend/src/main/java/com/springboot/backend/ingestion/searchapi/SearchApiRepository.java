@@ -47,7 +47,7 @@ public class SearchApiRepository {
                 normalizedName, normalizedName);
     }
 
-    /** Promote only after SearchAPI returned one unambiguous matching product identity. */
+    /** Promote only after SearchAPI returned the validated product identity chosen for this run. */
     @Transactional
     public Product createVerified(ProductName requested, SearchApiSettings settings,
                                   ProductMatcher.Match match, Instant now) {

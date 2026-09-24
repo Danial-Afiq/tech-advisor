@@ -26,6 +26,42 @@ paths:
                   csrfToken: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/admin/ingestion/searchapi/candidates:
+    post:
+      summary: Find validated SearchAPI products for manual selection
+      parameters:
+        - in: header
+          name: X-CSRF-TOKEN
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productName]
+              properties:
+                productName: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        '200':
+          description: Up to 20 valid provider-ranked identities. Product tokens remain server-only.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [externalProductId, title]
+                  properties:
+                    externalProductId: { type: string }
+                    title: { type: string }
+        '400': { $ref: '#/components/responses/Invalid' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { description: SearchAPI rate limited the discovery request }
+        '502': { description: SearchAPI returned an unusable response }
+        '503': { description: SearchAPI could not be reached }
   /api/admin/ingestion/runs:
     post:
       summary: Request an asynchronous scrape without moving the recurring schedule
@@ -57,10 +93,15 @@ paths:
                   maxLength: 200
                   description: >-
                     Optional for SearchAPI manual runs. Brand followed by the full model, ignoring repeated
-                    whitespace. Existing eligible smartphones resolve before admission. An unknown name is
-                    admitted for asynchronous SearchAPI validation and is created only after one unambiguous
-                    matching identity is returned. Blank, malformed, ambiguous-existing or ineligible names
-                    return 400 before admission. Omission/null retains source-default product selection.
+                    whitespace. When present, externalProductId is required. Existing eligible smartphones
+                    resolve before admission. An unknown name is admitted for asynchronous validation and
+                    created only after the selected identity is revalidated. Omission/null retains
+                    source-default product selection.
+                externalProductId:
+                  type: string
+                  nullable: true
+                  maxLength: 1000
+                  description: External ID returned by the candidate endpoint; never a provider product token.
       responses:
         '202':
           description: Durable run admission, or an existing run for the same actor/key/body.
@@ -204,6 +245,7 @@ components:
           properties:
             productId: { type: integer, format: int64, nullable: true }
             productName: { type: string }
+            externalProductId: { type: string, nullable: true }
         idempotencyKey: { type: string, nullable: true }
         status:
           type: string

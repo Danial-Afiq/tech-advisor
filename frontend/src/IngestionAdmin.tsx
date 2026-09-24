@@ -4,11 +4,12 @@ import './IngestionAdmin.css'
 
 type Source = { sourceId: string; enabled: boolean; simulation: boolean; nextAllowedAt: string | null }
 type Run = { runId: string; status: string; triggerType: string; requestedAt: string; startedAt: string | null;
-  product?: { productId: number | null; productName: string } | null;
+  product?: { productId: number | null; productName: string; externalProductId?: string | null } | null;
   finishedAt: string | null; processedPayloadCount: number; errorStackCount: number;
   sources: { sourceId: string; status: string; processedPayloadCount: number; errorStackCount: number }[] }
 type Schedule = { enabled: boolean; intervalHours: number; nextScheduledAt: string | null; activeRunId: string | null }
 type Session = { username: string; csrfHeader: string; csrfToken: string }
+type ProductCandidate = { externalProductId: string; title: string }
 const SEARCHAPI_SOURCE = 'searchapi-google-product-reviews'
 const sourceLabel = (id: string) => id === SEARCHAPI_SOURCE ? 'SearchAPI customer reviews' : id
 const when = (value: string | null) => value ? new Date(value).toLocaleString() : '—'
@@ -24,8 +25,11 @@ export default function IngestionAdmin() {
   const [schedule, setSchedule] = useState<Schedule | null>(null)
   const [reason, setReason] = useState('')
   const [productName, setProductName] = useState('')
+  const [candidates, setCandidates] = useState<ProductCandidate[]>([])
+  const [externalProductId, setExternalProductId] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [finding, setFinding] = useState(false)
   const demo = import.meta.env.VITE_INGESTION_DEMO === 'true'
   const searchApiSelected = selected.includes(SEARCHAPI_SOURCE)
 
@@ -34,12 +38,11 @@ export default function IngestionAdmin() {
       ...init, credentials: 'include', headers: { ...(auth.current ? { Authorization: auth.current } : {}), ...init.headers },
     })
     if (!response.ok) {
-      if (response.status === 400) {
-        const body = await response.json().catch(() => null)
-        throw new Error(typeof body?.message === 'string' ? body.message : 'Check your source selection and product name.')
-      }
+      const body = typeof response.json === 'function' ? await response.json().catch(() => null) : null
+      if (typeof body?.message === 'string') throw new Error(body.message)
       const descriptions: Record<number, string> = { 401: 'Sign in with an admin account to continue.',
         403: 'Admin access is unavailable or your session has expired.', 409: 'A run is already active, or this request conflicts with an earlier submission.',
+        429: 'SearchAPI is rate limited. Try again later.', 502: 'SearchAPI could not return product choices. Try again later.',
         503: 'Run storage is unavailable. Retry the same request when it recovers.' }
       throw new Error(descriptions[response.status] ?? `Request failed (${response.status}).`)
     }
@@ -78,9 +81,12 @@ export default function IngestionAdmin() {
     if (searchApiSelected && !productName.trim()) {
       setError('Enter the smartphone name to import its customer reviews.'); return
     }
+    if (searchApiSelected && !externalProductId) {
+      setError('Find matching products and select one before starting ingestion.'); return
+    }
     setSubmitting(true); setError('')
     const body = JSON.stringify({ sources: [...selected].sort(), reason: reason.trim() || null,
-      ...(searchApiSelected ? { productName: productName.trim() } : {}) })
+      ...(searchApiSelected ? { productName: productName.trim(), externalProductId } : {}) })
     if (!pending.current || pending.current.body !== body) pending.current = { body, key: crypto.randomUUID() }
     try {
       await request('/runs', { method: 'POST', headers: { 'Content-Type': 'application/json',
@@ -89,6 +95,20 @@ export default function IngestionAdmin() {
       await refresh()
     } catch (e) { setError((e as Error).message); await refresh().catch(() => {}) }
     finally { setSubmitting(false) }
+  }
+
+  async function findProducts() {
+    if (!session || !productName.trim()) {
+      setError('Enter the smartphone brand and full model name first.'); return
+    }
+    setFinding(true); setError(''); setCandidates([]); setExternalProductId('')
+    try {
+      const found = await request('/searchapi/candidates', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', [session.csrfHeader]: session.csrfToken },
+        body: JSON.stringify({ productName: productName.trim() }) })
+      setCandidates(found)
+    } catch (e) { setError((e as Error).message) }
+    finally { setFinding(false) }
   }
 
   return <main className="ingestion-admin">
@@ -108,7 +128,7 @@ export default function IngestionAdmin() {
       </section>
       <section className="ingestion-card"><h2>Run a market update</h2><p>Manual runs leave the recurring schedule unchanged.</p>
         <form onSubmit={e => { e.preventDefault(); void start() }}>
-          <fieldset disabled={submitting || !!schedule?.activeRunId}><legend>Sources</legend>
+          <fieldset disabled={submitting || finding || !!schedule?.activeRunId}><legend>Sources</legend>
             {sources.length === 0 && <p>No sources have been registered.</p>}
             {sources.map(source => <label className="source-choice" key={source.sourceId}>
               <input type="checkbox" disabled={!source.enabled} checked={selected.includes(source.sourceId)}
@@ -122,13 +142,28 @@ export default function IngestionAdmin() {
           {searchApiSelected && <div className="ingestion-product">
             <label htmlFor="ingestion-product-name">Smartphone name
               <input id="ingestion-product-name" value={productName} maxLength={200} required
-                disabled={submitting || !!schedule?.activeRunId} aria-describedby="ingestion-product-help"
-                onChange={e => setProductName(e.target.value)} placeholder="For example, Apple iPhone 16 Pro" />
+                disabled={submitting || finding || !!schedule?.activeRunId} aria-describedby="ingestion-product-help"
+                onChange={e => { setProductName(e.target.value); setCandidates([]); setExternalProductId('') }}
+                placeholder="For example, Apple iPhone 16 Pro" />
             </label>
-            <small id="ingestion-product-help">Enter the brand followed by the full model. SearchAPI validates and adds a new smartphone automatically before importing its reviews.</small>
+            <small id="ingestion-product-help">Enter the brand followed by the full model, then find and select the SearchAPI product whose reviews you want.</small>
+            <button type="button" onClick={() => void findProducts()}
+              disabled={submitting || finding || !!schedule?.activeRunId || !productName.trim()}>
+              {finding ? 'Finding products…' : 'Find matching products'}
+            </button>
+            {candidates.length > 0 && <fieldset className="product-candidates">
+              <legend>Select a SearchAPI product</legend>
+              {candidates.map(candidate => <label className="product-choice" key={candidate.externalProductId}>
+                <input type="radio" name="searchapi-product" value={candidate.externalProductId}
+                  checked={externalProductId === candidate.externalProductId}
+                  onChange={() => setExternalProductId(candidate.externalProductId)} />
+                <span>{candidate.title}<small>Product ID: {candidate.externalProductId}</small></span>
+              </label>)}
+            </fieldset>}
           </div>}
           <label>Reason (optional)<input value={reason} maxLength={500} onChange={e => setReason(e.target.value)} placeholder="For example, a major mid-cycle phone release" /></label>
-          <button type="submit" disabled={submitting || !!schedule?.activeRunId || selected.length === 0 || (searchApiSelected && !productName.trim())}>
+          <button type="submit" disabled={submitting || finding || !!schedule?.activeRunId || selected.length === 0
+            || (searchApiSelected && (!productName.trim() || !externalProductId))}>
             {submitting ? 'Submitting…' : schedule?.activeRunId ? 'Run in progress' : 'Run now'}</button>
         </form>
       </section>

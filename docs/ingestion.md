@@ -125,17 +125,19 @@ ORDER BY created_at DESC;
 ## Admin access and UI
 
 For a named SearchAPI import, check **SearchAPI customer reviews**, enter the brand
-and full model name (for example **Apple iPhone 16 Pro**), then click **Run now**.
-An existing eligible phone is selected directly. For an unknown name, the asynchronous
-source requires one unambiguous matching SearchAPI identity before transactionally
-creating the VERIFIED `products` row, `phone` row and external mapping. A no-match or
-ambiguous result creates nothing. Known ineligible catalogue rows remain rejected.
+and full model name (for example **Apple iPhone 16 Pro**), click **Find matching
+products**, select one validated SearchAPI identity, then click **Run now**. Product
+tokens remain server-only. The worker revalidates the selected external product ID
+before transactionally creating an unknown phone's VERIFIED `products` row, `phone`
+row and external mapping. A missing/stale selection or no match creates nothing.
+Known ineligible catalogue rows remain rejected.
 The Product column records the requested or resolved canonical name.
 
 The existing run request accepts optional `productName`; omit it to keep source-default
-selection. When supplied it requires SearchAPI among the enabled selected sources.
+selection. When supplied it requires SearchAPI among the enabled selected sources and
+an `externalProductId` returned by the candidate endpoint.
 Resolved product ID/name, or the new-product discovery name with a null ID, are durable
-run metadata and part of idempotency checking.
+run metadata together with the selected external ID and are part of idempotency checking.
 Changing the product with the same idempotency key returns 409. SearchAPI validates
 the product again before fetching, so deleted, renamed or unverified products fail
 instead of silently falling back to another phone. Existing source cooldowns still apply.
@@ -144,7 +146,7 @@ The panel is at `/admin/ingestion`. It displays source choices, optional reason,
 
 Production routes are deliberately denied until the account-auth ticket supplies the trusted ADMIN identity. Replace the scoped `closedIngestion` chain with the account integration, retain server-side role checks and appropriate CSRF protection, and rerun security tests. Do not enable `ingestion-demo` in production to bypass this dependency. The demo uses a localhost-bound HTTP Basic admin account with a required environment password and CSRF-protected writes. Credentials are held only in browser memory; do not put them in Vite configuration or localStorage. `VITE_INGESTION_DEMO=true` exposes the local demo login form, not a production authorization mechanism.
 
-API contracts are in `docs/ingestion-openapi.yaml`. The endpoint group supports run submission, run detail/history, source availability, schedule state and an authenticated CSRF/session read. Idempotency keys are scoped to the actor, with differing payloads rejected. History is paginated using `page`/`size` and optional `status`/`trigger` filters.
+API contracts are in `docs/ingestion-openapi.yaml`. The endpoint group supports SearchAPI candidate discovery, run submission, run detail/history, source availability, schedule state and an authenticated CSRF/session read. Idempotency keys are scoped to the actor, with differing payloads rejected. History is paginated using `page`/`size` and optional `status`/`trigger` filters.
 
 ## Local demo and verification
 

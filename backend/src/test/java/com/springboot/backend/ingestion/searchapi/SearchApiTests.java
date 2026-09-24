@@ -61,6 +61,20 @@ class SearchApiTests {
         assertEquals("canonical", ProductMatcher.choose("Apple", "iPhone 16 Pro", variants).externalId());
     }
 
+    @Test void listsSafeCandidatesAndHonorsTheAdminSelection() {
+        var variants = json.readTree("""
+                [{"title":"Apple iPhone 13 Pro Max 256GB","product_id":"256","product_token":"secret-a"},
+                 {"title":"Apple iPhone 13 Pro Max 512GB","product_id":"512","product_token":"secret-b"},
+                 {"title":"Apple iPhone 13 Pro Max Case","product_id":"case","product_token":"secret-c"}]
+                """);
+        var candidates = ProductMatcher.candidates("Apple", "iPhone 13 Pro Max", variants);
+        assertEquals(List.of(new ProductMatcher.Candidate("256", "Apple iPhone 13 Pro Max 256GB"),
+                new ProductMatcher.Candidate("512", "Apple iPhone 13 Pro Max 512GB")), candidates);
+        assertEquals("secret-b", ProductMatcher.choose("Apple", "iPhone 13 Pro Max", variants, "512").token());
+        assertEquals(SEARCHAPI_NO_MATCH, assertThrows(IngestionFailure.class,
+                () -> ProductMatcher.choose("Apple", "iPhone 13 Pro Max", variants, "case")).code());
+    }
+
     @Test void normalizesDedupesDiscardsProfilesAndKeepsDatesRaw() {
         var accepted = ReviewNormalizer.normalize(812, now, reviews("5 months ago"), reviews("6 months ago"));
         assertEquals(1, accepted.size());

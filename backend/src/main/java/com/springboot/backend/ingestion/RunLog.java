@@ -13,8 +13,10 @@ public class RunLog {
     public int skippedSourceCount;
     public boolean simulation;
     public ProductTarget product;
-    /** Canonical identity selected at admission, or a validated discovery name when ID is null. */
-    public record ProductTarget(Long productId, String productName) {}
+    /** Canonical identity plus the admin-selected provider identity. Provider tokens remain server-only. */
+    public record ProductTarget(Long productId, String productName, String externalProductId) {
+        public ProductTarget(Long productId, String productName) { this(productId, productName, null); }
+    }
     public List<String> sourceIds = new ArrayList<>();
     public List<SourceResult> sources = new ArrayList<>();
 

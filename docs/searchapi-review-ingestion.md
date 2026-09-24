@@ -2,7 +2,7 @@
 
 This slice attaches owner evidence to canonical VERIFIED smartphones. A named admin
 run may also create the canonical product and phone subtype after SearchAPI validates
-one unambiguous identity. It does not choose recommendation candidates, score upgrades
+the provider identity selected by the admin. It does not choose recommendation candidates, score upgrades
 or call an LLM. No SearchAPI or embedding work runs on a recommendation request path.
 
 ## Implemented flow and persistence
@@ -48,10 +48,12 @@ Extra words must be known storage/color/carrier/device suffixes, with core token
 comprising at least 40% of the title. Accessories, refurbished/used phones, unknown
 suffixes, repeated core tokens, conflicting variants (e.g. Pro Max vs Pro), and
 missing brand/model tokens are rejected. When valid results contain variants, the
-identity whose title has the fewest extra suffix tokens wins. Equally specific distinct
-Google product IDs fail with `SEARCHAPI_AMBIGUOUS_MATCH`; no match fails with
-`SEARCHAPI_NO_MATCH`. Repeated listings of the same Google ID use the same specificity
-rule, then title order as a stable tiebreaker.
+identity whose title has the fewest extra suffix tokens wins for untargeted runs.
+Manual UI discovery instead returns up to 20 valid, provider-ranked identities for the
+admin to choose. The browser receives titles and external IDs only, never product tokens.
+The run re-fetches results and accepts only the chosen ID if it still passes the same
+matcher. Repeated listings of one Google ID use the same specificity rule, then title
+order as a stable tiebreaker.
 
 Mappings record matched title, external product ID, token, canonical name, locale,
 status and match/verification times. Canonical-name/locale changes miss the cache.
@@ -73,7 +75,9 @@ source domain, title, text and normalized decimal rating. Text fields use NFKC,
 whitespace normalization and `Locale.ROOT` lowercase. Dates, retrieval times and
 usernames never participate. Database uniqueness also protects concurrent reruns.
 
-Normal quota: **3 successful searches uncached, 2 cached**, no pagination.
+Normal source-run quota: **3 successful searches uncached, 2 cached**, no pagination.
+The manual product picker adds one preview search, so a complete selected-product flow
+uses four successful searches when uncached.
 Default one product/run; configuration allows at most two. The existing HTTP rules
 still apply: 60-second source budget, ten total attempts, one-second pacing,
 five-second connect and 20-second request timeout, 1 MiB responses, bounded 429/503
@@ -83,20 +87,20 @@ failures use one minute, while validation/no-match failures are immediately retr
 No live SearchAPI request occurs in automated tests. Maven test configuration
 clears live source selection and credentials and disables scheduling.
 
-Manual UI runs can override that default: check **SearchAPI customer reviews** and
-enter the brand followed by the full model. Matching against the local catalogue
-ignores case and repeated whitespace. Existing eligible products resolve before
-admission. Unknown names are durable discovery targets; the worker calls SearchAPI
-and creates the VERIFIED product, phone subtype and cached mapping in one transaction
-only after one unambiguous match. No-match/ambiguous validation creates nothing, and
-known ineligible products fail before SearchAPI calls. The target is included in
-idempotency checks and existing eligibility is rechecked when the worker starts.
+Manual UI runs can override that default: check **SearchAPI customer reviews**, enter
+the brand followed by the full model, click **Find matching products**, and select one
+result. Matching against the local catalogue ignores case and repeated whitespace.
+The selected external ID is durable run metadata and participates in idempotency.
+The worker re-fetches SearchAPI results and requires that exact ID to remain a valid
+brand/model match before caching its server-only token. Unknown names then create the
+VERIFIED product and phone subtype transactionally. Missing/stale selections and known
+ineligible products fail closed.
 
 To use the frontend after the local setup below, set root `.env`
 `VITE_INGESTION_DEMO=true` and `VITE_API_BASE_URL=http://localhost:18087`, then run
 `npm run dev` from `frontend/`. Open `http://localhost:5173/admin/ingestion`, connect
 with the demo admin password, check **SearchAPI customer reviews**, enter the name,
-and click **Run now**. If the checkbox is disabled, enable the source in the backend
+click **Find matching products**, choose a result, and click **Run now**. If the checkbox is disabled, enable the source in the backend
 configuration and restart it. The outcome-based source cooldown still applies.
 This replaces the helper in step 9 when using the UI; remaining SQL/retrieval checks
 are the same. No additional migration is required for the optional JSONB run metadata.
@@ -381,19 +385,14 @@ Official contracts checked during implementation:
 [Google Shopping](https://www.searchapi.io/docs/google-shopping) and
 [Google Product Reviews](https://www.searchapi.io/docs/google-product-reviews).
 
-### Named-product admin UI follow-up (24 September 2026)
+### Named-product admin UI and variant picker (24 September 2026)
 
 The frontend now exposes the SearchAPI checkbox, a required smartphone name when
-checked, inline server validation errors, and the canonical product in run history.
-The optional request target is saved in existing run JSONB; no new migration.
-Untargeted clients remain compatible. Tests verify that selecting a later catalogue
-product does not fetch the earlier one, malformed/ambiguous-existing/ineligible names
-cause no external calls, unknown names require provider validation, the target survives
-durable admission, and changing it conflicts with a reused
-idempotency key. Frontend tests cover validation, payloads, toggling, retry keys and
-disabled sources.
-
-Follow-up results: backend `mvnw verify` **96 passed, 1 optional real-AI test skipped**;
-frontend **7 passed**, production build passed, and ESLint passed. SearchAPI calls
-were mocked; no paid API or LLM calls were made. The AI service code was unchanged
+checked, a **Find matching products** action, validated radio-button choices, inline
+server errors, and the canonical product in run history. The selected external ID is
+saved in existing run JSONB; no migration is required. Product tokens remain on the
+server. Tests verify safe candidate responses, exact selected-ID ingestion, stale or
+missing selection rejection, durable idempotency, and selection reset when the entered
+name changes. SearchAPI calls are mocked in automated tests; no paid API or LLM calls
+are made. The AI service code is unchanged.
 in this follow-up, so its previously recorded suite was not rerun.

@@ -91,6 +91,7 @@ public class RunStore {
     private boolean sameProduct(RunLog.ProductTarget first, RunLog.ProductTarget second) {
         if (first == null || second == null) return first == second;
         return Objects.equals(first.productName(), second.productName())
+                && Objects.equals(first.externalProductId(), second.externalProductId())
                 && (Objects.equals(first.productId(), second.productId())
                     || first.productId() == null || second.productId() == null);
     }
