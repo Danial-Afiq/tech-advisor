@@ -1757,6 +1757,9 @@ A clear invalid/expired cached-token HTTP 400 allows one rediscovery/retry; no T
 or refresh schedule is introduced. Normal runs use one discovery plus `most_relevant`
 and `most_recent` (three searches, two cached); no pagination. SourceContext retains
 its 60-second deadline, ten-attempt budget, pacing and 429/503 retries/cooldowns.
+External requests use a five-second connect and 20-second request timeout. Cooldowns
+are assigned after outcomes: completed runs use 15 minutes, transport/timeouts one
+minute, validation/no-match failures none, and provider Retry-After remains authoritative.
 Authenticated GETs validate the exact host, require HTTPS and never follow redirects.
 Only code-owned error enums, never provider messages/credentials, enter diagnostics.
 

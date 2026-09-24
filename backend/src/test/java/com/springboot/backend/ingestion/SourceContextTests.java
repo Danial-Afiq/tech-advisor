@@ -36,7 +36,7 @@ class SourceContextTests {
         when(client.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenThrow(new HttpTimeoutException("Authorization: secret-key"));
         try (var context = new SourceContext(Clock.systemUTC(), () -> {}, client)) {
-            var failure = assertThrows(IllegalStateException.class,
+            var failure = assertThrows(SourceContext.TransportFailure.class,
                     () -> context.get(URI.create("https://www.searchapi.io"), "secret-key", "www.searchapi.io"));
             assertNull(failure.getCause()); assertFalse(failure.toString().contains("secret-key"));
         }
@@ -56,7 +56,7 @@ class SourceContextTests {
             verify(client).send(request.capture(), any(HttpResponse.BodyHandler.class));
             assertEquals("Bearer secret-key", request.getValue().headers().firstValue("Authorization").orElseThrow());
             assertFalse(request.getValue().uri().toString().contains("secret-key"));
-            assertEquals(10, request.getValue().timeout().orElseThrow().toSeconds());
+            assertEquals(20, request.getValue().timeout().orElseThrow().toSeconds());
             assertThrows(IllegalArgumentException.class, () -> context.get(URI.create("https://evil.example"), "secret-key", "www.searchapi.io"));
             assertThrows(IllegalArgumentException.class, () -> context.get(URI.create("http://www.searchapi.io"), "secret-key", "www.searchapi.io"));
         }

@@ -107,12 +107,14 @@ public class IngestionOrchestrator {
                     try { future.get(60, TimeUnit.SECONDS); }
                     finally { context.close(); future.cancel(true); }
                     result.status = result.errorCount == 0 ? "SUCCESS" : "PARTIAL_FAILURE";
+                    applyCooldown(run.runId, owner, id, adapter.cooldown());
                 } catch (Exception e) {
                     synchronized (run) {
                         Throwable error = e;
                         while ((error instanceof ExecutionException || error instanceof CompletionException) && error.getCause() != null) error = error.getCause();
                         if (error instanceof SourceContext.RetryLater retry)
                             store.deferSource(run.runId, owner, id, retry.until);
+                        else applyCooldown(run.runId, owner, id, failureCooldown(adapter, error));
                         result.status = "FAILED"; result.errorCount++; result.errorStackCount++;
                         run.errorCount++; run.errorStackCount++;
                         result.errors.add(error.getClass().getSimpleName());
@@ -129,6 +131,18 @@ public class IngestionOrchestrator {
                     : run.errorCount == 0 ? "SUCCESS" : run.processedPayloadCount > 0 ? "PARTIAL_FAILURE" : "FAILED";
             store.finish(run, owner);
         } finally { heartbeat.cancel(false); }
+    }
+    static Duration failureCooldown(IngestionSource source, Throwable error) {
+        if (error instanceof SourceContext.TransportFailure) return Duration.ofMinutes(1);
+        if (error instanceof IllegalArgumentException) return Duration.ZERO;
+        if (error instanceof IngestionFailure failure && switch (failure.code()) {
+            case SEARCHAPI_NO_MATCH, SEARCHAPI_AMBIGUOUS_MATCH, SEARCHAPI_NO_ELIGIBLE_PRODUCT -> true;
+            default -> false;
+        }) return Duration.ZERO;
+        return source.cooldown();
+    }
+    private void applyCooldown(String runId, String owner, String sourceId, Duration duration) {
+        if (!duration.isZero()) store.deferSource(runId, owner, sourceId, clock.instant().plus(duration));
     }
     private static void duplicate(RunLog run, RunLog.SourceResult result) { result.duplicatePayloadCount++; run.duplicatePayloadCount++; }
     @PreDestroy public void close() { worker.shutdownNow(); sourceWorker.shutdownNow(); }

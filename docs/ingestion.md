@@ -74,8 +74,8 @@ Then add `hackfeed-rss` to `INGESTION_ENABLED_SOURCES`, configure its feed URL, 
 ## Load and failure policy
 
 - One global pipeline claim; sources run sequentially. Admin/scheduled requests share cooldowns.
-- Each source has a 60-second execution budget, 1,000 emitted-item limit, at most 10 HTTP attempts, at least one second between requests, a five-second connect timeout and ten-second request timeout. HTTP response bodies are capped at 1 MiB.
-- HTTP 429/503 receive at most two retries. Long Retry-After values defer the source in persistent coordinator state instead of sleeping indefinitely. The source's default cooldown is 15 minutes; demo sources alone use zero cooldown.
+- Each source has a 60-second execution budget, 1,000 emitted-item limit, at most 10 HTTP attempts, at least one second between requests, a five-second connect timeout and 20-second request timeout. HTTP response bodies are capped at 1 MiB.
+- HTTP 429/503 receive at most two retries. Long Retry-After values defer the source in persistent coordinator state instead of sleeping indefinitely. A completed source uses its configured cooldown (15 minutes by default); transport/timeouts use one minute; validation/no-match failures use none. Other failures retain the configured cooldown. Demo sources use zero cooldown.
 - Adapters must use `SourceContext.get` and call `check()` while processing. On cancellation or ownership loss, stop. The HTTP helper closes responses and cancels its client when the source budget expires. The source executor has no backlog and only one thread, limiting damage from an adapter ignoring interruption.
 - Validation failures increment rejected/error counters and allow later items to proceed. Source exceptions produce bounded sanitized application stack frames; messages, raw response bodies and credentials are excluded. Later sources still execute.
 - Duplicate detection in the runner covers repeated IDs of the same type within one source run. Cross-run deduplication belongs in the durable typed sink. Demo receipts intentionally persist again on each new demo run.

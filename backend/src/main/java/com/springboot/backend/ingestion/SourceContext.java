@@ -27,6 +27,9 @@ public final class SourceContext implements AutoCloseable {
     public SourceContext(Clock clock, Runnable ownershipCheck) {
         this(clock, ownershipCheck, (RunLog.ProductTarget) null);
     }
+    public static final class TransportFailure extends RuntimeException {
+        TransportFailure() { super("Source transport failed"); }
+    }
     public SourceContext(Clock clock, Runnable ownershipCheck, RunLog.ProductTarget product) {
         this(clock, ownershipCheck, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
                 .followRedirects(HttpClient.Redirect.NEVER).build(), product);
@@ -68,20 +71,22 @@ public final class SourceContext implements AutoCloseable {
             long delay = 1000 - Duration.ofNanos(System.nanoTime() - lastRequest).toMillis();
             if (delay > 0) Thread.sleep(delay);
             check(); lastRequest = System.nanoTime();
-            var builder = HttpRequest.newBuilder(url).timeout(Duration.ofSeconds(10))
+            var builder = HttpRequest.newBuilder(url).timeout(Duration.ofSeconds(20))
                     .header("User-Agent", "TechAdvisor-Ingestion/1.0");
             if (bearer != null) builder.header("Authorization", "Bearer " + bearer);
             HttpResponse<InputStream> response;
             try { response = http.send(builder.GET().build(), HttpResponse.BodyHandlers.ofInputStream()); }
             catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException("Source interrupted"); }
-            catch (Exception e) { throw new IllegalStateException("Source transport failed"); }
+            catch (Exception e) { throw new TransportFailure(); }
             try (InputStream body = response.body()) {
                 if (response.statusCode() == 429 || response.statusCode() == 503) {
                     long wait = response.headers().firstValue("Retry-After").map(this::retrySeconds).orElse(1L << attempt);
                     if (wait > 15 || attempt == 2) throw new RetryLater(now().plusSeconds(Math.min(wait, 31_536_000)));
                     Thread.sleep(Math.max(1, wait) * 1000); continue;
                 }
-                byte[] bytes = body.readNBytes(1_048_577);
+                byte[] bytes;
+                try { bytes = body.readNBytes(1_048_577); }
+                catch (Exception e) { throw new TransportFailure(); }
                 if (bytes.length > 1_048_576) throw new IllegalStateException("Source response exceeds 1 MiB");
                 if (response.statusCode() != 200) {
                     String error = new String(bytes, StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);

@@ -117,12 +117,30 @@ class IngestionIntegrationTests {
         store.admit(List.of("test-source"), "admin", "cooldown-key", null, false, true);
         var first = store.claim("one");
         assertTrue(store.startSource(first.runId, "one", adapter));
+        assertFalse(store.state().nextAllowed.containsKey("test-source"));
+        store.deferSource(first.runId, "one", adapter.sourceId(), clock.instant().plus(adapter.cooldown()));
         first.status = "SUCCESS"; store.finish(first, "one");
         store.admit(List.of("test-source"), "admin", "cooldown-key-2", null, false, true);
         var second = store.claim("two");
         assertFalse(store.startSource(second.runId, "two", adapter));
         clock.now.set(clock.instant().plusSeconds(30));
         assertFalse(store.startSource(second.runId, "two", adapter));
+    }
+    @Test void cooldownPolicyDependsOnSourceOutcome() {
+        var adapter = new IngestionSource() {
+            public String sourceId() { return "policy-source"; }
+            public void ingest(SourceContext context, java.util.function.Consumer<Payload> output) {}
+        };
+        assertEquals(Duration.ofMinutes(1), IngestionOrchestrator.failureCooldown(
+                adapter, new SourceContext.TransportFailure()));
+        assertEquals(Duration.ZERO, IngestionOrchestrator.failureCooldown(
+                adapter, new IngestionFailure(IngestionFailure.Code.SEARCHAPI_NO_MATCH)));
+        assertEquals(Duration.ZERO, IngestionOrchestrator.failureCooldown(
+                adapter, new IngestionFailure(IngestionFailure.Code.SEARCHAPI_AMBIGUOUS_MATCH)));
+        assertEquals(Duration.ZERO, IngestionOrchestrator.failureCooldown(
+                adapter, new IllegalArgumentException("invalid source input")));
+        assertEquals(Duration.ofMinutes(15), IngestionOrchestrator.failureCooldown(
+                adapter, new IngestionFailure(IngestionFailure.Code.EMBEDDING_FAILED)));
     }
     @Test void manualRunPersistsMixedTypedPayloadsAndFailureMetadata() throws Exception {
         var admitted = runner.manual(List.of("simulated-release", "simulated-failure"), "admin", "sample-run-key", "Mid-cycle demo");

@@ -116,7 +116,7 @@ public class RunStore {
             check(state, runId, owner);
             Instant now = clock.instant();
             if (now.isBefore(state.nextAllowed.getOrDefault(source.sourceId(), Instant.MIN))) return false;
-            state.nextAllowed.put(source.sourceId(), now.plus(source.cooldown())); return true;
+            state.nextAllowed.remove(source.sourceId()); return true;
         });
     }
 
@@ -127,7 +127,8 @@ public class RunStore {
     public void deferSource(String runId, String owner, String sourceId, Instant until) {
         locked(state -> {
             check(state, runId, owner);
-            state.nextAllowed.merge(sourceId, until, (a, b) -> a.isAfter(b) ? a : b);
+            if (!until.isAfter(clock.instant())) state.nextAllowed.remove(sourceId);
+            else state.nextAllowed.merge(sourceId, until, (a, b) -> a.isAfter(b) ? a : b);
             return null;
         });
     }

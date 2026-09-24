@@ -76,9 +76,10 @@ usernames never participate. Database uniqueness also protects concurrent reruns
 Normal quota: **3 successful searches uncached, 2 cached**, no pagination.
 Default one product/run; configuration allows at most two. The existing HTTP rules
 still apply: 60-second source budget, ten total attempts, one-second pacing,
-five-second connect and ten-second request timeout, 1 MiB responses, bounded 429/503
+five-second connect and 20-second request timeout, 1 MiB responses, bounded 429/503
 retries and Retry-After cooldown. Invalid-token recovery can add searches within
-the same cap. The normal source cooldown is 15 minutes, including manual runs.
+the same cap. Completed runs use the normal 15-minute source cooldown; transport
+failures use one minute, while validation/no-match failures are immediately retryable.
 No live SearchAPI request occurs in automated tests. Maven test configuration
 clears live source selection and credentials and disables scheduling.
 
@@ -96,7 +97,7 @@ To use the frontend after the local setup below, set root `.env`
 `npm run dev` from `frontend/`. Open `http://localhost:5173/admin/ingestion`, connect
 with the demo admin password, check **SearchAPI customer reviews**, enter the name,
 and click **Run now**. If the checkbox is disabled, enable the source in the backend
-configuration and restart it. The existing 15-minute source cooldown still applies.
+configuration and restart it. The outcome-based source cooldown still applies.
 This replaces the helper in step 9 when using the UI; remaining SQL/retrieval checks
 are the same. No additional migration is required for the optional JSONB run metadata.
 
@@ -304,7 +305,7 @@ uses a separate `techadvisor_searchapi_demo` database and leaves other databases
     The command fails if it retrieves no SearchAPI evidence or if those IDs leak to
     the unrelated product query. It directly uses the existing `PgVectorStore`.
 
-14. Check counts, **wait for the existing 15-minute source cooldown**, rerun step 9,
+14. Check counts, **wait for the 15-minute successful-run cooldown**, rerun step 9,
     then repeat the counts. The helper reports the exact next allowed timestamp.
 
     ```powershell
