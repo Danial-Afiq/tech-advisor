@@ -60,7 +60,7 @@ public class RunStore {
                 if (!existing.isEmpty()) {
                     var run = existing.getFirst();
                     if (!run.sourceIds.equals(ids) || !Objects.equals(run.reason, reason)
-                            || !Objects.equals(run.product, product))
+                            || !sameProduct(run.product, product))
                         throw new ResponseStatusException(HttpStatus.CONFLICT, "Idempotency key used for a different request");
                     return run;
                 }
@@ -86,6 +86,13 @@ public class RunStore {
             state.activeRunId = run.runId; state.owner = null; state.leaseUntil = now.plus(LEASE);
             return run;
         });
+    }
+
+    private boolean sameProduct(RunLog.ProductTarget first, RunLog.ProductTarget second) {
+        if (first == null || second == null) return first == second;
+        return Objects.equals(first.productName(), second.productName())
+                && (Objects.equals(first.productId(), second.productId())
+                    || first.productId() == null || second.productId() == null);
     }
 
     public RunLog claim(String owner) {

@@ -2,6 +2,7 @@ package com.springboot.backend.ingestion.searchapi;
 
 import com.springboot.backend.ingestion.*;
 import static com.springboot.backend.ingestion.IngestionFailure.Code.*;
+import java.util.List;
 import java.util.function.Consumer;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -23,6 +24,7 @@ public class SearchApiSource implements IngestionSource {
     @Override public String sourceId() { return ID; }
     @Override public void ingest(SourceContext context, Consumer<Payload> output) throws Exception {
         var products = context.product() == null ? repository.products(settings.maxProductsPerRun())
+                : context.product().productId() == null ? List.of(discoverAndCreate(context))
                 : repository.eligibleProduct(context.product().productId()).stream()
                     .filter(p -> p.name().equals(context.product().productName())).toList();
         if (products.isEmpty()) throw new IngestionFailure(SEARCHAPI_NO_ELIGIBLE_PRODUCT);
@@ -50,6 +52,13 @@ public class SearchApiSource implements IngestionSource {
             if (!reviews.isEmpty()) output.accept(new Payload(ID, Long.toString(product.id()), context.now(),
                     new Payload.ReviewBatch(product.id(), reviews)));
         }
+    }
+    private SearchApiRepository.Product discoverAndCreate(SourceContext context) throws Exception {
+        ProductName requested = ProductName.parse(context.product().productName());
+        var match = ProductMatcher.choose(requested.brand(), requested.model(),
+                client.shopping(context, requested.canonicalName()));
+        context.check();
+        return repository.createVerified(requested, settings, match, context.now());
     }
     private String discover(SourceContext context, SearchApiRepository.Product product) throws Exception {
         var match = ProductMatcher.choose(product.brand(), product.model(), client.shopping(context, product.name()));

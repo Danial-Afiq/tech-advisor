@@ -5,6 +5,12 @@ import IngestionAdmin from './IngestionAdmin'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
+async function connectAsAdmin() {
+  const password = screen.queryByLabelText('Demo password')
+  if (password) await userEvent.type(password, 'test-password-only')
+  await userEvent.click(screen.getByRole('button', { name: 'Connect as admin' }))
+}
+
 function searchApiServer(post: (init: RequestInit) => { ok: boolean; status?: number; data: unknown }, enabled = true) {
   return vi.fn(async (url: string, init: RequestInit) => {
     const path = url.split('/api/admin/ingestion')[1]
@@ -32,7 +38,7 @@ describe('Ingestion admin', () => {
     const fetcher = searchApiServer(() => ({ ok: true, data: { runId: 'new' } }))
     vi.stubGlobal('fetch', fetcher)
     render(<IngestionAdmin />)
-    await userEvent.click(screen.getByRole('button', { name: 'Connect as admin' }))
+    await connectAsAdmin()
     expect(screen.queryByRole('textbox', { name: 'Smartphone name' })).not.toBeInTheDocument()
     await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
     expect(screen.getByRole('button', { name: 'Run now' })).toBeDisabled()
@@ -50,7 +56,7 @@ describe('Ingestion admin', () => {
     const fetcher = searchApiServer(() => ({ ok: true, data: { runId: 'new' } }))
     vi.stubGlobal('fetch', fetcher)
     render(<IngestionAdmin />)
-    await userEvent.click(screen.getByRole('button', { name: 'Connect as admin' }))
+    await connectAsAdmin()
     const checkbox = await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' })
     await userEvent.click(checkbox)
     await userEvent.type(screen.getByRole('textbox', { name: 'Smartphone name' }), 'Apple iPhone 16 Pro')
@@ -68,7 +74,7 @@ describe('Ingestion admin', () => {
       data: { message: 'No verified smartphone matches that name.' } }))
     vi.stubGlobal('fetch', fetcher)
     render(<IngestionAdmin />)
-    await userEvent.click(screen.getByRole('button', { name: 'Connect as admin' }))
+    await connectAsAdmin()
     await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
     const input = screen.getByRole('textbox', { name: 'Smartphone name' })
     await userEvent.type(input, 'Unknown phone')
@@ -88,14 +94,14 @@ describe('Ingestion admin', () => {
   it('keeps disabled SearchAPI unavailable', async () => {
     vi.stubGlobal('fetch', searchApiServer(() => ({ ok: true, data: {} }), false))
     render(<IngestionAdmin />)
-    await userEvent.click(screen.getByRole('button', { name: 'Connect as admin' }))
+    await connectAsAdmin()
     expect(await screen.findByRole('checkbox', { name: /SearchAPI customer reviews/ })).toBeDisabled()
     expect(screen.queryByRole('textbox', { name: 'Smartphone name' })).not.toBeInTheDocument()
   })
   it('shows an authorization error without exposing controls', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403 }))
     render(<IngestionAdmin />)
-    await userEvent.click(screen.getByRole('button', { name: 'Connect as admin' }))
+    await connectAsAdmin()
     expect(await screen.findByRole('alert')).toHaveTextContent('Admin access is unavailable')
     expect(screen.queryByRole('button', { name: 'Run now' })).not.toBeInTheDocument()
   })
@@ -115,7 +121,7 @@ describe('Ingestion admin', () => {
     })
     vi.stubGlobal('fetch', fetcher)
     render(<IngestionAdmin />)
-    await userEvent.click(screen.getByRole('button', { name: 'Connect as admin' }))
+    await connectAsAdmin()
     const run = await screen.findByRole('button', { name: 'Run now' })
     expect(run).toBeDisabled()
     await userEvent.click(screen.getByRole('checkbox'))

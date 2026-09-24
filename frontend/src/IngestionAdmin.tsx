@@ -4,7 +4,7 @@ import './IngestionAdmin.css'
 
 type Source = { sourceId: string; enabled: boolean; simulation: boolean; nextAllowedAt: string | null }
 type Run = { runId: string; status: string; triggerType: string; requestedAt: string; startedAt: string | null;
-  product?: { productId: number; productName: string } | null;
+  product?: { productId: number | null; productName: string } | null;
   finishedAt: string | null; processedPayloadCount: number; errorStackCount: number;
   sources: { sourceId: string; status: string; processedPayloadCount: number; errorStackCount: number }[] }
 type Schedule = { enabled: boolean; intervalHours: number; nextScheduledAt: string | null; activeRunId: string | null }
@@ -125,7 +125,7 @@ export default function IngestionAdmin() {
                 disabled={submitting || !!schedule?.activeRunId} aria-describedby="ingestion-product-help"
                 onChange={e => setProductName(e.target.value)} placeholder="For example, Apple iPhone 16 Pro" />
             </label>
-            <small id="ingestion-product-help">Enter the exact model name of an existing verified smartphone. Only this phone’s customer reviews will be imported.</small>
+            <small id="ingestion-product-help">Enter the brand followed by the full model. SearchAPI validates and adds a new smartphone automatically before importing its reviews.</small>
           </div>}
           <label>Reason (optional)<input value={reason} maxLength={500} onChange={e => setReason(e.target.value)} placeholder="For example, a major mid-cycle phone release" /></label>
           <button type="submit" disabled={submitting || !!schedule?.activeRunId || selected.length === 0 || (searchApiSelected && !productName.trim())}>

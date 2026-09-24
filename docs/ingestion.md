@@ -124,16 +124,18 @@ ORDER BY created_at DESC;
 
 ## Admin access and UI
 
-For a named SearchAPI import, check **SearchAPI customer reviews**, enter the existing
-verified smartphone's exact model name (for example **Apple iPhone 16 Pro**), then
-click **Run now**. This field appears only when SearchAPI is selected. It selects
-one canonical product; it never creates a product. Unknown or ambiguous names are
-shown as validation errors without contacting SearchAPI. Include the brand if two
-products share a model name. The Product column records the resolved canonical name.
+For a named SearchAPI import, check **SearchAPI customer reviews**, enter the brand
+and full model name (for example **Apple iPhone 16 Pro**), then click **Run now**.
+An existing eligible phone is selected directly. For an unknown name, the asynchronous
+source requires one unambiguous matching SearchAPI identity before transactionally
+creating the VERIFIED `products` row, `phone` row and external mapping. A no-match or
+ambiguous result creates nothing. Known ineligible catalogue rows remain rejected.
+The Product column records the requested or resolved canonical name.
 
 The existing run request accepts optional `productName`; omit it to keep source-default
 selection. When supplied it requires SearchAPI among the enabled selected sources.
-Resolved product ID/name are durable run metadata and part of idempotency checking.
+Resolved product ID/name, or the new-product discovery name with a null ID, are durable
+run metadata and part of idempotency checking.
 Changing the product with the same idempotency key returns 409. SearchAPI validates
 the product again before fetching, so deleted, renamed or unverified products fail
 instead of silently falling back to another phone. Existing source cooldowns still apply.

@@ -56,10 +56,11 @@ paths:
                   minLength: 1
                   maxLength: 200
                   description: >-
-                    Optional for SearchAPI manual runs. Exact verified smartphone brand/model or unique
-                    model-only name, ignoring case and repeated whitespace. Requires SearchAPI among the
-                    selected enabled sources. Unknown, ambiguous, blank or ineligible names return 400
-                    before admission. Omission/null retains source-default product selection.
+                    Optional for SearchAPI manual runs. Brand followed by the full model, ignoring repeated
+                    whitespace. Existing eligible smartphones resolve before admission. An unknown name is
+                    admitted for asynchronous SearchAPI validation and is created only after one unambiguous
+                    matching identity is returned. Blank, malformed, ambiguous-existing or ineligible names
+                    return 400 before admission. Omission/null retains source-default product selection.
       responses:
         '202':
           description: Durable run admission, or an existing run for the same actor/key/body.
@@ -199,9 +200,9 @@ components:
         product:
           type: object
           nullable: true
-          description: Canonical product selected at admission; included in idempotency comparison and preserved across dispatch/restarts.
+          description: Existing canonical product or durable new-product discovery target; included in idempotency comparison and preserved across dispatch/restarts.
           properties:
-            productId: { type: integer, format: int64 }
+            productId: { type: integer, format: int64, nullable: true }
             productName: { type: string }
         idempotencyKey: { type: string, nullable: true }
         status:

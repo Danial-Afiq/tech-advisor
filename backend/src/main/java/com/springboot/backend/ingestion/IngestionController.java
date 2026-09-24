@@ -9,6 +9,7 @@ import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.dao.DataAccessException;
 import com.springboot.backend.ingestion.searchapi.SearchApiRepository;
 import com.springboot.backend.ingestion.searchapi.SearchApiSource;
+import com.springboot.backend.ingestion.searchapi.ProductName;
 import org.springframework.web.server.ResponseStatusException;
 
 @RestController
@@ -40,14 +41,24 @@ public class IngestionController {
             if (name.isEmpty() || name.length() > 200)
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter a product name of 1 to 200 characters.");
             var matches = products.namedProducts(name.toLowerCase(Locale.ROOT));
-            if (matches.isEmpty())
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "No verified smartphone matches that name. Enter its exact catalogue model or brand and model.");
             if (matches.size() > 1)
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "More than one verified smartphone matches that name. Include the brand and full model name.");
-            var product = matches.getFirst();
-            target = new RunLog.ProductTarget(product.id(), product.name());
+            if (!matches.isEmpty()) {
+                var product = matches.getFirst();
+                target = new RunLog.ProductTarget(product.id(), product.name());
+            } else {
+                if (!products.namedCatalogueProducts(name.toLowerCase(Locale.ROOT)).isEmpty())
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "That catalogue product is not an eligible verified smartphone.");
+                try {
+                    var requested = ProductName.parse(name);
+                    target = new RunLog.ProductTarget(null, requested.canonicalName());
+                } catch (IllegalArgumentException invalid) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "Enter both the smartphone brand and full model name.");
+                }
+            }
         }
         var run = runner.manual(ids, user.getName(), key, request.reason(), target);
         return ResponseEntity.accepted().location(URI.create("/api/admin/ingestion/runs/" + run.runId)).body(run);

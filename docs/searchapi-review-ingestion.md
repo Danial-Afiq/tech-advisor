@@ -1,8 +1,9 @@
 # SearchAPI customer reviews into pgvector
 
-This slice attaches owner evidence to existing canonical VERIFIED smartphones. It
-does not create products, choose recommendation candidates, score upgrades or call
-an LLM. No SearchAPI or embedding work runs on a recommendation request path.
+This slice attaches owner evidence to canonical VERIFIED smartphones. A named admin
+run may also create the canonical product and phone subtype after SearchAPI validates
+one unambiguous identity. It does not choose recommendation candidates, score upgrades
+or call an LLM. No SearchAPI or embedding work runs on a recommendation request path.
 
 ## Implemented flow and persistence
 
@@ -82,12 +83,13 @@ No live SearchAPI request occurs in automated tests. Maven test configuration
 clears live source selection and credentials and disables scheduling.
 
 Manual UI runs can override that default: check **SearchAPI customer reviews** and
-enter an existing verified smartphone's exact model or brand/model name. Matching
-against the local catalogue ignores case and repeated whitespace; ambiguous
-model-only names require the brand. The optional API `productName` resolves before
-admission to a durable canonical ID/name, selects exactly one phone, and is included
-in idempotency checks. Missing/ineligible products fail before SearchAPI calls;
-eligibility and the canonical name are rechecked when the worker starts.
+enter the brand followed by the full model. Matching against the local catalogue
+ignores case and repeated whitespace. Existing eligible products resolve before
+admission. Unknown names are durable discovery targets; the worker calls SearchAPI
+and creates the VERIFIED product, phone subtype and cached mapping in one transaction
+only after one unambiguous match. No-match/ambiguous validation creates nothing, and
+known ineligible products fail before SearchAPI calls. The target is included in
+idempotency checks and existing eligibility is rechecked when the worker starts.
 
 To use the frontend after the local setup below, set root `.env`
 `VITE_INGESTION_DEMO=true` and `VITE_API_BASE_URL=http://localhost:18087`, then run
@@ -384,8 +386,9 @@ The frontend now exposes the SearchAPI checkbox, a required smartphone name when
 checked, inline server validation errors, and the canonical product in run history.
 The optional request target is saved in existing run JSONB; no new migration.
 Untargeted clients remain compatible. Tests verify that selecting a later catalogue
-product does not fetch the earlier one, invalid/ambiguous names cause no external
-calls, the target survives durable admission, and changing it conflicts with a reused
+product does not fetch the earlier one, malformed/ambiguous-existing/ineligible names
+cause no external calls, unknown names require provider validation, the target survives
+durable admission, and changing it conflicts with a reused
 idempotency key. Frontend tests cover validation, payloads, toggling, retry keys and
 disabled sources.
 

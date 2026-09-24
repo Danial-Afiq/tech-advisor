@@ -524,9 +524,9 @@ being reproducible.
 This step performs **no** embeddings, retrieval or model calls, and must stay
 that way - bounding the candidate set is what bounds every downstream AI cost.
 
-**Catalogue population remains separate work.** The filter is exercised by tests
-and seeded data. SearchAPI ingestion attaches review evidence to existing VERIFIED
-smartphones; it does not create products or price observations.
+**Broad scheduled catalogue discovery remains separate work.** The filter is exercised
+by tests and seeded data. A named admin SearchAPI run can create a VERIFIED smartphone
+only after one unambiguous provider match; it does not create price observations.
 
 ## 7.2 Channel B — owner evidence grade
 
@@ -1662,15 +1662,15 @@ Current local/demo auth is intentionally temporary.
 
 The SearchAPI source is labelled **SearchAPI customer reviews** in the source list.
 Selecting it shows a required **Smartphone name** field. The backend accepts an
-optional `productName` on `POST /api/admin/ingestion/runs`, resolves an exact
-case-insensitive, whitespace-normalized brand/model or unique model-only name to an
-existing VERIFIED SMARTPHONE, and rejects unknown/ambiguous/ineligible names before
-admission. This UI does not create catalogue products. The resolved ID and canonical
-name are persisted in `RunLog.product` in the existing JSONB metadata, participate in
-idempotency comparison, survive dispatch/restarts, and appear in run history.
-SearchAPI rechecks the selected ID/name/eligibility at execution. API clients omitting
-the field and scheduled runs retain the source's default selection. No migration is
-needed for this optional run metadata. Existing auth, CSRF and cooldowns remain in force.
+optional `productName` on `POST /api/admin/ingestion/runs`. Existing exact
+case-insensitive, whitespace-normalized brand/model or unique model-only names resolve
+to a VERIFIED SMARTPHONE. An unknown brand/full-model name is admitted with a null
+product ID; the worker creates its VERIFIED product, phone subtype and provider mapping
+transactionally only after one unambiguous SearchAPI match. No-match or ambiguous
+provider results create nothing, while known ineligible catalogue rows are rejected
+before admission. The target persists in `RunLog.product`, participates in idempotency,
+survives restarts and appears in history. API clients omitting the field and scheduled
+runs retain default selection. No migration is needed. Existing auth, CSRF and cooldowns remain.
 
 Production routes should remain protected until the real account/auth ticket supplies a trusted `ADMIN` identity.
 
@@ -1744,8 +1744,9 @@ It is opt-in via `INGESTION_ENABLED_SOURCES`; enabling it without a key fails at
 startup. Production admin access stays closed; local manual tests use `ingestion-demo`.
 
 Untargeted selection is VERIFIED SMARTPHONE products ordered by ID, default one per
-run (maximum two). A manual `productName` selects exactly one resolved canonical
-product instead. Matching requires brand/model tokens and rejects accessory/used/refurbished
+run (maximum two). A manual `productName` selects one existing product or requests
+provider-validated creation when the catalogue has no match. The first word is the
+brand and the remainder is the full model. Matching requires brand/model tokens and rejects accessory/used/refurbished
 and conflicting or unknown wording. Among valid variants, the Google identity with the
 fewest extra suffix tokens wins; equally specific distinct eligible IDs remain ambiguous.
 The conservative policy may miss valid listings rather than guess between tied identities.

@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class SearchApiRepository {
@@ -35,6 +36,39 @@ public class SearchApiRepository {
                 ORDER BY id LIMIT 2
                 """, (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)),
                 normalizedName, normalizedName);
+    }
+    public List<Product> namedCatalogueProducts(String normalizedName) {
+        return db.query("""
+                SELECT id, brand, model_name FROM products
+                WHERE lower(regexp_replace(trim(brand || ' ' || model_name), '\\s+', ' ', 'g'))=?
+                   OR lower(regexp_replace(trim(model_name), '\\s+', ' ', 'g'))=?
+                ORDER BY id LIMIT 2
+                """, (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)),
+                normalizedName, normalizedName);
+    }
+
+    /** Promote only after SearchAPI returned one unambiguous matching product identity. */
+    @Transactional
+    public Product createVerified(ProductName requested, SearchApiSettings settings,
+                                  ProductMatcher.Match match, Instant now) {
+        var inserted = db.query("""
+                INSERT INTO products(brand,model_name,category,status)
+                VALUES (?,?,'SMARTPHONE','VERIFIED')
+                ON CONFLICT (brand,model_name) DO NOTHING RETURNING id,brand,model_name
+                """, (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)),
+                requested.brand(), requested.model());
+        Product product;
+        if (!inserted.isEmpty()) product = inserted.getFirst();
+        else product = db.query("""
+                SELECT id,brand,model_name FROM products
+                WHERE brand=? AND model_name=? AND category='SMARTPHONE' AND status='VERIFIED'
+                """, (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)),
+                requested.brand(), requested.model()).stream().findFirst()
+                .orElseThrow(() -> new com.springboot.backend.ingestion.IngestionFailure(
+                        com.springboot.backend.ingestion.IngestionFailure.Code.SEARCHAPI_NO_ELIGIBLE_PRODUCT));
+        db.update("INSERT INTO phone(product_id) VALUES (?) ON CONFLICT DO NOTHING", product.id());
+        cache(product, settings, match, now);
+        return product;
     }
     public Optional<String> token(Product p, SearchApiSettings s) {
         return db.query("""
