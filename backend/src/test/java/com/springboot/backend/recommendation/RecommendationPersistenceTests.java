@@ -107,7 +107,7 @@ class RecommendationPersistenceTests {
                 new AssessRequest.Candidate(productId, "Model X", LocalDate.of(2025, 2, 7), 588),
                 new AssessRequest.Computed(
                         Map.of("battery_mah", new AssessRequest.SpecDelta(3700.0, 4900.0, 32.4)), 61.2, null, null),
-                new AssessRequest.Analysis("WORTH_CONSIDERING", 0.71, 0.88, List.of("battery")),
+                new AssessRequest.Analysis("WORTH_CONSIDERING", 0.72, List.of("battery")),
                 new AssessRequest.RetrievalOptions(12));
         return new RecommendationInput(
                 userId, null, null, request, Map.of("battery", Map.of("priority", 5, "impact", "HIGH_POSITIVE")));
@@ -247,7 +247,7 @@ class RecommendationPersistenceTests {
         assertTrue(body.contains("\"device_age_months\":30"), body);
         assertTrue(body.contains("\"release_date\":\"2025-02-07\""), body);
         assertTrue(body.contains("\"benchmark_uplift_pct\":61.2"), body);
-        assertTrue(body.contains("\"relevance_score\":0.71"), body);
+        assertTrue(body.contains("\"upgrade_score\":0.72"), body);
         assertFalse(body.contains("requestId"), "camelCase would be rejected by pydantic's extra=forbid");
     }
 

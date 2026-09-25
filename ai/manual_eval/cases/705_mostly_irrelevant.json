@@ -30,8 +30,7 @@
   "computed": {},
   "analysis": {
     "verdict": "WORTH_WATCHING",
-    "relevance_score": 0.5,
-    "preference_score": 0.5,
+    "upgrade_score": 0.56,
     "deciding_factors": ["performance", "camera"]
   },
   "retrieval": { "k": 6 }

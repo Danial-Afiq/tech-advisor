@@ -29,8 +29,7 @@
   "computed": {},
   "analysis": {
     "verdict": "WORTH_CONSIDERING",
-    "relevance_score": 0.75,
-    "preference_score": 0.65,
+    "upgrade_score": 0.70,
     "deciding_factors": ["camera"]
   },
   "retrieval": { "k": 6 }

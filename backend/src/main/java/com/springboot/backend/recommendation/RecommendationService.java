@@ -79,6 +79,11 @@ public class RecommendationService {
         snapshot.put("preferences", toMap(request.userContext().preferences()));
         snapshot.put("candidate", toMap(request.candidate()));
         snapshot.put("computed", toMap(request.computed()));
+        // Channel A's own output, kept so a persisted recommendation stays
+        // explainable after the scoring configuration changes. Without the
+        // score and the version that produced it, an old row's verdict cannot
+        // be re-derived once the thresholds move (AGENTS.md §7.1, §27.5).
+        snapshot.put("analysis", toMap(request.analysis()));
         // Two recommendations sharing a prompt_version must also share these
         // retrieval parameters or reproducibility is lost (AGENTS.md §10).
         snapshot.put("retrieval", response.meta().retrieval());

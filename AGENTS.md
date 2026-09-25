@@ -477,10 +477,24 @@ Question:
 
 Outputs include:
 - `verdict`
-- `relevance_score`
-- `preference_score`
+- `upgrade_score`
 - `deciding_factors`
 - deterministic `factor_analysis`
+
+### One score, not two — CHANGED 23 Sep 2026
+
+Channel A previously carried two 0-1 floats, `relevance_score` and
+`preference_score`. They are replaced by a single `upgrade_score`, because the
+tier was only ever derived from one number and two fields that never
+independently drove anything invited callers to average or compare them (§23.4).
+
+`upgrade_score` is **0-1**, where 1.0 is a strong upgrade recommendation and 0.0
+is not recommended - not the 0-100 scale an earlier draft of this file used.
+
+This changed the §9 wire contract on both sides at once: `ai/app/schemas.py`,
+`AssessRequest.Analysis`, every manual-eval case and both contract tests. Anything
+still sending `relevance_score` gets a 422 from `extra="forbid"`, which is the
+intended failure mode - a silent mismatch here would be far worse.
 
 Allowed verdicts:
 
@@ -824,8 +838,7 @@ Representative request:
   },
   "analysis": {
     "verdict": "WORTH_CONSIDERING",
-    "relevance_score": 0.71,
-    "preference_score": 0.88,
+    "upgrade_score": 0.72,
     "deciding_factors": ["battery", "camera", "value"]
   },
   "retrieval": {
@@ -1089,6 +1102,18 @@ Test:
   - valid/passing corpus,
 - delta computation,
 - `higher_is_better` inversion.
+
+Implemented for the classifier (§18.9) in
+`backend/src/test/java/com/springboot/backend/recommendation/classification/`:
+`TierMapperTest` (every band boundary, both sides), `UpgradeScoringServiceTest`
+(regressions, mixed improvements, capping, coverage, determinism),
+`SpecComparisonServiceTest` (`higher_is_better` inversion, `spec_overrides`,
+missing values) and `UpgradeClassificationIntegrationTest` (real PostgreSQL).
+
+Still untested because unimplemented: the maturity gate rows above.
+
+Unlike the LLM's letter grade, which drifts between runs (§13.5), the verdict is
+deterministic and **must** be asserted exactly.
 
 ## 13.2 Python tests — mocked LLM
 Test:
@@ -1929,10 +1954,12 @@ result. It is **not** the deterministic verdict engine and **not** a trigger.
 
 Deliberate boundaries:
 
-- **Channel A is still absent.** `verdict`, `relevance_score`, `preference_score`,
-  `deciding_factors` and every figure in `computed` arrive as *input* on
-  `RecommendationInput`. Nothing here computes or second-guesses them, and the
-  verdict persisted is whatever the caller supplied (§7.1).
+- **Channel A now exists** in `recommendation/classification/` (§18.9), but this
+  package still does not call it. `verdict`, `upgrade_score`, `deciding_factors`
+  and every figure in `computed` continue to arrive as *input* on
+  `RecommendationInput`; nothing here computes or second-guesses them, and the
+  verdict persisted is whatever the caller supplied (§7.1). Wiring the classifier
+  to this service is the caller's job, not this package's.
 - **The maturity gate (§8.3) is still not implemented.** Nothing in this package
   checks evidence maturity before spending a call.
 - **No trigger.** No `@Scheduled`, no controller, no HTTP surface. The scheduled job
@@ -1964,6 +1991,78 @@ Tests: `AssessContractTests` (no Spring context) pins the wire shape against
 `extra="forbid"`; `RecommendationPersistenceTests` runs the real client against a
 local `HttpServer` stub and asserts what lands in the database on the success,
 degraded, re-assessment and transport-failure paths. No live model call, no API cost.
+
+## 18.9 Channel A — deterministic upgrade classification, 23 Sep 2026
+
+Implemented under
+`backend/src/main/java/com/springboot/backend/recommendation/classification/`.
+This is the deterministic verdict engine §7.1 describes and §18.8 previously
+recorded as absent. It closes the gap between candidate shortlisting (§7.1,
+SCRUM-34) and persistence (§18.8).
+
+| Class | Responsibility |
+|---|---|
+| `Factors` | Java mirror of the twelve closed factors in `ai/app/factors.py` |
+| `SpecFactorCatalog` | which `phone` column feeds which factor, its direction, its improvement cap |
+| `SpecComparisonService` | two spec sheets to finished, direction-corrected deltas, benchmark uplift and price-vs-budget |
+| `UpgradeScoringService` | normalise, weight by the user's priorities, aggregate to 0-1 |
+| `TierMapper` | score to one of the four verdicts; also the notification-eligibility read (§27.7) |
+| `UpgradeClassificationService` | orchestration, JSONB parsing, the preference-gate exit |
+| `ScoringSettings` | `@ConfigurationProperties("recommendation.scoring")`, thresholds and version |
+
+New entities, filling a real gap: `Phone` / `PhoneRepository` and
+`BenchmarkResult` / `BenchmarkResultRepository`. Before this,
+`benchmark_results.higher_is_better` had **no Java reader at all** despite §8.2
+requiring direction correction. `findLatestPerBenchmark` uses the same
+`DISTINCT ON ... observed_at DESC, id DESC` tiebreaker as the candidate filter,
+for the same reproducibility reason.
+
+How the score is built:
+
+1. each spec normalises to a signed contribution in `[-1, 1]` against its own cap,
+   so GHz, GB, watts and dollars never get added together;
+2. specs sharing a factor average, so a factor with four measurable specs does not
+   outvote one with a single spec;
+3. factors weight by the user's 1-5 `device_preferences.priorities`;
+4. the weighted mean is the final 0-1 score, where 1.0 is a strong upgrade
+   recommendation and 0.0 is not recommended.
+
+Decisions worth not re-litigating:
+
+- **Regressions carry their sign and cancel improvements**, but the final score
+  clamps at 0. A net-worse candidate is simply not an upgrade. The per-factor
+  breakdown still records what went backwards, so the clamp loses no information.
+- **Missing is not zero.** A null spec is skipped and shrinks the coverage
+  denominator. If coverage falls below `min-spec-coverage`, the result is flagged
+  `sufficient_data: false` and reported as `NO_MEANINGFUL_CHANGE` - because
+  "nothing improved" and "we could not tell" average to the same zero and must not
+  look the same to a reader.
+- **Five factors cannot be scored at all**: `camera`, `build_quality`, `thermals`,
+  `connectivity`, `audio`. V6 stores `camera_specs` and `ip_rating` as free text and
+  has no column for the other three. They are listed in
+  `SpecFactorCatalog.UNSCORED_FACTORS` and surfaced in the breakdown as
+  `unmeasurable_factors` rather than contributing a silent zero. The owner-evidence
+  channel still grades them.
+- **Text specs are reported, never scored.** `chipset`, `camera_specs`, `ip_rating`
+  and `os` go on the wire as `SpecDelta` with a null `delta_pct`, which is what the
+  Python-side `float | str | None` union exists for.
+- **`spec_overrides` win over the catalogue** and are applied as an overlay rather
+  than by mutating the shared `Phone` row (§14.3). A malformed override costs that
+  one spec and is logged, not the whole assessment.
+
+Persistence: unchanged schema, **no migration**. The tier is `verdict`, the
+breakdown is `factor_analysis.deterministic`, and `upgrade_score` plus
+`scoring_version` ride in both that breakdown and `input_snapshot.analysis`, added
+to `RecommendationService.buildInputSnapshot` so an old row stays explainable after
+the thresholds move.
+
+Still absent, deliberately:
+
+- **No trigger.** Still no `@Scheduled` and no controller; only tests call this.
+- **The maturity gate (§8.3) is still not implemented.**
+- **Nothing populates the catalogue.** Ingestion still writes only to `system_log`,
+  so against a real database there are no products, spec sheets or benchmarks to
+  compare. Every test here seeds its own fixtures.
 
 ---
 
@@ -2506,15 +2605,38 @@ Suggested starting values:
 
 They are tunable config, not immutable product truth.
 
-## 27.5 Verdict scoring/band thresholds
-Need deterministic tuning and boundary tests.
+## 27.5 Verdict scoring/band thresholds — MECHANISM BUILT, VALUES STILL OPEN
 
-Current Jira contains tasks to:
-- define thresholds,
-- create weighted score,
-- test boundaries.
+The weighted score, the band mapping and the boundary tests now exist
+(§18.9). What remains open is the **numbers**, which are configuration, not code.
 
-Do not let the LLM choose these thresholds.
+`upgrade_score` is 0-1: 1.0 is a strong upgrade recommendation, 0.0 is not
+recommended. The shipped values (scoring version, the three band thresholds,
+default priority, minimum spec coverage, score precision) live **only** in the
+`recommendation.scoring.*` block of `backend/src/main/resources/application.properties`.
+That block is the single source of truth: unit tests bind it through
+`ShippedScoringSettings` rather than restating numbers, and `.env.example` lists
+the `SCORING_*` overrides commented out with no values. Do not copy the numbers
+into docs, fixtures or tests. Each value can be overridden by environment
+variable, and none of them is agreed with the product owner.
+
+Current band shape (as of `scoring-version` v2): everything below the watching
+threshold is `NO_MEANINGFUL_CHANGE`, which is the bottom half of the scale. The
+remaining half is split into three roughly equal bands for `WORTH_WATCHING`,
+`WORTH_CONSIDERING` and `STRONG_UPGRADE_CANDIDATE`. This supersedes the v1 shape,
+which split the scale into four equal quarters.
+
+Per-spec improvement caps live in `SpecFactorCatalog` rather than in properties,
+because each one is a judgement about that specific spec ("a 50% battery increase
+is a full-strength win") and belongs next to the spec it describes.
+
+Still to do:
+- calibrate thresholds and caps against representative product pairs,
+- decide whether weights should vary per product category,
+- bump `scoring-version` whenever any of the above changes.
+
+Do not let the LLM choose these thresholds, and do not present the current
+defaults as the agreed configuration.
 
 ## 27.6 Recommendation expiry
 Still under research/ticketing.
@@ -2528,6 +2650,15 @@ Because the current “confidence” concept has become an evidence grade, notif
 - user settings.
 
 Do not blindly reuse old “confidence > x” wording.
+
+**Current state:** `TierMapper.isEmailEligible(verdict)` returns true only for
+`STRONG_UPGRADE_CANDIDATE`. That is deliberately narrower than the policy above
+and is **not** the finished rule - it considers the verdict alone, not evidence
+maturity or the user's settings. It is also only *eligibility*: nothing sends
+anything. There is no mail dependency, no template, no delivery and no
+deduplication anywhere in the backend, and the only Telegram in the repository is
+`.github/workflows/telegram-notifications.yml`, which alerts on CI/CD and has
+nothing to do with product notifications.
 
 ## 27.8 PC/GPU expansion
 The canonical V6 now includes the generic `products` table and a `gpu` subtype table alongside `phone`.
@@ -2682,17 +2813,29 @@ Current intended mapping into `recommendations`:
 
 | AI/system output | Recommendation storage |
 |---|---|
-| Java verdict | `verdict` |
+| Java verdict (the tier) | `verdict` |
 | A–F / `-` owner evidence grade | `confidence` |
 | deterministic impacts | `factor_analysis.deterministic` |
 | evidence findings | `factor_analysis.evidence` |
 | user-facing summary | `reasoning` |
 | request/context snapshot | `input_snapshot` |
+| Channel A score and deciding factors | `input_snapshot.analysis` |
 | retrieved real chunk IDs | `input_snapshot.retrieved_chunk_ids` |
 | model ID | `ai_model` |
 | prompt revision | `prompt_version` |
+| scoring configuration revision | `factor_analysis.deterministic.scoring_version` |
 
 `input_snapshot` should preserve enough to reconstruct why the old recommendation existed even after live records change.
+
+There is deliberately **no** `upgrade_score` or `scoring_version` column and no
+migration for one (§18.9). The score lives in JSONB alongside the breakdown that
+explains it, which keeps the two from drifting apart; PostgreSQL can still filter
+and sort on it through a JSONB path. Add columns only if a query pattern makes the
+JSONB path genuinely painful, not on principle.
+
+`scoring_version` is to Channel A what `prompt_version` is to the model call: two
+analyses sharing a version must have been produced by the same weights, caps and
+thresholds, or reproducibility is lost.
 
 ---
 

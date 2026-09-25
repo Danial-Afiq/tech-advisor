@@ -29,8 +29,7 @@
   "computed": {},
   "analysis": {
     "verdict": "WORTH_CONSIDERING",
-    "relevance_score": 0.6,
-    "preference_score": 0.6,
+    "upgrade_score": 0.72,
     "deciding_factors": ["battery"]
   },
   "retrieval": { "k": 6 }

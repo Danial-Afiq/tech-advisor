@@ -94,9 +94,17 @@ class Computed(Strict):
 
 
 class Analysis(Strict):
+    """Channel A's finished judgement (AGENTS.md §7.1), computed in Java.
+
+    `upgrade_score` is the single 0-1 aggregate the verdict tier was derived
+    from, where 1.0 is a strong upgrade recommendation and 0.0 is not
+    recommended. It is context for the grader, not something to recompute or
+    overrule: the model grades owner evidence and may disagree with the
+    verdict, which is the point of keeping the two channels separate (§7.2).
+    """
+
     verdict: Verdict
-    relevance_score: float
-    preference_score: float
+    upgrade_score: float = Field(ge=0, le=1)
     deciding_factors: list[Factor] = []
 
 

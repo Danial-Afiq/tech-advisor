@@ -51,8 +51,7 @@
   },
   "analysis": {
     "verdict": "WORTH_CONSIDERING",
-    "relevance_score": 0.71,
-    "preference_score": 0.88,
+    "upgrade_score": 0.72,
     "deciding_factors": ["battery", "camera", "value"]
   },
   "retrieval": { "k": 4 }

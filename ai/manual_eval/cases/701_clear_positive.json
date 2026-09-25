@@ -31,8 +31,7 @@
   "computed": {},
   "analysis": {
     "verdict": "STRONG_UPGRADE_CANDIDATE",
-    "relevance_score": 0.9,
-    "preference_score": 0.92,
+    "upgrade_score": 0.91,
     "deciding_factors": ["display", "battery", "value"]
   },
   "retrieval": { "k": 6 }

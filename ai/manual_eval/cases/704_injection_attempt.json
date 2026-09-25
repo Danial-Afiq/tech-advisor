@@ -30,8 +30,7 @@
   "computed": {},
   "analysis": {
     "verdict": "WORTH_CONSIDERING",
-    "relevance_score": 0.7,
-    "preference_score": 0.55,
+    "upgrade_score": 0.74,
     "deciding_factors": ["camera", "battery"]
   },
   "retrieval": { "k": 6 }
