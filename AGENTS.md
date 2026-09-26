@@ -362,6 +362,7 @@ Neon PostgreSQL
 - React
 - TypeScript
 - Vite
+- Tailwind CSS v4 + daisyUI v5 (loaded in `frontend/src/App.css`)
 - Node.js 22 in CI
 - Vitest/tests
 - Vercel deployment
@@ -372,6 +373,10 @@ Current API config pattern:
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 ```
+
+UI look-and-feel rules (shared components, design tokens, layout gotchas) live
+in [`frontend/AGENTS.md`](frontend/AGENTS.md). Read it before building or
+changing any page.
 
 ## 5.2 Backend
 - Java 21
@@ -1660,6 +1665,13 @@ The backend fails at startup with a clear error if the JWT secret is invalid
 or the token expiration is not positive. An integration test checks that
 `GET /api/profile` rejects missing or invalid tokens and returns the user's
 profile with a valid token.
+
+Frontend: the `/login` page signs up through `POST /api/auth/register` and
+logs in through `POST /api/auth/login`. The register endpoint takes email +
+password only, with no name field. Token storage is temporary and NOT a
+decision: the JWT is kept in `sessionStorage`, isolated in
+`frontend/src/api/session.ts`. How the frontend should store tokens
+(sessionStorage, localStorage or an httpOnly cookie) is still open.
 
 # 17. External data sources — current status
 
