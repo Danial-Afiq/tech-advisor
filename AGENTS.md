@@ -1474,6 +1474,14 @@ Longer-term naming may be cleaner as `evidence_grade`, but the agreed current pl
 semantics documented in a `COMMENT ON COLUMN` so the next reader does not mistake it
 for a probability.
 
+**`NULL` on deterministic-only rows (decided 27 Sep 2026, §18.11).** Every row written
+by the deterministic pipeline leaves `confidence` `NULL`, whatever its verdict -
+including `NO_MEANINGFUL_CHANGE` gate exits that will never get a model call. `-`
+stays reserved for rows the AI path wrote after failing to produce a grade (maturity
+failure, any degraded path). A reader must therefore treat `NULL` as "no evidence
+grade on this row", not as "a grade is coming". An earlier proposal to write `-` on
+gate-exit rows and `NULL` only on pending ones was **rejected**.
+
 ### `input_snapshot`
 Preserve the generation-time inputs because:
 - preferences may later change,
@@ -1963,8 +1971,10 @@ Deliberate boundaries:
   package still does not call it. `verdict`, `upgrade_score`, `deciding_factors`
   and every figure in `computed` continue to arrive as *input* on
   `RecommendationInput`; nothing here computes or second-guesses them, and the
-  verdict persisted is whatever the caller supplied (§7.1). Wiring the classifier
-  to this service is the caller's job, not this package's.
+  verdict persisted is whatever the caller supplied (§7.1). Shortlisting and
+  classification are now joined by `CandidateEvaluationService` (§18.10), but
+  nothing yet feeds its output into `assessAndPersist` - that is the trigger
+  ticket's job.
 - **The maturity gate (§8.3) is still not implemented.** Nothing in this package
   checks evidence maturity before spending a call.
 - **No trigger.** No `@Scheduled`, no controller, no HTTP surface. The scheduled job
@@ -2073,11 +2083,94 @@ the thresholds move.
 
 Still absent, deliberately:
 
-- **No trigger.** Still no `@Scheduled` and no controller; only tests call this.
+- **No trigger.** Still no `@Scheduled` and no controller. The only production
+  caller is `CandidateEvaluationService` (§18.10), which itself has no trigger.
 - **The maturity gate (§8.3) is still not implemented.**
 - **Nothing populates the catalogue.** Ingestion still writes only to `system_log`,
   so against a real database there are no products, spec sheets or benchmarks to
   compare. Every test here seeds its own fixtures.
+
+## 18.10 Deterministic evaluation pipeline — 26 Sep 2026, branch `feat/3.8-evaluate-reccos`
+
+`recommendation/CandidateEvaluationService.evaluate(userDeviceId)` joins candidate
+shortlisting (§7.1, SCRUM-34) to Channel A classification (§18.9) in one read-only
+transaction:
+
+1. `CandidatePruningService.getViableCandidates` - same category, latest price
+   within budget, verified, not the owned product;
+2. `UpgradeClassificationService.loadOwnedSide` - owned spec sheet, overrides,
+   benchmarks and budget, read **once** per run rather than once per candidate;
+3. `UpgradeClassificationService.classify(OwnedSide, ...)` per candidate, carrying
+   the shortlist's `latest_price` straight through;
+4. rank by `upgrade_score` descending, ties broken by `product_id` so the order is
+   reproducible.
+
+Returns `CandidateEvaluation`: `ranked`, `skipped` (with reason), and
+`worthAssessing()` - the ranked candidates whose verdict is not
+`NO_MEANINGFUL_CHANGE`, i.e. those past the early preference-gate exit and the only
+ones a later step should spend retrieval and a model call on.
+
+Failure rules:
+
+- the **owned** device unevaluable (no device, preferences, catalogue link or spec
+  sheet) fails the whole run with `ResourceNotFoundException` - no candidate can be
+  compared against nothing;
+- a **candidate** with no spec sheet is logged and recorded in `skipped`; the run
+  continues. The per-candidate `classify` is deliberately not `@Transactional`, so
+  catching that exception cannot mark the surrounding transaction rollback-only;
+- no viable candidates is an empty result, not an error.
+
+Deliberately **not** done here: no trigger (`@Scheduled`/controller), no maturity
+gate, no AI call. `evaluate` itself stays read-only; persistence is layered on top
+by `DeterministicRecommendationService` (§18.11). The head of the pipeline - what
+calls it and hands `worthAssessing()` to `RecommendationService.assessAndPersist` -
+is a separate ticket.
+
+The owned side is loaded even when the shortlist is empty, so an unevaluable owned
+device always fails rather than passing for one with nothing to recommend.
+
+Test: `CandidateEvaluationIntegrationTest` (real PostgreSQL, rolled back).
+
+## 18.11 Persisting deterministic results — 27 Sep 2026, branch `feat/3.8-evaluate-reccos`
+
+`recommendation/DeterministicRecommendationService.evaluateAndPersist(userDeviceId)`
+runs §18.10 and writes one `recommendations` row per classified candidate. No
+schema change, no migration.
+
+Row contents:
+
+| Column | Value |
+|---|---|
+| `verdict` | Channel A verdict |
+| `confidence` | `NULL` on every row, gate exits included - see §14.12 |
+| `factor_analysis` | `deterministic` = the §18.9 breakdown; `evidence` and `irrelevant_chunk_ids` present but empty |
+| `input_snapshot` | `candidate` (id, brand, model, latest price, currency), `computed`, `analysis` - the same keys `RecommendationService` writes, minus AI-only ones |
+| `reasoning` | fixed Java template built only from verdict, score and deciding factors (§12 fallback) |
+| `ai_model`, `prompt_version`, `trigger_event_id` | `NULL` - no model, no trigger yet |
+
+Lifecycle rules (decided 27 Sep 2026):
+
+- **Still shortlisted:** normal supersede-and-insert - the previous `ACTIVE` row for
+  that (user, candidate) becomes `SUPERSEDED` and is kept as history.
+- **Dropped off this device's shortlist** (over budget, delisted, unverified): every
+  row for that device and candidate is **deleted**, history included, not superseded.
+  Users come for products that are recommended; a record that a product once was is
+  of no use to them. Scoped by `current_device_id`, so another device's rows are
+  never touched.
+- **Shortlisted but skipped** (no spec sheet): nothing new is written - a verdict the
+  classifier did not produce is not fabricated (§12) - and its previous row is left
+  as it was.
+- **Empty shortlist:** every row for the device is deleted.
+
+The delete and all inserts run in **one transaction** (`RecommendationRepository.replaceForDevice`),
+so a run lands completely or not at all. `save` and `replaceForDevice` share one
+supersede-and-insert helper.
+
+Worth-assessing rows (verdict other than `NO_MEANINGFUL_CHANGE`) are expected to be superseded by the AI
+step's `assessAndPersist` row once the trigger ticket wires it, so a full cycle
+leaves a deterministic row and an AI row in history for those candidates.
+
+Test: `DeterministicRecommendationPersistenceTest` (real PostgreSQL, rolled back).
 
 ---
 

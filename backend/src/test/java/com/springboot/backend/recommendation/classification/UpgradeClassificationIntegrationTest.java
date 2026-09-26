@@ -2,6 +2,7 @@ package com.springboot.backend.recommendation.classification;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -39,6 +40,7 @@ class UpgradeClassificationIntegrationTest {
     @Autowired private UpgradeClassificationService service;
     @Autowired private ScoringSettings settings;
     @Autowired private JdbcTemplate db;
+    @Autowired private EntityManager entityManager;
 
     private Long userId;
     private Long ownedProductId;
@@ -138,6 +140,10 @@ class UpgradeClassificationIntegrationTest {
         // This owner actually bought the 1TB model, so the storage jump reverses.
         db.update("UPDATE user_devices SET spec_overrides = ?::jsonb WHERE id = ?",
                 "{\"storage_gb\": 1024}", userDeviceId);
+        // The update bypassed JPA, and this test's single transaction still holds
+        // the UserDevice the first classify loaded. Without clearing, the second
+        // classify is handed that stale entity and never sees the override.
+        entityManager.clear();
 
         double withOverride =
                 service.classify(userDeviceId, candidate, new BigDecimal("1000.00")).upgradeScore();

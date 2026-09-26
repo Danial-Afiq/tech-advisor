@@ -81,7 +81,20 @@ public class UpgradeClassificationService {
     @Transactional(readOnly = true)
     public UpgradeClassification classify(
             Long userDeviceId, Long candidateProductId, BigDecimal candidatePrice) {
+        return classify(loadOwnedSide(userDeviceId), candidateProductId, candidatePrice);
+    }
 
+    /**
+     * Loads everything about the owned device that every candidate is compared
+     * against, so a run over many candidates reads it once rather than once per
+     * candidate.
+     *
+     * <p>Throws when the device cannot be evaluated at all: no current device,
+     * no preferences, no catalogue link, or no spec sheet for what it links to.
+     * Must be called inside a transaction, since it walks the device's lazy
+     * product link.
+     */
+    public OwnedSide loadOwnedSide(Long userDeviceId) {
         UserDevice device = userDeviceRepository.findByIdAndIsCurrentTrue(userDeviceId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Owned device " + userDeviceId + " not found"));
@@ -100,22 +113,39 @@ public class UpgradeClassificationService {
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "No specifications recorded for owned product " + owned.getId()));
 
+        return new OwnedSide(
+                userDeviceId,
+                device.getUserId(),
+                ownedSpecs,
+                readJsonObject(device.getSpecOverrides(), "spec_overrides", userDeviceId),
+                benchmarkRepository.findLatestPerBenchmark(owned.getId()),
+                preference.getBudget(),
+                preference.getCurrency());
+    }
+
+    /**
+     * Classifies one candidate against an already-loaded owned device.
+     *
+     * <p>Throws {@link ResourceNotFoundException} when the candidate has no spec
+     * sheet. That is a fact about this one candidate, so a caller looping over a
+     * shortlist can skip it and carry on.
+     */
+    public UpgradeClassification classify(OwnedSide owned, Long candidateProductId, BigDecimal candidatePrice) {
         Phone candidateSpecs = phoneRepository.findById(candidateProductId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "No specifications recorded for candidate product " + candidateProductId));
 
-        List<BenchmarkResult> ownedBenchmarks = benchmarkRepository.findLatestPerBenchmark(owned.getId());
         List<BenchmarkResult> candidateBenchmarks = benchmarkRepository.findLatestPerBenchmark(candidateProductId);
 
         SpecComparison comparison = comparisonService.compare(
-                ownedSpecs,
-                readJsonObject(device.getSpecOverrides(), "spec_overrides", userDeviceId),
+                owned.specs(),
+                owned.specOverrides(),
                 candidateSpecs,
-                ownedBenchmarks,
+                owned.benchmarks(),
                 candidateBenchmarks,
                 candidatePrice,
-                preference.getBudget(),
-                preference.getCurrency());
+                owned.budget(),
+                owned.currency());
 
         // device_preferences.priorities are deliberately not read here: the
         // verdict weights every factor equally for now (§27.5). They still reach
@@ -134,7 +164,7 @@ public class UpgradeClassificationService {
             LOG.info(
                     "Device {} vs candidate {}: only {}% of the scorable factors were measurable, "
                             + "below the {}% minimum; returning {} without scoring",
-                    userDeviceId,
+                    owned.userDeviceId(),
                     candidateProductId,
                     Math.round(score.coverage() * 100),
                     Math.round(settings.minSpecCoverage() * 100),
@@ -163,6 +193,32 @@ public class UpgradeClassificationService {
         } catch (RuntimeException e) {
             LOG.warn("Ignoring unreadable {} on device {}: {}", column, userDeviceId, e.getMessage());
             return Map.of();
+        }
+    }
+
+    /**
+     * The owned device's side of every comparison, loaded once per run.
+     *
+     * @param userDeviceId  the owned device
+     * @param userId        the device's owner
+     * @param specs         the catalogue spec sheet for the owned product
+     * @param specOverrides the owner's {@code spec_overrides}, already parsed
+     * @param benchmarks    the latest observation per benchmark
+     * @param budget        {@code device_preferences.budget}
+     * @param currency      {@code device_preferences.currency}
+     */
+    public record OwnedSide(
+            Long userDeviceId,
+            Long userId,
+            Phone specs,
+            Map<String, Object> specOverrides,
+            List<BenchmarkResult> benchmarks,
+            BigDecimal budget,
+            String currency) {
+
+        public OwnedSide {
+            specOverrides = Map.copyOf(specOverrides);
+            benchmarks = List.copyOf(benchmarks);
         }
     }
 }
