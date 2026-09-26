@@ -24,7 +24,7 @@ import tools.jackson.databind.json.JsonMapper;
  * Channel A: the deterministic personalised verdict (AGENTS.md §7.1).
  *
  * <p>Answers "does this candidate make sense for this specific user's current
- * device, budget and priorities" using nothing but relational data and
+ * device and budget" using nothing but relational data and
  * arithmetic. No embeddings, no retrieval, no model call - the verdict must be
  * reproducible, and §28.2 is explicit that the LLM never chooses it.
  *
@@ -117,8 +117,10 @@ public class UpgradeClassificationService {
                 preference.getBudget(),
                 preference.getCurrency());
 
-        Map<String, Integer> priorities = readPriorities(preference, userDeviceId);
-        UpgradeScore score = scoringService.score(comparison, priorities);
+        // device_preferences.priorities are deliberately not read here: the
+        // verdict weights every factor equally for now (§27.5). They still reach
+        // the AI service through the assess request.
+        UpgradeScore score = scoringService.score(comparison);
 
         // The early preference-gate exit (§7.1): when the comparison rests on too
         // little data, say NO_MEANINGFUL_CHANGE rather than inventing a tier. The
@@ -130,7 +132,7 @@ public class UpgradeClassificationService {
 
         if (!score.sufficientData()) {
             LOG.info(
-                    "Device {} vs candidate {}: only {}% of the user's factors were measurable, "
+                    "Device {} vs candidate {}: only {}% of the scorable factors were measurable, "
                             + "below the {}% minimum; returning {} without scoring",
                     userDeviceId,
                     candidateProductId,
@@ -141,22 +143,6 @@ public class UpgradeClassificationService {
 
         return new UpgradeClassification(
                 verdict, score.score(), score, comparison, settings.scoringVersion());
-    }
-
-    /**
-     * Reads {@code device_preferences.priorities} into factor weights.
-     *
-     * <p>Keys outside the closed factor vocabulary are dropped rather than
-     * weighted, since a priority the grader has no name for cannot be reported
-     * on and would silently skew the denominator (§11.4).
-     */
-    private Map<String, Integer> readPriorities(DevicePreference preference, Long userDeviceId) {
-        Map<String, Object> raw = readJsonObject(preference.getPriorities(), "priorities", userDeviceId);
-        return raw.entrySet().stream()
-                .filter(entry -> Factors.isFactor(entry.getKey()))
-                .filter(entry -> entry.getValue() instanceof Number)
-                .collect(java.util.stream.Collectors.toMap(
-                        Map.Entry::getKey, entry -> ((Number) entry.getValue()).intValue()));
     }
 
     /**

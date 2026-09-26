@@ -8,7 +8,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * The scoring rules themselves: normalisation, weighting, regressions,
+ * The scoring rules themselves: normalisation, equal factor weighting, regressions,
  * coverage and determinism.
  */
 class UpgradeScoringServiceTest {
@@ -29,21 +29,18 @@ class UpgradeScoringServiceTest {
                 .build();
     }
 
-    private UpgradeScore score(Phone owned, Phone candidate, Map<String, Integer> priorities) {
+    private UpgradeScore score(Phone owned, Phone candidate) {
         SpecComparison result =
                 comparison.compare(owned, Map.of(), candidate, List.of(), List.of(), null, null, "SGD");
-        return scoring.score(result, priorities);
+        return scoring.score(result);
     }
-
-    private static final Map<String, Integer> EVEN_PRIORITIES = Map.of(
-            Factors.BATTERY, 3, Factors.PERFORMANCE, 3, Factors.DISPLAY, 3, Factors.PORTABILITY, 3);
 
     @Test
     void identicalSpecsScoreZeroAndFallInTheLowestTier() {
         Phone owned = phone(1, 4000, 8, 120, 200);
         Phone candidate = phone(2, 4000, 8, 120, 200);
 
-        UpgradeScore result = score(owned, candidate, EVEN_PRIORITIES);
+        UpgradeScore result = score(owned, candidate);
 
         assertTrue(result.sufficientData());
         assertEquals(0.0, result.score());
@@ -56,7 +53,7 @@ class UpgradeScoringServiceTest {
         Phone owned = phone(1, 3000, 4, 60, 240);
         Phone candidate = phone(2, 5000, 12, 144, 180);
 
-        UpgradeScore result = score(owned, candidate, EVEN_PRIORITIES);
+        UpgradeScore result = score(owned, candidate);
 
         assertEquals(TierMapper.STRONG_UPGRADE_CANDIDATE, tiers.toVerdict(result.score()));
     }
@@ -66,7 +63,7 @@ class UpgradeScoringServiceTest {
         Phone owned = phone(1, 4000, 8, 120, 200);
         Phone candidate = phone(2, 4200, 8, 120, 198);
 
-        UpgradeScore result = score(owned, candidate, EVEN_PRIORITIES);
+        UpgradeScore result = score(owned, candidate);
 
         assertTrue(result.score() > 0, "a real improvement is not zero");
         assertNotEquals(TierMapper.STRONG_UPGRADE_CANDIDATE, tiers.toVerdict(result.score()));
@@ -77,7 +74,7 @@ class UpgradeScoringServiceTest {
         Phone owned = phone(1, 5000, 12, 144, 180);
         Phone candidate = phone(2, 3000, 4, 60, 240);
 
-        UpgradeScore result = score(owned, candidate, EVEN_PRIORITIES);
+        UpgradeScore result = score(owned, candidate);
 
         assertEquals(0.0, result.score(), "you do not upgrade to a worse phone");
         assertEquals(TierMapper.NO_MEANINGFUL_CHANGE, tiers.toVerdict(result.score()));
@@ -93,9 +90,9 @@ class UpgradeScoringServiceTest {
         Phone owned = phone(1, 3000, 8, 120, 170);
         Phone candidate = phone(2, 5000, 8, 120, 230);
 
-        UpgradeScore mixed = score(owned, candidate, EVEN_PRIORITIES);
+        UpgradeScore mixed = score(owned, candidate);
         UpgradeScore improvementOnly =
-                score(phone(1, 3000, 8, 120, 170), phone(2, 5000, 8, 120, 170), EVEN_PRIORITIES);
+                score(phone(1, 3000, 8, 120, 170), phone(2, 5000, 8, 120, 170));
 
         assertTrue(
                 mixed.score() < improvementOnly.score(),
@@ -103,33 +100,28 @@ class UpgradeScoringServiceTest {
     }
 
     @Test
-    void theUsersPrioritiesChangeTheVerdictForTheSamePairOfPhones() {
-        // AGENTS.md §2.3: the same candidate should assess differently per user.
-        Phone owned = phone(1, 3000, 8, 120, 200);
-        Phone candidate = phone(2, 5000, 8, 120, 200);
+    void everyMeasuredFactorCarriesEqualWeight() {
+        // User priorities do not weight the verdict yet (AGENTS.md §27.5), so a
+        // full-strength win on one factor is worth the same as on any other.
+        Phone owned = phone(1, 4000, 8, 60, 200);
+        Phone batteryJump = phone(2, 6000, 8, 60, 200);
+        Phone displayJump = phone(2, 4000, 8, 120, 200);
 
-        UpgradeScore batteryFirst = score(owned, candidate,
-                Map.of(Factors.BATTERY, 5, Factors.PERFORMANCE, 1, Factors.DISPLAY, 1, Factors.PORTABILITY, 1));
-        UpgradeScore batteryLast = score(owned, candidate,
-                Map.of(Factors.BATTERY, 1, Factors.PERFORMANCE, 5, Factors.DISPLAY, 5, Factors.PORTABILITY, 5));
+        UpgradeScore battery = score(owned, batteryJump);
+        UpgradeScore display = score(owned, displayJump);
 
-        assertTrue(
-                batteryFirst.score() > batteryLast.score(),
-                "the battery jump should matter more to the user who asked for battery");
+        assertEquals(1.0, battery.factorScores().get(Factors.BATTERY).contribution());
+        assertEquals(1.0, display.factorScores().get(Factors.DISPLAY).contribution());
+        assertEquals(battery.score(), display.score());
     }
 
     @Test
     void tooFewMeasurableFactorsIsInsufficientDataNotNoChange() {
-        // The user cares about five things; only battery can be measured at all.
+        // Only battery can be measured, out of every factor a spec could feed.
         Phone owned = Phone.builder(1L).batteryMah(4000).build();
         Phone candidate = Phone.builder(2L).batteryMah(4000).build();
 
-        UpgradeScore result = score(owned, candidate, Map.of(
-                Factors.BATTERY, 5,
-                Factors.CAMERA, 5,
-                Factors.PERFORMANCE, 4,
-                Factors.DISPLAY, 4,
-                Factors.THERMALS, 3));
+        UpgradeScore result = score(owned, candidate);
 
         assertFalse(result.sufficientData(), "coverage was " + result.coverage());
         assertTrue(result.coverage() < SETTINGS.minSpecCoverage());
@@ -141,21 +133,11 @@ class UpgradeScoringServiceTest {
         Phone owned = phone(1, 4000, 8, 120, 200);
         Phone candidate = phone(2, 4000, 8, 120, 200);
 
-        UpgradeScore result = score(owned, candidate, EVEN_PRIORITIES);
+        UpgradeScore result = score(owned, candidate);
 
         assertTrue(result.sufficientData());
-        assertEquals(1.0, result.coverage());
-    }
-
-    @Test
-    void unrankedFactorsFallBackToTheDefaultPriority() {
-        Phone owned = phone(1, 3000, 8, 120, 200);
-        Phone candidate = phone(2, 5000, 8, 120, 200);
-
-        UpgradeScore result = score(owned, candidate, Map.of());
-
-        assertTrue(result.sufficientData());
-        assertEquals(SETTINGS.defaultPriority(), result.factorScores().get(Factors.BATTERY).priority());
+        assertTrue(result.coverage() >= SETTINGS.minSpecCoverage(), "coverage was " + result.coverage());
+        assertEquals(0.0, result.score());
     }
 
     @Test
@@ -165,18 +147,18 @@ class UpgradeScoringServiceTest {
         Phone owned = phone(1, 4000, 8, 120, 200);
 
         assertEquals(
-                score(owned, modest, EVEN_PRIORITIES).score(),
-                score(owned, absurd, EVEN_PRIORITIES).score(),
+                score(owned, modest).score(),
+                score(owned, absurd).score(),
                 "both are past the improvement cap, so both are a full-strength battery win");
     }
 
     @Test
     void decidingFactorsAreTheStrongestInfluencesAndComeFromTheClosedVocabulary() {
-        Phone owned = phone(1, 3000, 4, 60, 200);
-        Phone candidate = phone(2, 5000, 12, 144, 200);
+        // Battery jumps past its cap; RAM and refresh rate improve only partly.
+        Phone owned = phone(1, 3000, 8, 60, 200);
+        Phone candidate = phone(2, 5000, 10, 90, 200);
 
-        UpgradeScore result = score(owned, candidate,
-                Map.of(Factors.BATTERY, 5, Factors.PERFORMANCE, 1, Factors.DISPLAY, 1, Factors.PORTABILITY, 1));
+        UpgradeScore result = score(owned, candidate);
 
         assertFalse(result.decidingFactors().isEmpty());
         assertTrue(result.decidingFactors().size() <= 3);
@@ -190,9 +172,9 @@ class UpgradeScoringServiceTest {
         Phone owned = phone(1, 3210, 6, 90, 213);
         Phone candidate = phone(2, 4870, 11, 133, 187);
 
-        double first = score(owned, candidate, EVEN_PRIORITIES).score();
+        double first = score(owned, candidate).score();
         for (int i = 0; i < 20; i++) {
-            assertEquals(first, score(owned, candidate, EVEN_PRIORITIES).score());
+            assertEquals(first, score(owned, candidate).score());
         }
     }
 
@@ -201,7 +183,7 @@ class UpgradeScoringServiceTest {
         Phone owned = phone(1, 3210, 6, 90, 213);
         Phone candidate = phone(2, 4870, 11, 133, 187);
 
-        double result = score(owned, candidate, EVEN_PRIORITIES).score();
+        double result = score(owned, candidate).score();
 
         assertEquals(result, Math.round(result * 100.0) / 100.0, "precision 2 means two decimal places");
     }

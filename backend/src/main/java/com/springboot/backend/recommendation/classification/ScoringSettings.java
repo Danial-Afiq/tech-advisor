@@ -12,13 +12,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * final. Nothing outside this record may hard-code a threshold.
  *
  * @param scoringVersion    stamped onto every persisted analysis. Bump it
- *                          whenever a threshold, cap or weight changes, or old
+ *                          whenever a threshold, cap or weighting changes, or old
  *                          recommendations stop being explainable
  * @param watchingThreshold lowest 0-1 score that is still {@code WORTH_WATCHING}
  * @param consideringThreshold lowest 0-1 score that is {@code WORTH_CONSIDERING}
  * @param strongThreshold   lowest 0-1 score that is a {@code STRONG_UPGRADE_CANDIDATE}
- * @param defaultPriority   weight for a factor the user did not rank
- * @param minSpecCoverage   fraction of weighted factors that must be measurable
+ * @param minSpecCoverage   fraction of scorable factors that must be measurable
  *                          before a score means anything
  * @param scorePrecision    decimal places the 0-1 score is rounded to
  */
@@ -28,7 +27,6 @@ public record ScoringSettings(
         double watchingThreshold,
         double consideringThreshold,
         double strongThreshold,
-        int defaultPriority,
         double minSpecCoverage,
         int scorePrecision) {
 
@@ -46,11 +44,6 @@ public record ScoringSettings(
             throw new IllegalArgumentException(
                     "Tier thresholds must satisfy 0 < watching < considering < strong <= 1, but were "
                             + watchingThreshold + ", " + consideringThreshold + ", " + strongThreshold);
-        }
-        if (defaultPriority < 1 || defaultPriority > 5) {
-            throw new IllegalArgumentException(
-                    "recommendation.scoring.default-priority must be 1-5, matching device_preferences.priorities, but was "
-                            + defaultPriority);
         }
         if (minSpecCoverage < 0 || minSpecCoverage > 1) {
             throw new IllegalArgumentException(

@@ -14,9 +14,9 @@ import java.util.Map;
  *                         1.0 is a strong upgrade recommendation, 0.0 is not
  *                         recommended
  * @param sufficientData   false when too few specs were comparable to judge
- * @param factorScores     per-factor weighted contribution, for the breakdown
+ * @param factorScores     per-factor contribution, for the breakdown
  * @param decidingFactors  the factors that moved the score most, highest first
- * @param coverage         fraction of weighted factors that were measurable
+ * @param coverage         fraction of scorable factors that were measurable
  */
 public record UpgradeScore(
         double score,
@@ -33,11 +33,10 @@ public record UpgradeScore(
     /**
      * One factor's contribution.
      *
-     * @param priority    the user's 1-5 weight, or the configured default
      * @param contribution normalised signed strength in {@code [-1, 1]}
      * @param specs       the specs that fed this factor
      */
-    public record FactorScore(int priority, double contribution, List<String> specs) {
+    public record FactorScore(double contribution, List<String> specs) {
         public FactorScore {
             specs = List.copyOf(specs);
         }

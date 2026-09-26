@@ -18,8 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
  * with expected tiers.
  *
  * <p>Complements the unit tests: what only a database can exercise is the
- * {@code DISTINCT ON} benchmark selection, the JSONB priorities and
- * {@code spec_overrides} columns, and the wiring of the configured thresholds
+ * {@code DISTINCT ON} benchmark selection, the JSONB
+ * {@code spec_overrides} column, and the wiring of the configured thresholds
  * through the real Spring context.
  *
  * <p>Runs inside a transaction that rolls back, and refuses to run outside a
@@ -83,7 +83,7 @@ class UpgradeClassificationIntegrationTest {
     }
 
     @Test
-    void aFlagshipUpgradeOverEveryPriorityIsAStrongCandidate() {
+    void aFlagshipUpgradeAcrossEveryMeasuredFactorIsAStrongCandidate() {
         Long candidate = product("Samsung", "Galaxy S25 Ultra");
         phone(candidate, 5500, 16, 144, 180, 512);
         benchmark(candidate, "geekbench_multi", "9200", true, LATER);
@@ -160,7 +160,7 @@ class UpgradeClassificationIntegrationTest {
 
     @Test
     void anAlmostEmptySpecSheetIsInsufficientDataNotNoChange() {
-        // The user ranked four factors; only battery is knowable on both sides.
+        // Only battery is knowable on both sides, out of every scorable factor.
         Long candidate = product("Nothing", "Phone 3");
         db.update("INSERT INTO phone (product_id, battery_mah) VALUES (?, ?)", candidate, 5000);
 
@@ -195,7 +195,8 @@ class UpgradeClassificationIntegrationTest {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> battery = (Map<String, Object>) perFactor.get(Factors.BATTERY);
-        assertEquals(5, battery.get("priority"), "the user's own weight, read from JSONB");
+        assertFalse(battery.containsKey("priority"), "user priorities do not weight the verdict yet (§27.5)");
+        assertEquals("EQUAL", factors.get("weighting"));
         assertEquals("HIGH_POSITIVE", battery.get("impact"));
     }
 

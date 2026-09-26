@@ -475,6 +475,11 @@ Question:
 
 > “Does this candidate make sense for this specific user's current device, budget, and priorities?”
 
+> **Priorities do not weight this verdict for now (26 Sep 2026).** The group has
+> not agreed how `device_preferences.priorities` should weight the deterministic
+> score, so every measurable factor counts equally (§18.9, §27.5). Priorities are
+> still collected and still drive retrieval and the LLM explanation (§8.4, §9).
+
 Outputs include:
 - `verdict`
 - `upgrade_score`
@@ -1485,7 +1490,7 @@ Keep deterministic and model evidence separate:
 {
   "deterministic": {
     "battery": {
-      "priority": 5,
+      "contribution": 1.0,
       "impact": "HIGH_POSITIVE"
     }
   },
@@ -2005,7 +2010,7 @@ SCRUM-34) and persistence (§18.8).
 | `Factors` | Java mirror of the twelve closed factors in `ai/app/factors.py` |
 | `SpecFactorCatalog` | which `phone` column feeds which factor, its direction, its improvement cap |
 | `SpecComparisonService` | two spec sheets to finished, direction-corrected deltas, benchmark uplift and price-vs-budget |
-| `UpgradeScoringService` | normalise, weight by the user's priorities, aggregate to 0-1 |
+| `UpgradeScoringService` | normalise, equal-weight every measured factor, aggregate to 0-1 |
 | `TierMapper` | score to one of the four verdicts; also the notification-eligibility read (§27.7) |
 | `UpgradeClassificationService` | orchestration, JSONB parsing, the preference-gate exit |
 | `ScoringSettings` | `@ConfigurationProperties("recommendation.scoring")`, thresholds and version |
@@ -2023,9 +2028,19 @@ How the score is built:
    so GHz, GB, watts and dollars never get added together;
 2. specs sharing a factor average, so a factor with four measurable specs does not
    outvote one with a single spec;
-3. factors weight by the user's 1-5 `device_preferences.priorities`;
-4. the weighted mean is the final 0-1 score, where 1.0 is a strong upgrade
-   recommendation and 0.0 is not recommended.
+3. every measured factor carries **equal weight**, and their plain mean is the
+   final 0-1 score, where 1.0 is a strong upgrade recommendation and 0.0 is not
+   recommended;
+4. coverage is judged against every factor a spec column can feed (twelve minus
+   the five unscorable ones), not against the factors the user ranked.
+
+**CHANGED 26 Sep 2026 (`scoring-version` v3):** weighting by the user's 1-5
+`device_preferences.priorities` is **removed** from Channel A, because the group
+has not agreed how preferences should weight the verdict. The v2 design (priority
+weights, `default-priority` fallback, per-factor `priority` in the breakdown,
+coverage measured against ranked factors) is superseded until that is decided
+(§27.5). The breakdown now records `"weighting": "EQUAL"`. Priorities still reach
+the AI service unchanged.
 
 Decisions worth not re-litigating:
 
@@ -2612,7 +2627,7 @@ The weighted score, the band mapping and the boundary tests now exist
 
 `upgrade_score` is 0-1: 1.0 is a strong upgrade recommendation, 0.0 is not
 recommended. The shipped values (scoring version, the three band thresholds,
-default priority, minimum spec coverage, score precision) live **only** in the
+minimum spec coverage, score precision) live **only** in the
 `recommendation.scoring.*` block of `backend/src/main/resources/application.properties`.
 That block is the single source of truth: unit tests bind it through
 `ShippedScoringSettings` rather than restating numbers, and `.env.example` lists
@@ -2620,7 +2635,7 @@ the `SCORING_*` overrides commented out with no values. Do not copy the numbers
 into docs, fixtures or tests. Each value can be overridden by environment
 variable, and none of them is agreed with the product owner.
 
-Current band shape (as of `scoring-version` v2): everything below the watching
+Current band shape (unchanged since `scoring-version` v2): everything below the watching
 threshold is `NO_MEANINGFUL_CHANGE`, which is the bottom half of the scale. The
 remaining half is split into three roughly equal bands for `WORTH_WATCHING`,
 `WORTH_CONSIDERING` and `STRONG_UPGRADE_CANDIDATE`. This supersedes the v1 shape,
@@ -2632,6 +2647,9 @@ is a full-strength win") and belongs next to the spec it describes.
 
 Still to do:
 - calibrate thresholds and caps against representative product pairs,
+- **decide how user `device_preferences.priorities` weight the verdict.** Until
+  then every measured factor weighs equally (v3); do not reintroduce priority
+  weighting without a group decision,
 - decide whether weights should vary per product category,
 - bump `scoring-version` whenever any of the above changes.
 
