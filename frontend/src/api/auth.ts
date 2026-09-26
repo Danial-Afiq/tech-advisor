@@ -3,7 +3,7 @@ import { clearSession, setSession } from "./session";
 import type { Session } from "./session";
 
 /** `POST /api/auth/login` response (backend `dto/LoginResponse.java`). */
-type LoginResponse = { token: string; tokenType: string; expiresIn: number };
+type LoginResponse = { token: string; tokenType: string; expiresIn: number; role: "USER" | "ADMIN";};
 
 /** `POST /api/auth/register` response (backend `dto/UserResponse.java`). */
 export type UserResponse = {
@@ -22,7 +22,7 @@ export async function signIn(email: string, password: string): Promise<Session> 
     body: { email, password },
     auth: false,
   });
-  const session = { token: response.token, email: email.trim().toLowerCase() };
+  const session = { token: response.token, email: email.trim().toLowerCase(), role: response.role,};
   setSession(session);
   return session;
 }

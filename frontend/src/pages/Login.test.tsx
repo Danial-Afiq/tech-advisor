@@ -32,7 +32,7 @@ describe("Login page", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(json(201, { id: 2, email: "new@example.com" }))
-      .mockResolvedValueOnce(json(200, { token: "t", tokenType: "Bearer", expiresIn: 3600 }));
+      .mockResolvedValueOnce(json(200, { token: "t", tokenType: "Bearer", expiresIn: 3600, role: "USER" }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -46,7 +46,59 @@ describe("Login page", () => {
       expect.stringMatching(/\/api\/auth\/register$/),
       expect.stringMatching(/\/api\/auth\/login$/),
     ]);
-    expect(getSession()).toEqual({ token: "t", email: "new@example.com" });
+    expect(getSession()).toEqual({ token: "t", email: "new@example.com", role: "USER" });
+  });
+
+  it("routes an admin to the manual ingestion page after logging in", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        json(200, {
+          token: "admin-token",
+          tokenType: "Bearer",
+          expiresIn: 3600,
+          role: "ADMIN",
+        })
+      )
+    );
+
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={["/login"]}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route
+            path="/IngestionAdmin"
+            element={<div>Manual Ingestion Page</div>}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await user.type(
+      screen.getByLabelText("Email"),
+      "admin@example.com"
+    );
+
+    await user.type(
+      screen.getByLabelText(/^Password/),
+      "password123"
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Log in" })
+    );
+
+    expect(
+      await screen.findByText("Manual Ingestion Page")
+    ).toBeInTheDocument();
+
+    expect(getSession()).toEqual({
+      token: "admin-token",
+      email: "admin@example.com",
+      role: "ADMIN",
+    });
   });
 
   it("shows the backend's error on a failed log in", async () => {
