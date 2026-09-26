@@ -1978,7 +1978,9 @@ Deliberate boundaries:
 - **The maturity gate (§8.3) is still not implemented.** Nothing in this package
   checks evidence maturity before spending a call.
 - **No trigger.** No `@Scheduled`, no controller, no HTTP surface. The scheduled job
-  that will drive this calls `RecommendationService.assessAndPersist`.
+  that will drive this calls `DeterministicRecommendationService.evaluateAllDevices()`
+  (§18.11) and then `RecommendationService.assessAndPersist` for the candidates
+  worth assessing.
 - **No JPA.** `spring-boot-starter-data-jpa` remains on the classpath and unused;
   this package follows the `JdbcTemplate` precedent set by `RunStore` rather than
   introducing the first `@Entity` for one write-once table.
@@ -2169,6 +2171,17 @@ supersede-and-insert helper.
 Worth-assessing rows (verdict other than `NO_MEANINGFUL_CHANGE`) are expected to be superseded by the AI
 step's `assessAndPersist` row once the trigger ticket wires it, so a full cycle
 leaves a deterministic row and an AI row in history for those candidates.
+
+**Batch entry point for the trigger.** `DeterministicRecommendationService.evaluateAllDevices()`
+is the method the scheduled/controller trigger is meant to call. It evaluates every
+device from `UserDeviceRepository.findEvaluableDeviceIds()` - current, linked to a
+catalogue product, with a `device_preferences` row - in id order, each through
+`evaluateAndPersist`. It is deliberately not `@Transactional`: every device commits
+on its own, and any exception is caught per device, logged and returned in
+`BatchRun.failed` so one bad device cannot stop the rest. A failed device keeps its
+previous rows. Devices that are not evaluable are never attempted, and their
+existing rows are not touched by the run. It does not yet hand `worthAssessing()`
+to the AI step; that belongs with the trigger ticket.
 
 Test: `DeterministicRecommendationPersistenceTest` (real PostgreSQL, rolled back).
 

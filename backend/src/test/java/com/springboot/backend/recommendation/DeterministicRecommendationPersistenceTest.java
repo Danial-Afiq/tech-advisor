@@ -6,6 +6,7 @@ import com.springboot.backend.recommendation.classification.TierMapper;
 import jakarta.persistence.EntityManager;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -195,6 +196,59 @@ class DeterministicRecommendationPersistenceTest {
 
         assertEquals(1, rowCount(unrelated, "ACTIVE"),
                 "a candidate missing from this device's shortlist says nothing about another device");
+    }
+
+    @Test
+    void aBatchRunEvaluatesEveryEvaluableDevice() {
+        Long flagship = candidate("Galaxy S25 Ultra", "1099.00", 5500, 16, 144, 180, 512, "9200");
+        Long secondOwned = product("Pixel 8");
+        phone(secondOwned, 4500, 8, 120, 190, 128);
+        Long secondDevice = device(secondOwned);
+
+        DeterministicRecommendationService.BatchRun run = service.evaluateAllDevices();
+
+        assertTrue(run.failed().isEmpty(), run.failed().toString());
+        assertEquals(
+                List.of(userDeviceId, secondDevice),
+                run.completed().stream().map(c -> c.evaluation().userDeviceId()).toList(),
+                "every device, in id order");
+        // One user, one candidate: the partial unique index keeps a single ACTIVE
+        // row, so the second device's run supersedes the first device's.
+        assertEquals(1, rowCount(flagship, "ACTIVE"));
+    }
+
+    @Test
+    void aBatchRunCarriesOnPastADeviceThatFails() {
+        candidate("Galaxy S25", "1000.00", 5000, 12, 120, 200, 256, "8000");
+        // A second device whose owned phone has no spec sheet cannot be evaluated.
+        Long broken = device(product("Nothing Phone 1"));
+
+        DeterministicRecommendationService.BatchRun run = service.evaluateAllDevices();
+
+        assertEquals(1, run.completed().size());
+        assertEquals(userDeviceId, run.completed().get(0).evaluation().userDeviceId());
+        assertTrue(run.failed().containsKey(broken), run.failed().toString());
+        assertTrue(run.failed().get(broken).contains("No specifications"), run.failed().get(broken));
+    }
+
+    @Test
+    void aBatchRunSkipsDevicesThePipelineCannotEvaluate() {
+        // No preferences.
+        db.update("INSERT INTO user_devices (user_id, product_id, custom_name) VALUES (?, ?, 'no prefs')",
+                userId, product("Pixel 7"));
+        // Not current any more.
+        Long retired = device(product("Pixel 6"));
+        db.update("UPDATE user_devices SET is_current = false WHERE id = ?", retired);
+        // No catalogue link.
+        Long unlinked = db.queryForObject(
+                "INSERT INTO user_devices (user_id, custom_name) VALUES (?, 'unlisted') RETURNING id",
+                Long.class, userId);
+        db.update("INSERT INTO device_preferences (user_device_id, budget) VALUES (?, 1000.00)", unlinked);
+
+        DeterministicRecommendationService.BatchRun run = service.evaluateAllDevices();
+
+        assertEquals(1, run.completed().size(), "only the seeded device is evaluable");
+        assertTrue(run.failed().isEmpty(), "unevaluable devices are never attempted, so never fail");
     }
 
     // --- fixtures ---------------------------------------------------------

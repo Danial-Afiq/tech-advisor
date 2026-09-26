@@ -3,13 +3,17 @@ package com.springboot.backend.recommendation;
 import com.springboot.backend.recommendation.classification.TierMapper;
 import com.springboot.backend.recommendation.classification.UpgradeClassification;
 import com.springboot.backend.repository.CandidateProduct;
+import com.springboot.backend.repository.UserDeviceRepository;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -25,7 +29,8 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code ai_model} and {@code prompt_version} stay null for the same reason,
  * and {@code reasoning} is a Java template rather than model prose.
  *
- * <p>No trigger: nothing schedules or exposes this yet.
+ * <p>No trigger: nothing schedules or exposes this yet. {@link #evaluateAllDevices()}
+ * is the entry point the trigger is meant to call.
  */
 @Service
 public class DeterministicRecommendationService {
@@ -36,15 +41,53 @@ public class DeterministicRecommendationService {
             TierMapper.WORTH_CONSIDERING, "Worth considering",
             TierMapper.STRONG_UPGRADE_CANDIDATE, "Strong upgrade candidate");
 
+    private static final Logger LOG = LoggerFactory.getLogger(DeterministicRecommendationService.class);
+
     private final CandidateEvaluationService evaluationService;
     private final RecommendationRepository repository;
+    private final UserDeviceRepository userDeviceRepository;
     private final JsonMapper json = JsonMapper.builder().findAndAddModules().build();
 
     public DeterministicRecommendationService(
-            CandidateEvaluationService evaluationService, RecommendationRepository repository) {
+            CandidateEvaluationService evaluationService,
+            RecommendationRepository repository,
+            UserDeviceRepository userDeviceRepository) {
 
         this.evaluationService = evaluationService;
         this.repository = repository;
+        this.userDeviceRepository = userDeviceRepository;
+    }
+
+    /**
+     * One full deterministic run: every evaluable device (current, linked to a
+     * catalogue product, with preferences), each through
+     * {@link #evaluateAndPersist}. This is what the trigger calls.
+     *
+     * <p>Deliberately not {@code @Transactional}: each device commits on its
+     * own, so one device's failure neither rolls back nor blocks the others.
+     * Any exception is caught per device, logged and reported in the result -
+     * a batch that dies on the first bad device would leave every later user
+     * with stale recommendations. Nothing is written for a failed device, so its
+     * previous rows stand as they were.
+     */
+    public BatchRun evaluateAllDevices() {
+        List<Long> deviceIds = userDeviceRepository.findEvaluableDeviceIds();
+
+        List<PersistedEvaluation> completed = new ArrayList<>();
+        Map<Long, String> failed = new LinkedHashMap<>();
+
+        for (Long deviceId : deviceIds) {
+            try {
+                completed.add(evaluateAndPersist(deviceId));
+            } catch (RuntimeException e) {
+                LOG.error("Deterministic evaluation failed for device {}", deviceId, e);
+                failed.put(deviceId, e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+        }
+
+        LOG.info("Deterministic run finished: {} devices evaluated, {} failed",
+                completed.size(), failed.size());
+        return new BatchRun(completed, failed);
     }
 
     /**
@@ -151,4 +194,17 @@ public class DeterministicRecommendationService {
      * @param deleted    rows removed for candidates no longer shortlisted
      */
     public record PersistedEvaluation(CandidateEvaluation evaluation, int saved, int deleted) {}
+
+    /**
+     * @param completed one entry per device that was evaluated and persisted,
+     *                  in device-id order
+     * @param failed    device id to the reason it could not be evaluated
+     */
+    public record BatchRun(List<PersistedEvaluation> completed, Map<Long, String> failed) {
+
+        public BatchRun {
+            completed = List.copyOf(completed);
+            failed = Collections.unmodifiableMap(new LinkedHashMap<>(failed));
+        }
+    }
 }
