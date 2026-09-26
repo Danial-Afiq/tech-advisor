@@ -1,7 +1,16 @@
-package com.springboot.backend.ingestion.searchapi;
+package com.springboot.backend.ingestion.reviews;
 
-import com.springboot.backend.ingestion.*;
-import com.springboot.backend.ingestion.reviews.*;
+import com.springboot.backend.ingestion.config.IngestionSettings;
+import com.springboot.backend.ingestion.core.IngestionFailure;
+import com.springboot.backend.ingestion.core.IngestionSink;
+import com.springboot.backend.ingestion.core.Payload;
+import com.springboot.backend.ingestion.core.SourceContext;
+import com.springboot.backend.ingestion.searchapi.ProductMatcher;
+import com.springboot.backend.ingestion.searchapi.ReviewNormalizer;
+import com.springboot.backend.ingestion.searchapi.SearchApiClient;
+import com.springboot.backend.ingestion.searchapi.SearchApiRepository;
+import com.springboot.backend.ingestion.searchapi.SearchApiSettings;
+import com.springboot.backend.ingestion.searchapi.SearchApiSource;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import java.time.*;

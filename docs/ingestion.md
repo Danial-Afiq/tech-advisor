@@ -28,6 +28,11 @@ Every `IngestionSource` identifies itself and implements `ingest(context, output
 
 An RSS article is not forced into specification fields. Sources offering the same type translate to the same body. A source can emit several types. Review collection preserves evidence; sentiment inference belongs downstream. Product resolution and type-specific domain validation remain the sink's responsibility.
 
+The Java packages follow the same responsibilities: `api` owns HTTP endpoints,
+`core` owns source/sink execution contracts, `run` owns persisted runs and scheduling,
+`config` owns Spring configuration, `searchapi` owns provider workflow, `reviews` owns
+review embedding/persistence, and `simulation` owns demo fixtures.
+
 ## Adding an RSS source
 
 For a feed such as Hackfeed, implement an adapter to fetch the configured feed and translate entries into `Article` bodies. Verify the actual feed endpoint and permission to use it when adding that source; no endpoint is assumed here.
@@ -35,7 +40,11 @@ For a feed such as Hackfeed, implement an adapter to fetch the configured feed a
 This compilable adapter skeleton shows the integration boundary. Supply a secure RSS parser and an article sink as separate Spring beans:
 
 ```java
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.rss;
+
+import com.springboot.backend.ingestion.core.IngestionSource;
+import com.springboot.backend.ingestion.core.Payload;
+import com.springboot.backend.ingestion.core.SourceContext;
 
 import java.net.URI;
 import java.time.Instant;
@@ -76,17 +85,15 @@ Then add `hackfeed-rss` to `INGESTION_ENABLED_SOURCES`, configure its feed URL, 
 - One global pipeline claim; sources run sequentially. Admin/scheduled requests share cooldowns.
 - Each source has a 60-second execution budget, 1,000 emitted-item limit, at most 10 HTTP attempts, at least one second between requests, a five-second connect timeout and 20-second request timeout. HTTP response bodies are capped at 1 MiB.
 - HTTP 429/503 receive at most two retries. Long Retry-After values defer the source in persistent coordinator state instead of sleeping indefinitely. A completed source uses its configured cooldown (15 minutes by default); transport/timeouts use one minute; validation/no-match failures use none. Other failures retain the configured cooldown. Demo sources use zero cooldown.
-- SearchAPI overrides the application cooldown to zero for completed runs and local transport failures, so admins can ingest different products consecutively. Provider-directed `Retry-After` still applies.
+- A source may override its local cooldown. Provider-directed `Retry-After` still applies.
 - Adapters must use `SourceContext.get` and call `check()` while processing. On cancellation or ownership loss, stop. The HTTP helper closes responses and cancels its client when the source budget expires. The source executor has no backlog and only one thread, limiting damage from an adapter ignoring interruption.
 - Validation failures increment rejected/error counters and allow later items to proceed. Source exceptions produce bounded sanitized application stack frames; messages, raw response bodies and credentials are excluded. Later sources still execute.
 - Duplicate detection in the runner covers repeated IDs of the same type within one source run. Cross-run deduplication belongs in the durable typed sink. Demo receipts intentionally persist again on each new demo run.
 
 Limits currently live in `SourceContext` and `IngestionOrchestrator`; adapt them deliberately with tests when a real source needs a different policy. A Java process cannot forcibly stop arbitrary code that ignores interruption, and it cannot promise exactly-once external effects during a crash. Do not implement adapters with independent executors or irreversible external actions.
 
-SearchAPI's sink accepts one product batch per payload. Run counters count batches;
-query the review tables for review counts. Its context-aware sink checks ownership
-around the embedding call and before commit. SourceContext authenticated GETs retain
-all existing limits and validate the exact trusted credential destination host.
+Context-aware sinks check ownership around slow work and before commit. Authenticated
+GETs retain all limits and validate the exact trusted credential destination host.
 
 ## Scheduling and recovery
 
@@ -125,23 +132,9 @@ ORDER BY created_at DESC;
 
 ## Admin access and UI
 
-For a named SearchAPI import, check **SearchAPI customer reviews**, enter the brand
-and full model name (for example **Apple iPhone 16 Pro**), click **Find matching
-products**, select one validated SearchAPI identity, then click **Run now**. Product
-tokens remain server-only. The worker revalidates the selected external product ID
-before transactionally creating an unknown phone's VERIFIED `products` row, `phone`
-row and external mapping. A missing/stale selection or no match creates nothing.
-Known ineligible catalogue rows remain rejected.
-The Product column records the requested or resolved canonical name.
-
-The existing run request accepts optional `productName`; omit it to keep source-default
-selection. When supplied it requires SearchAPI among the enabled selected sources and
-an `externalProductId` returned by the candidate endpoint.
-Resolved product ID/name, or the new-product discovery name with a null ID, are durable
-run metadata together with the selected external ID and are part of idempotency checking.
-Changing the product with the same idempotency key returns 409. SearchAPI validates
-the product again before fetching, so deleted, renamed or unverified products fail
-instead of silently falling back to another phone. Existing source cooldowns still apply.
+The panel supports the named SearchAPI product picker without changing the generic run
+contract. See [SearchAPI review ingestion](searchapi-review-ingestion.md) for matching,
+selection, product creation, provider calls, and troubleshooting.
 
 The panel is at `/admin/ingestion`. It displays source choices, optional reason, next scheduled time and recent results. Requests are asynchronous (`202` plus a Location header). The browser polls results, handles conflicts and retains an idempotency key for retrying a failed submission with the same body. Server admission also blocks overlapping requests, including from different browser tabs.
 
@@ -164,8 +157,6 @@ cd ..
 ```
 
 Tests intentionally require a database name ending `_test`; they delete ingestion records only in that isolated test database. CI uses `techadvisor_test`. Set `JAVA_HOME` to your Java 21 JDK directory before running the demo script. It requires a database ending `_demo`, starts a backend on localhost:18087, runs success and partial-failure cases, verifies shutdown, restarts the backend, retrieves both persisted results, and writes `docs/examples/ingestion-demo-results.json`. It restores its environment and stops only its own backend process. It generates an ephemeral password when none is supplied. Re-running adds new demo history.
-
-Verification on 2026-09-16: 14 backend tests passed, backend packaging passed, 3 frontend tests passed, and frontend build/lint passed. The recorded manual success run accepted 3 payloads in 240 ms with 0 exception stacks; the partial-failure run accepted 3 in 125 ms with 1 exception stack. Both were retrieved after an actual backend shutdown/restart and checked directly in PostgreSQL. Browser visual verification could not run because the installed browser runtime rejected its bootstrap dependency; the admin flow was covered by component tests and the backend API demo.
 
 For interactive UI use, start the backend yourself with `POSTGRES_DB=techadvisor_ingestion_demo`, `SPRING_PROFILES_ACTIVE=ingestion-demo` and an `INGESTION_DEMO_PASSWORD` of at least 12 characters. In another terminal:
 

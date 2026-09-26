@@ -1,4 +1,4 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.config;
 
 import java.time.Clock;
 import org.springframework.context.annotation.*;

@@ -1,5 +1,12 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.api;
 
+import com.springboot.backend.ingestion.config.IngestionSettings;
+import com.springboot.backend.ingestion.core.IngestionFailure;
+import com.springboot.backend.ingestion.core.IngestionOrchestrator;
+import com.springboot.backend.ingestion.core.SourceContext;
+import com.springboot.backend.ingestion.core.SourceRegistry;
+import com.springboot.backend.ingestion.run.RunLog;
+import com.springboot.backend.ingestion.run.RunStore;
 import java.net.URI;
 import java.security.Principal;
 import java.time.Clock;
@@ -9,10 +16,9 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.dao.DataAccessException;
 import com.springboot.backend.ingestion.searchapi.SearchApiRepository;
-import com.springboot.backend.ingestion.searchapi.SearchApiClient;
 import com.springboot.backend.ingestion.searchapi.SearchApiSource;
-import com.springboot.backend.ingestion.searchapi.ProductName;
 import com.springboot.backend.ingestion.searchapi.ProductMatcher;
+import com.springboot.backend.ingestion.searchapi.ProductMatcher.ProductName;
 import org.springframework.web.server.ResponseStatusException;
 
 @RestController
@@ -23,11 +29,11 @@ public class IngestionController {
     private final SourceRegistry registry;
     private final IngestionSettings settings;
     private final SearchApiRepository products;
-    private final SearchApiClient searchApi;
+    private final SearchApiSource searchApi;
     private final Clock clock;
     public IngestionController(IngestionOrchestrator runner, RunStore store, SourceRegistry registry,
                                IngestionSettings settings, SearchApiRepository products,
-                               SearchApiClient searchApi, Clock clock) {
+                               SearchApiSource searchApi, Clock clock) {
         this.runner = runner; this.store = store; this.registry = registry; this.settings = settings;
         this.products = products; this.searchApi = searchApi; this.clock = clock;
     }
@@ -49,8 +55,7 @@ public class IngestionController {
                     "Enter both the smartphone brand and full model name.");
         }
         try (var context = new SourceContext(clock, () -> {})) {
-            var candidates = ProductMatcher.candidates(requested.brand(), requested.model(),
-                    searchApi.shopping(context, requested.canonicalName()));
+            var candidates = searchApi.findCandidates(context, requested);
             if (candidates.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "No matching smartphone was found. Check the brand and full model name.");
             return candidates;

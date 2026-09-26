@@ -1,5 +1,7 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.core;
 
+import com.springboot.backend.ingestion.run.RunLog;
+import com.springboot.backend.ingestion.run.RunStore;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;

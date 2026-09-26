@@ -1,6 +1,9 @@
 package com.springboot.backend.ingestion.reviews;
 
-import com.springboot.backend.ingestion.*;
+import com.springboot.backend.ingestion.core.IngestionSink;
+import com.springboot.backend.ingestion.core.IngestionSource;
+import com.springboot.backend.ingestion.core.Payload;
+import com.springboot.backend.ingestion.core.SourceContext;
 import com.springboot.backend.ingestion.searchapi.SearchApiSource;
 import java.sql.Timestamp;
 import java.util.*;
@@ -13,7 +16,6 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Component
 public class ReviewBatchSink implements IngestionSink {
-    public static final String PROVIDER = "SEARCHAPI_GOOGLE_SHOPPING";
     private final JdbcTemplate db;
     private final ReviewEmbeddingClient embeddings;
     private final TransactionTemplate transaction;
@@ -35,7 +37,7 @@ public class ReviewBatchSink implements IngestionSink {
         Set<String> existing = new HashSet<>(db.query("""
                 SELECT external_fingerprint FROM review_documents
                 WHERE product_id=? AND provider=?
-                """, (r, n) -> r.getString(1), batch.productId(), PROVIDER));
+                """, (r, n) -> r.getString(1), batch.productId(), SearchApiSource.PROVIDER));
         var fresh = batch.reviews().stream().filter(r -> !existing.contains(r.fingerprint())).toList();
         if (fresh.isEmpty()) return Result.DUPLICATE;
         check.run();
@@ -62,7 +64,7 @@ public class ReviewBatchSink implements IngestionSink {
                         ON CONFLICT (product_id,provider,external_fingerprint) DO NOTHING RETURNING id
                         """, (r, n) -> r.getLong(1), batch.productId(),
                         "Google Shopping reviews via SearchAPI / " + review.sourceDomain(), review.title(),
-                        Timestamp.from(review.retrievedAt()), PROVIDER, review.fingerprint(), metadata);
+                        Timestamp.from(review.retrievedAt()), SearchApiSource.PROVIDER, review.fingerprint(), metadata);
                 if (ids.isEmpty()) continue;
                 String vector = vectors.vectors().get(i).stream().map(Object::toString).collect(Collectors.joining(",", "[", "]"));
                 db.update("""

@@ -1,7 +1,8 @@
 package com.springboot.backend.ingestion.searchapi;
 
-import com.springboot.backend.ingestion.*;
-import static com.springboot.backend.ingestion.IngestionFailure.Code.*;
+import com.springboot.backend.ingestion.core.IngestionFailure;
+import com.springboot.backend.ingestion.core.SourceContext;
+import static com.springboot.backend.ingestion.core.IngestionFailure.Code.*;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;

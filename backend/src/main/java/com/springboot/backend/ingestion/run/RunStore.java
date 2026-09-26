@@ -1,5 +1,7 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.run;
 
+import com.springboot.backend.ingestion.config.IngestionSettings;
+import com.springboot.backend.ingestion.core.IngestionSource;
 import java.time.*;
 import java.util.*;
 import java.util.function.Function;

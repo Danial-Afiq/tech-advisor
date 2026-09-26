@@ -1,6 +1,6 @@
 package com.springboot.backend.ingestion.searchapi;
 
-import com.springboot.backend.ingestion.Payload;
+import com.springboot.backend.ingestion.core.Payload;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;

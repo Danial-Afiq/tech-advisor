@@ -1,4 +1,4 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.core;
 
 import java.math.BigDecimal;
 import java.net.URI;

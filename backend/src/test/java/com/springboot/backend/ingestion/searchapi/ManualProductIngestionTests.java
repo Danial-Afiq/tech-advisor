@@ -1,6 +1,9 @@
 package com.springboot.backend.ingestion.searchapi;
 
-import com.springboot.backend.ingestion.*;
+import com.springboot.backend.ingestion.core.IngestionFailure;
+import com.springboot.backend.ingestion.core.SourceContext;
+import com.springboot.backend.ingestion.run.RunLog;
+import com.springboot.backend.ingestion.run.RunStore;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.*;

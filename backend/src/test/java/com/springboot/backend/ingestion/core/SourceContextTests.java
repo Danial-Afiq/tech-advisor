@@ -1,4 +1,4 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.core;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;

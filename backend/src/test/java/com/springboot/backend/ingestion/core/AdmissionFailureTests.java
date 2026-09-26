@@ -1,5 +1,7 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.core;
 
+import com.springboot.backend.ingestion.config.IngestionSettings;
+import com.springboot.backend.ingestion.run.RunStore;
 import java.time.Clock;
 import java.util.List;
 import org.junit.jupiter.api.Test;

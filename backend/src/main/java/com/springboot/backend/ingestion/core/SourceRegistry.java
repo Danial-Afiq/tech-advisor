@@ -1,5 +1,6 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.core;
 
+import com.springboot.backend.ingestion.config.IngestionSettings;
 import java.util.*;
 import org.springframework.stereotype.Component;
 

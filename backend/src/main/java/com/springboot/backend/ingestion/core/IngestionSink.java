@@ -1,4 +1,4 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.core;
 
 /** A sink must durably accept/upsert before returning ACCEPTED. No production no-op sink. */
 public interface IngestionSink {

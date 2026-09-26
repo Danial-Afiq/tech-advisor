@@ -1,7 +1,12 @@
 package com.springboot.backend.ingestion.searchapi;
 
-import com.springboot.backend.ingestion.*;
-import static com.springboot.backend.ingestion.IngestionFailure.Code.*;
+import com.springboot.backend.ingestion.config.IngestionSettings;
+import com.springboot.backend.ingestion.core.IngestionFailure;
+import com.springboot.backend.ingestion.core.IngestionSource;
+import com.springboot.backend.ingestion.core.Payload;
+import com.springboot.backend.ingestion.core.SourceContext;
+import com.springboot.backend.ingestion.searchapi.ProductMatcher.ProductName;
+import static com.springboot.backend.ingestion.core.IngestionFailure.Code.*;
 import java.time.Duration;
 import java.util.List;
 import java.util.function.Consumer;
@@ -13,6 +18,7 @@ import tools.jackson.databind.JsonNode;
 @EnableConfigurationProperties(SearchApiSettings.class)
 public class SearchApiSource implements IngestionSource {
     public static final String ID = "searchapi-google-product-reviews";
+    public static final String PROVIDER = "SEARCHAPI_GOOGLE_SHOPPING";
     private final SearchApiSettings settings;
     private final SearchApiRepository repository;
     private final SearchApiClient client;
@@ -24,6 +30,11 @@ public class SearchApiSource implements IngestionSource {
     }
     @Override public String sourceId() { return ID; }
     @Override public Duration cooldown() { return Duration.ZERO; }
+    public List<ProductMatcher.Candidate> findCandidates(SourceContext context, ProductName requested)
+            throws Exception {
+        return ProductMatcher.candidates(requested.brand(), requested.model(),
+                client.shopping(context, requested.canonicalName()));
+    }
     @Override public void ingest(SourceContext context, Consumer<Payload> output) throws Exception {
         boolean createdDuringRun = context.product() != null && context.product().productId() == null;
         var products = context.product() == null ? repository.products(settings.maxProductsPerRun())

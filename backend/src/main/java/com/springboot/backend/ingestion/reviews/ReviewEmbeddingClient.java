@@ -1,7 +1,7 @@
 package com.springboot.backend.ingestion.reviews;
 
-import com.springboot.backend.ingestion.IngestionFailure;
-import static com.springboot.backend.ingestion.IngestionFailure.Code.*;
+import com.springboot.backend.ingestion.core.IngestionFailure;
+import static com.springboot.backend.ingestion.core.IngestionFailure.Code.*;
 import java.util.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;

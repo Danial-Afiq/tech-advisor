@@ -1,7 +1,10 @@
 package com.springboot.backend.ingestion.searchapi;
 
-import com.springboot.backend.ingestion.*;
-import static com.springboot.backend.ingestion.IngestionFailure.Code.*;
+import com.springboot.backend.ingestion.config.IngestionSettings;
+import com.springboot.backend.ingestion.core.IngestionFailure;
+import com.springboot.backend.ingestion.core.Payload;
+import com.springboot.backend.ingestion.core.SourceContext;
+import static com.springboot.backend.ingestion.core.IngestionFailure.Code.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import java.net.URI;

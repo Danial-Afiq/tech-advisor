@@ -1,399 +1,249 @@
-# SearchAPI customer reviews into pgvector
+# SearchAPI customer-review ingestion
 
-This slice attaches owner evidence to canonical VERIFIED smartphones. A named admin
-run may also create the canonical product and phone subtype after SearchAPI validates
-the provider identity selected by the admin. It does not choose recommendation candidates, score upgrades
-or call an LLM. No SearchAPI or embedding work runs on a recommendation request path.
+This source attaches owner reviews to canonical `VERIFIED` smartphones. In a named
+admin run, it can also create the canonical `products` and `phone` rows after the
+admin selects a SearchAPI identity and the worker validates that identity again.
+It does not score upgrades, select recommendation candidates, or call an LLM.
 
-## Implemented flow and persistence
+## How the flow works
 
-`admin ingestion run -> SearchApiSource -> canonical products ORDER BY id -> token
-cache/discovery -> most_relevant + most_recent -> normalize/filter/dedupe ->
-ReviewBatch -> ReviewBatchSink -> FastAPI /internal/embed -> transactional
-review_documents + review_chunks -> existing PgVectorStore`.
+```text
+Admin run
+  -> SearchApiSource
+  -> product-token cache or Google Shopping discovery
+  -> Google Product Reviews: most_relevant + most_recent
+  -> ReviewNormalizer
+  -> ReviewBatchSink
+  -> FastAPI POST /internal/embed
+  -> review_documents + review_chunks
+```
 
-The adapter uses the existing source registry, runner, SourceContext, cooldown and
-sink. One product batch is one runner item: acceptance means the entire new batch
-has committed. Existing fingerprints are filtered before embedding. No external
-call occurs inside a database transaction; a failed embedding writes no corpus,
-and a failed insert rolls the entire batch back. Earlier successfully committed
-products remain if a later product fails. Mapping writes are independent cache
-updates and may survive a failed corpus write.
+The adapter uses the shared ingestion runner, request limits, run history, and
+idempotency rules described in [ingestion.md](ingestion.md). One product batch is
+one runner payload. Existing fingerprints are removed before embedding. All
+embedding work finishes before the database transaction starts; an embedding
+failure writes nothing, and a database failure rolls back the whole batch.
 
-V7 adds `external_product_mapping` keyed by product/provider/gl/hl/location, plus
-nullable `review_documents.provider` and `external_fingerprint`, JSONB `metadata`
-and a unique external-identity index. No old migration changes. Existing demo
-documents and `ai/scripts/ingest.py` remain compatible. No review tables are cleared.
+Flyway V7 adds `external_product_mapping` and external identity/provenance fields
+to `review_documents`. Do not rewrite V7 or earlier migrations. Existing review
+documents and the 512-dimensional pgvector schema remain compatible.
 
-Each accepted customer review gets one document and an index-0 chunk. The document
-contains the canonical product ID, provider, title, fingerprint, exact `ingested_at`
-and metadata allowlisting `source_domain`, `rating`, `raw_date`, `retrieved_at`.
-`source_name` is `Google Shopping reviews via SearchAPI / <domain>`; downstream
-source typing recognizes it as `USER_REVIEW`. `source_url` is NULL because no stable
-review URL is assumed. `published_at` is NULL; source date strings are never made
-into invented dates. Username/avatar/profile fields and raw JSON are discarded.
+Each accepted review becomes one `review_documents` row and one index-0
+`review_chunks` row. The document stores its canonical product ID, provider, title,
+fingerprint, ingestion time, and allowlisted metadata: source domain, rating, raw
+date, and retrieval time. Reviewer names, avatars, profiles, and raw provider JSON
+are discarded. `published_at` stays NULL when SearchAPI only provides a relative
+date. No stable review URL is assumed.
 
-FastAPI's protected `/internal/embed` accepts `{"texts":["..."]}` and returns
-`{"embedder":"minishlab/potion-retrieval-32M","dimension":512,"vectors":[[...]]}`.
-It uses the same cached configured embedder as `/assess`, including Model2Vec's
-batch method. It never constructs the LLM. Limits: 1–100 nonblank texts, each at
-most 8000 characters. Spring checks vector count, dimension, finite nonzero values
-and the expected vector-space identifier before writing. The returned model ID,
-not the selector `model2vec`, is stored on every chunk.
+## Product matching and provider requests
 
-## Matching, normalization and quota
+The source ID is `searchapi-google-product-reviews`; the stored provider value is
+`SEARCHAPI_GOOGLE_SHOPPING`. SearchAPI is called with Bearer authorization and the
+configured `gl`, `hl`, and `location` values. The defaults are Singapore, English,
+and `sg`.
 
-Matching requires canonical brand/model tokens and contiguous ordered model text.
-Extra words must be known storage/color/carrier/device suffixes, with core tokens
-comprising at least 40% of the title. Accessories, refurbished/used phones, unknown
-suffixes, repeated core tokens, conflicting variants (e.g. Pro Max vs Pro), and
-missing brand/model tokens are rejected. When valid results contain variants, the
-identity whose title has the fewest extra suffix tokens wins for untargeted runs.
-Manual UI discovery instead returns up to 20 valid, provider-ranked identities for the
-admin to choose. The browser receives titles and external IDs only, never product tokens.
-The run re-fetches results and accepts only the chosen ID if it still passes the same
-matcher. Repeated listings of one Google ID use the same specificity rule, then title
-order as a stable tiebreaker.
+The matcher requires the canonical brand and ordered, contiguous model tokens.
+It rejects accessories, refurbished or used listings, conflicting models, repeated
+core tokens, and unknown suffixes. Untargeted ingestion chooses the valid identity
+with the fewest extra variant words and rejects equally specific distinct matches.
 
-Mappings record matched title, external product ID, token, canonical name, locale,
-status and match/verification times. Canonical-name/locale changes miss the cache.
-Only a clear HTTP 400 mentioning an invalid/expired `product_token` triggers cache
-invalidation and one rediscovery/retry. Generic 400, auth, quota and transport failures
-do not trigger discovery. A newly discovered invalid token is invalidated and fails.
-There is no cache TTL or refresh scheduler in this ticket.
+The admin picker returns at most 20 valid titles and external product IDs. Product
+tokens never reach the browser. The selected ID is stored in run metadata, included
+in idempotency checks, and revalidated by the worker before its token is cached.
+A missing or stale selection fails closed. A previously unknown phone is created
+only after this revalidation; an existing ineligible catalogue row is never promoted.
 
-Normalization is Unicode NFKC, trimming and whitespace collapsing, with literal
-prompt delimiters removed. Domain names are lowercased with `www.` removed; paths
-and profiles are not retained. Ratings must be numeric in [1,5]. Blank or shorter
-than 20-character text, narrowly recognizable shipping/store-only remarks, invalid
-domains/ratings, text over 8000 characters, titles over 500 and dates over 100 are
-discarded. Substantive product experiences remain. At most 100 unique reviews per
-product are retained, ordered by fingerprint, from the two returned pages.
+Mappings are scoped by product, provider, canonical name, `gl`, `hl`, and location.
+A canonical-name or locale change misses the cache. Only a clear HTTP 400 saying a
+cached `product_token` is invalid or expired causes invalidation and one rediscovery.
+A newly discovered invalid token fails without another loop. There is no token TTL.
 
-Fingerprint: SHA-256 over UTF-8 length-prefixed fields: canonical product ID,
-source domain, title, text and normalized decimal rating. Text fields use NFKC,
-whitespace normalization and `Locale.ROOT` lowercase. Dates, retrieval times and
-usernames never participate. Database uniqueness also protects concurrent reruns.
+Request use per product is fixed:
 
-Normal source-run quota: **3 successful searches uncached, 2 cached**, no pagination.
-The manual product picker adds one preview search, so a complete selected-product flow
-uses four successful searches when uncached.
-Default one product/run; configuration allows at most two. The existing HTTP rules
-still apply: 60-second source budget, ten total attempts, one-second pacing,
-five-second connect and 20-second request timeout, 1 MiB responses, bounded 429/503
-retries and provider-directed Retry-After deferral. Invalid-token recovery can add
-searches within the same cap. SearchAPI has no application-imposed cooldown after
-success, transport failure, validation failure or no match, so consecutive manual
-product runs are allowed.
-No live SearchAPI request occurs in automated tests. Maven test configuration
-clears live source selection and credentials and disables scheduling.
+- cached token: two review searches;
+- uncached token: one Shopping discovery plus two review searches;
+- named admin flow: one additional Shopping preview search.
 
-Manual UI runs can override that default: check **SearchAPI customer reviews**, enter
-the brand followed by the full model, click **Find matching products**, and select one
-result. Matching against the local catalogue ignores case and repeated whitespace.
-The selected external ID is durable run metadata and participates in idempotency.
-The worker re-fetches SearchAPI results and requires that exact ID to remain a valid
-brand/model match before caching its server-only token. Unknown names then create the
-VERIFIED product and phone subtype transactionally. Missing/stale selections and known
-ineligible products fail closed.
+There is no pagination. Invalid-token recovery may add the single rediscovery within
+the shared cap. Do not add preview, validation, or pagination calls without reviewing
+SearchAPI quota impact.
 
-To use the frontend after the local setup below, set root `.env`
-`VITE_INGESTION_DEMO=true` and `VITE_API_BASE_URL=http://localhost:18087`, then run
-`npm run dev` from `frontend/`. Open `http://localhost:5173/admin/ingestion`, connect
-with the demo admin password, check **SearchAPI customer reviews**, enter the name,
-click **Find matching products**, choose a result, and click **Run now**. If the checkbox is disabled, enable the source in the backend
-configuration and restart it. Only provider-directed Retry-After can defer another run.
-This replaces the helper in step 9 when using the UI; remaining SQL/retrieval checks
-are the same. No additional migration is required for the optional JSONB run metadata.
+`SourceContext` keeps the existing 60-second source budget, ten-attempt cap,
+one-second pacing, five-second connect timeout, 20-second request timeout, 1 MiB
+response limit, and bounded 429/503 retry handling. SearchAPI has no local application
+cooldown; a provider `Retry-After` deadline is still persisted and enforced.
 
-## Optional live smoke test — PowerShell, local only
+## Review normalization, deduplication, and embeddings
 
-Prerequisites: Docker Desktop, Java 21. Run commands from the repository root
-unless a step says otherwise. These examples use the local development PostgreSQL
-account `techadvisor` / `devpassword` and host port **5433**. If your existing volume
-has different credentials, substitute those local values throughout. This procedure
-uses a separate `techadvisor_searchapi_demo` database and leaves other databases alone.
+Review text uses Unicode NFKC normalization, collapsed whitespace, and removal of
+the prompt boundary strings. Ratings must be numeric from 1 to 5. The normalizer
+rejects blank or under-20-character text, narrowly identifiable logistics-only
+remarks, invalid domains or ratings, text over 8000 characters, titles over 500
+characters, and date strings over 100 characters.
 
-1. Sign in to [SearchAPI](https://www.searchapi.io/), obtain your dashboard API key,
-   and edit the **repo-root** `.env` (never a Vite-prefixed variable):
+At most 100 unique reviews are retained from the two provider result sets. The
+fingerprint is SHA-256 over length-prefixed normalized values for product ID, source
+domain, title, text, and decimal rating. Dates, retrieval time, and reviewer data are
+excluded. A database unique constraint also protects concurrent or repeated runs.
 
-   ```powershell
-   if (!(Test-Path .env)) { Copy-Item .env.example .env }
-   notepad .env
-   ```
+FastAPI's authenticated `POST /internal/embed` accepts 1-100 nonblank texts of at
+most 8000 characters. It returns the configured embedder name, dimension 512, and
+one vector per text. Spring rejects a different model name, dimension, vector count,
+non-finite component, or all-zero vector. The endpoint uses the retrieval embedder,
+does not initialize an LLM, and never writes to the database.
 
-   Set `SEARCHAPI_API_KEY` to your key privately. Keep one root `.env`; do not put
-   the key in shell command arguments, source, screenshots or this guide.
+## Configuration
 
-2. Set these other root `.env` values. Leave model-provider keys blank if desired;
-   this test calls no LLM. Preserve any other settings you use.
+Copy `.env.example` to the repository-root `.env` and set real secrets only there.
+The relevant values are:
 
-   ```dotenv
-   POSTGRES_DB=techadvisor_searchapi_demo
-   POSTGRES_USER=techadvisor
-   POSTGRES_PASSWORD=devpassword
-   DB_HOST=localhost
-   DB_PORT=5433
-   VECTOR_STORE=pgvector
-   EMBEDDER=model2vec
-   AI_INGESTION_EMBEDDER=minishlab/potion-retrieval-32M
-   AI_SERVICE_URL=http://localhost:8000
-   AI_PORT=8000
-   SEARCHAPI_GL=sg
-   SEARCHAPI_HL=en
-   SEARCHAPI_LOCATION=Singapore
-   SEARCHAPI_MAX_PRODUCTS_PER_RUN=1
-   INGESTION_SCHEDULING_ENABLED=false
-   INGESTION_ENABLED_SOURCES=searchapi-google-product-reviews
-   ```
+```dotenv
+SEARCHAPI_API_KEY=your-private-key
+SEARCHAPI_GL=sg
+SEARCHAPI_HL=en
+SEARCHAPI_LOCATION=Singapore
+SEARCHAPI_MAX_PRODUCTS_PER_RUN=1
 
-   Ensure `JWT_SECRET` is valid Base64 encoding at least 32 random bytes;
-   `AI_SERVICE_TOKEN` is a shared random value; `INGESTION_DEMO_PASSWORD` has at least
-   12 characters. If these are blank/absent, this snippet fills them without printing
-   their values (existing nonblank values are kept):
+INGESTION_ENABLED_SOURCES=searchapi-google-product-reviews
+INGESTION_SCHEDULING_ENABLED=false
 
-   ```powershell
-   $text = [IO.File]::ReadAllText((Join-Path $PWD '.env'))
-   foreach ($name in @('JWT_SECRET','AI_SERVICE_TOKEN','INGESTION_DEMO_PASSWORD')) {
-       if ($text -notmatch "(?m)^$name=\S+") {
-           $bytes = New-Object byte[] 32
-           $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-           $rng.GetBytes($bytes); $rng.Dispose()
-           $line = $name + '=' + [Convert]::ToBase64String($bytes)
-           if ($text -match "(?m)^$name=.*$") {
-               $text = [regex]::Replace($text, "(?m)^$name=.*$", $line)
-           } else { $text += "`r`n$line`r`n" }
-       }
-   }
-   [IO.File]::WriteAllText((Join-Path $PWD '.env'), $text)
-   ```
+AI_SERVICE_URL=http://localhost:8000
+AI_SERVICE_TOKEN=shared-private-token
+AI_INGESTION_EMBEDDER=minishlab/potion-retrieval-32M
+VECTOR_STORE=pgvector
+EMBEDDER=model2vec
 
-3. Start PostgreSQL and ensure the dedicated demo database exists. PostgreSQL's
-   `POSTGRES_DB` initialization does not recreate a database on an existing volume.
+VITE_INGESTION_DEMO=true
+VITE_API_BASE_URL=http://localhost:18087
+```
 
-   ```powershell
-   docker compose up -d postgres
-   @'
-   SELECT 'CREATE DATABASE techadvisor_searchapi_demo'
-   WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='techadvisor_searchapi_demo')
-   \gexec
-   '@ | docker exec -i tech-advisor-postgres psql -U techadvisor -d postgres -v ON_ERROR_STOP=1
-   ```
+`SEARCHAPI_MAX_PRODUCTS_PER_RUN` defaults to 1 and accepts at most 2. Enabling the
+source without `SEARCHAPI_API_KEY` fails startup. The demo password must be at least
+12 characters, `AI_SERVICE_TOKEN` must match between Spring and FastAPI, and the JWT
+secret must meet the normal backend requirements. Restart services after `.env`
+changes.
 
-4. Apply Flyway through the backend project, including pgvector V4, corpus V6 and V7.
-   The password shown here is the disposable local example, not a production secret.
+## Local run
 
-   ```powershell
-   cd backend
-   .\mvnw.cmd flyway:migrate '-Dflyway.url=jdbc:postgresql://localhost:5433/techadvisor_searchapi_demo' '-Dflyway.user=techadvisor' '-Dflyway.password=devpassword'
-   cd ..
-   docker exec tech-advisor-postgres psql -U techadvisor -d techadvisor_searchapi_demo -c 'SELECT version,success FROM flyway_schema_history ORDER BY installed_rank'
-   ```
+Use a separate database ending in `_demo`. The commands below assume the local
+credentials from `.env.example` and its host port 5434; substitute your configured
+values if they differ.
 
-   Expect successful versions 1–7. Do not alter old migrations to resolve a checksum
-   failure in a database created by another branch. Use this fresh demo database.
+```powershell
+docker compose up -d postgres
+@'
+SELECT 'CREATE DATABASE techadvisor_searchapi_demo'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='techadvisor_searchapi_demo')
+\gexec
+'@ | docker exec -i tech-advisor-postgres psql -U techadvisor -d postgres -v ON_ERROR_STOP=1
 
-5. Build/start FastAPI with the root `.env` configuration. The existing image build
-   bakes the 512-dimensional model; this may download model weights once, without
-   spending SearchAPI or LLM quota. Prewarm the embedder before the bounded run.
+cd backend
+.\mvnw.cmd flyway:migrate '-Dflyway.url=jdbc:postgresql://localhost:5434/techadvisor_searchapi_demo' '-Dflyway.user=techadvisor' '-Dflyway.password=devpassword'
+cd ..
+docker compose up -d --build ai
+Invoke-RestMethod http://localhost:8000/health
+```
 
-   ```powershell
-   docker compose up -d --build ai
-   Invoke-RestMethod http://localhost:8000/health
-   docker compose exec ai python -c 'from app.config import Settings; from app.retrieval.embedder import build_embedder; s=Settings(); e=build_embedder(s.embedder,s.embedding_dim,s.embedding_model_path); print(e.name,e.dim)'
-   ```
+Start Spring Boot in another terminal:
 
-   Expect `minishlab/potion-retrieval-32M 512`. This checks the baked model in a
-   separate process; the first endpoint call still initializes its cached wrapper.
+```powershell
+cd D:\SMU\Y2Sem1\CS203\Project\tech-advisor\backend
+$env:SPRING_PROFILES_ACTIVE = 'ingestion-demo'
+$env:SERVER_PORT = '18087'
+.\mvnw.cmd spring-boot:run
+```
 
-6. In another terminal, start Spring Boot on a separate local port. Flyway also
-   validates/applies migrations on startup. The demo profile binds localhost;
-   existing production admin routes remain denied.
+Then start the frontend with `npm run dev`, open
+`http://localhost:5173/admin/ingestion`, and follow this unchanged workflow:
 
-   ```powershell
-   cd D:\SMU\Y2Sem1\CS203\Project\tech-advisor\backend
-   $env:SPRING_PROFILES_ACTIVE = 'ingestion-demo'
-   $env:SERVER_PORT = '18087'
-   .\mvnw.cmd spring-boot:run
-   ```
+1. Sign in as the demo admin.
+2. Check **SearchAPI customer reviews**.
+3. Enter the brand and full model name.
+4. Select **Find matching products**.
+5. Choose one exact SearchAPI product.
+6. Select **Run now** and inspect the result/history.
 
-   Wait for startup, then `Invoke-RestMethod http://localhost:18087/actuator/health`
-   should return `UP`. If your shell exports conflicting source/DB settings, clear
-   those overrides or align them with `.env` before startup.
+The helper below instead starts an untargeted run against an existing eligible
+catalogue phone and polls it to completion:
 
-7. Seed one real model identity into this **local demo database only**. No catalogue
-   seed exists on main. The SQL refuses any database name other than this demo and
-   refuses a different eligible smartphone; it never changes existing canonical data.
+```powershell
+.\scripts\searchapi-smoke.ps1 -BaseUrl http://localhost:18087
+```
 
-   ```powershell
-   @'
-   BEGIN;
-   DO $$ BEGIN
-     IF current_database() <> 'techadvisor_searchapi_demo' THEN
-       RAISE EXCEPTION 'Local demo database required';
-     END IF;
-     IF EXISTS (SELECT 1 FROM products WHERE status='VERIFIED' AND category='SMARTPHONE'
-                AND (brand <> 'Apple' OR model_name <> 'iPhone 16 Pro')) THEN
-       RAISE EXCEPTION 'Use a fresh demo database with only the intended phone';
-     END IF;
-   END $$;
-   INSERT INTO products(brand,model_name,category,status)
-   VALUES ('Apple','iPhone 16 Pro','SMARTPHONE','VERIFIED')
-   ON CONFLICT (brand,model_name) DO NOTHING;
-   INSERT INTO phone(product_id)
-   SELECT id FROM products WHERE brand='Apple' AND model_name='iPhone 16 Pro'
-   ON CONFLICT DO NOTHING;
-   COMMIT;
-   SELECT id,brand,model_name,status,category FROM products ORDER BY id;
-   '@ | docker exec -i tech-advisor-postgres psql -U techadvisor -d techadvisor_searchapi_demo -v ON_ERROR_STOP=1
-   ```
+It handles Basic auth, CSRF, cookies, and a fresh idempotency key. It never reads or
+sends the SearchAPI key directly. A successful nonempty batch reports one processed
+runner payload even when the batch contains many reviews; query the review tables for
+the review count. An unchanged rerun reports a duplicate batch and writes no rows.
 
-   Record that product ID. No phone specifications or recommendation claims are
-   invented. SearchAPI may have no unambiguous SG listing/reviews for this model;
-   a visible no-match/ambiguous result is expected fail-closed behavior.
+## Verify stored reviews and vectors
 
-8. Confirm the root `.env` contains
-   `INGESTION_ENABLED_SOURCES=searchapi-google-product-reviews` and the backend was
-   started after that edit. The demo profile now honors this setting instead of
-   forcing simulated sources. Scheduling remains disabled.
+```powershell
+@'
+SELECT d.id,d.product_id,d.source_name,d.title,d.published_at,d.ingested_at,
+       d.external_fingerprint,d.metadata,c.chunk_index,c.chunk_text,c.embedder,
+       vector_dims(c.embedding) AS dimensions
+FROM review_documents d
+JOIN review_chunks c ON c.review_document_id=d.id
+WHERE d.provider='SEARCHAPI_GOOGLE_SHOPPING'
+ORDER BY d.id;
 
-9. Trigger the existing admin API using the checked-in helper:
+SELECT product_id,provider,gl,hl,location,matched_title,status,matched_at,last_verified_at
+FROM external_product_mapping;
+'@ | docker exec -i tech-advisor-postgres psql -U techadvisor -d techadvisor_searchapi_demo
+```
 
-   ```powershell
-   .\scripts\searchapi-smoke.ps1 -BaseUrl http://localhost:18087
-   ```
+Expect dimension 512, index 0, the full embedding model ID, and only the allowlisted
+metadata keys. The mapping query deliberately omits cached product tokens.
 
-   Enter username `demo-admin` and the root `.env` `INGESTION_DEMO_PASSWORD` when
-   prompted. The helper performs `GET /session` for CSRF/cookies, checks `/sources`,
-   posts `{"sources":["searchapi-google-product-reviews"],"reason":"Local SearchAPI review smoke test"}`
-   to `/api/admin/ingestion/runs` with a fresh `Idempotency-Key` and CSRF header, then
-   polls `/runs/{runId}`. It never reads/sends the SearchAPI key itself.
+For a read-only semantic and product-isolation check, replace the product ID:
 
-10. A new successful nonempty product batch shows `status: SUCCESS`,
-    `processedPayloadCount: 1`, `errorCount: 0`, and this source's `SUCCESS` result.
-    An unchanged rerun shows `duplicatePayloadCount: 1`, `processedPayloadCount: 0`.
-    Zero accepted and zero duplicate batches means no usable reviews were returned;
-    that is not proof of a populated corpus. Check the rows below.
+```powershell
+docker compose exec ai python -m scripts.verify_searchapi --product-id 1 --query 'battery life' --other-product-id 987654321
+```
 
-11. Verify corpus/provenance/vector state and profile-field omission:
+This script calls neither SearchAPI nor an LLM. It verifies that SearchAPI chunks for
+the chosen product can be retrieved and do not appear in another product's results.
+It complements `searchapi-smoke.ps1`, which checks the HTTP/admin ingestion workflow.
 
-    ```powershell
-    @'
-    SELECT d.id,d.product_id,d.source_name,d.title,d.published_at,d.ingested_at,
-           d.external_fingerprint,d.metadata,c.chunk_index,c.chunk_text,c.embedder,
-           c.embedding IS NOT NULL AS has_embedding,vector_dims(c.embedding) AS dims
-    FROM review_documents d JOIN review_chunks c ON c.review_document_id=d.id
-    WHERE d.provider='SEARCHAPI_GOOGLE_SHOPPING' ORDER BY d.id;
-    SELECT count(*) AS unexpected_metadata FROM review_documents d
-    WHERE provider='SEARCHAPI_GOOGLE_SHOPPING'
-      AND EXISTS (SELECT 1 FROM jsonb_object_keys(d.metadata) k
-                  WHERE k NOT IN ('source_domain','rating','raw_date','retrieved_at'));
-    SELECT product_id,provider,gl,hl,location,matched_title,status,matched_at,last_verified_at
-    FROM external_product_mapping;
-    '@ | docker exec -i tech-advisor-postgres psql -U techadvisor -d techadvisor_searchapi_demo
-    ```
+## Failures and troubleshooting
 
-    Expect NULL `published_at` for relative dates, `has_embedding=t`, `dims=512`,
-    the full model ID, index 0, and `unexpected_metadata=0`. No username/profile
-    columns or metadata are written; freeform review text itself remains evidence.
-    The mapping query deliberately does not display cached product tokens.
+- **Source disabled:** add the source ID to `INGESTION_ENABLED_SOURCES` and restart.
+- **No matching smartphone:** use brand plus the full model and choose a returned
+  valid identity; accessories and conflicting variants are deliberately rejected.
+- **Empty successful run:** SearchAPI returned no reviews that passed normalization.
+- **401/403:** check `SEARCHAPI_API_KEY`; provider messages and credentials are not
+  copied into run history.
+- **429/503 or deferred run:** wait until the provider `Retry-After` deadline.
+- **Embedding failure or model mismatch:** confirm FastAPI health, token, model ID,
+  and 512-dimensional configuration. No partial review batch is written.
+- **Flyway checksum mismatch:** use a fresh demo database; never edit an old migration.
+- **Database failure:** the review batch rolls back and existing evidence remains.
 
-12. Run real semantic retrieval (replace `1` with step 7's ID):
+The matcher is intentionally limited rather than a general catalogue resolver.
+Stable Google review IDs and publication dates are unavailable, edited review content
+becomes new evidence, and long accepted reviews remain a single chunk. Broad automatic
+new-product discovery, evidence maturity gates, mapping overrides, aggregate ratings,
+and scheduled catalogue refresh remain future work.
 
-    ```powershell
-    docker compose exec ai python -m scripts.verify_searchapi --product-id 1 --query 'battery life' --other-product-id 987654321
-    ```
+## Automated verification
 
-13. Expect JSON listing this product's SearchAPI chunk IDs, source and review text,
-    the actual embedder ID and `cross_product_leak: false`. Battery experiences
-    should rank near the top if present; live review content/rank is not guaranteed.
-    The command fails if it retrieves no SearchAPI evidence or if those IDs leak to
-    the unrelated product query. It directly uses the existing `PgVectorStore`.
+Automated tests mock SearchAPI and make no live LLM calls:
 
-14. Check counts, rerun step 9 immediately,
-    then repeat the counts. The helper reports the exact next allowed timestamp.
+```powershell
+cd backend
+.\mvnw.cmd verify
+cd ..\frontend
+npm test -- --run
+npm run build
+cd ..\ai
+.\.venv\Scripts\python.exe -m pytest
+```
 
-    ```powershell
-    docker exec tech-advisor-postgres psql -U techadvisor -d techadvisor_searchapi_demo -c "SELECT count(DISTINCT d.id) AS documents,count(c.id) AS chunks FROM review_documents d LEFT JOIN review_chunks c ON c.review_document_id=d.id WHERE d.provider='SEARCHAPI_GOOGLE_SHOPPING'"
-    # After the source's nextAllowedAt:
-    .\scripts\searchapi-smoke.ps1 -BaseUrl http://localhost:18087
-    docker exec tech-advisor-postgres psql -U techadvisor -d techadvisor_searchapi_demo -c "SELECT count(DISTINCT d.id) AS documents,count(c.id) AS chunks FROM review_documents d LEFT JOIN review_chunks c ON c.review_document_id=d.id WHERE d.provider='SEARCHAPI_GOOGLE_SHOPPING'"
-    ```
+The optional real-embedding Java smoke test is gated by `REVIEW_SMOKE_AI_URL` and
+`REVIEW_SMOKE_AI_TOKEN`. AI database tests require `TEST_DATABASE_URL` pointing to a
+database whose name ends in `_test`. Live SearchAPI verification remains a deliberate
+manual action because it consumes paid provider requests.
 
-    Identical reviews keep both counts unchanged and avoid embedding. Real newly
-    added/edited reviews may legitimately increase counts. A changed relative date
-    alone never changes identity. Live reruns consume two more searches when cached.
-
-15. Stop the local backend with Ctrl+C when finished. Keep scheduling disabled;
-    clear the source opt-in when returning to ordinary development. Restore your
-    normal root `.env` database selection when you want to use your regular database.
-
-## Failure behavior and remaining limits
-
-- No match/ambiguity/empty catalogue: sanitized reason in run errors, no corpus writes.
-- Empty or entirely filtered reviews: successful zero-payload run, no fabricated evidence.
-- Auth/malformed payload/HTTP errors/timeout: visible source failure, existing corpus intact.
-- 429/503: existing bounded retry/cooldown handling. Do not retry manually in a loop.
-- Embedding unavailable or bad space/dimension: visible failure, no partial batch.
-- DB failure: transaction rollback. Existing unrelated evidence stays intact.
-- Matcher suffix vocabulary is deliberately limited, not a general product resolver.
-- Stable Google review IDs/URLs are not assumed. Edited title/text/rating becomes
-  new evidence; old versions are retained. Dedupe does not merge different retailers.
-- Short reviews, unknown domains and unusually long text can be missed. Long accepted
-  reviews remain one chunk; the existing downstream prompt cap still applies.
-- Untargeted lowest-ID selection can starve later products; the named manual UI
-  selects a specific phone. Automatic refresh selection and scheduling
-  policy are explicitly future work; the existing generic runner schedule is unchanged.
-- Unknown publication dates cannot establish evidence maturity. No maturity-gate or
-  recommendation changes are made here.
-- First model loading and external latency still must fit the runner budget; keep
-  the model baked and the AI service healthy. Failure remains retryable/idempotent.
-- Human product-mapping overrides, aggregate ratings and a sentiment subsystem are
-  outside this ticket.
-
-## Verification evidence (24 September 2026)
-
-- Backend `mvnw verify`: 94 tests, 0 failures/errors, 1 skipped optional real-AI
-  smoke fixture; 93 passed and application packaging succeeded.
-- Optional `ReviewPersistenceTests#realEmbeddingSmokeFixture`: separately executed
-  successfully against a local FastAPI process and real baked Model2Vec. SearchAPI
-  alone was mocked. First run committed two documents/chunks; repeat returned DUPLICATE.
-- Real `scripts.verify_searchapi` returned the newly ingested battery review first
-  for `battery life` (test product 37, chunk 9), camera second (chunk 8), and no leak
-  into product 987654321. Test fixtures are local-only and cleaned after verification.
-- AI pytest: 112 passed, 1 skipped (no private root `.env` mounted in the isolated
-  test container). All eight pgvector integration tests ran with the real model.
-- Fresh-database `mvnw flyway:migrate` validated/applied all seven migrations.
-- Frontend unchanged; frontend tests/build were not run.
-- Zero live SearchAPI requests and zero LLM calls. Live provider behavior remains
-  an optional user-run check using the procedure above.
-
-Backend tests cover matching, cache/recovery, normalization, dates, profile omission,
-HTTP auth/localization/sanitized errors, batching, embedding contract checks,
-atomic persistence/rollback, cancellation, idempotency, selection and existing corpus.
-AI tests cover endpoint authentication, bounds, shared vectors, batch dispatch and
-sanitized failures, alongside the existing retrieval/assessment suites.
-
-For automated real-AI verification, set `REVIEW_SMOKE_AI_URL` and
-`REVIEW_SMOKE_AI_TOKEN`, run the single optional Java test, read
-`backend/target/searchapi-smoke-product.txt`, run the Python verifier for that ID,
-then delete only the `SearchApiTest` fixture products from the `_test` database.
-The fixture intentionally remains after that optional test so Python can inspect it.
-Ordinary Java tests never require the AI service. AI DB tests require
-`TEST_DATABASE_URL`; without it they explicitly skip. They reject a non-`_test` DB.
-
-Official contracts checked during implementation:
+Provider contract references:
 [Google Shopping](https://www.searchapi.io/docs/google-shopping) and
 [Google Product Reviews](https://www.searchapi.io/docs/google-product-reviews).
-
-### Named-product admin UI and variant picker (24 September 2026)
-
-The frontend now exposes the SearchAPI checkbox, a required smartphone name when
-checked, a **Find matching products** action, validated radio-button choices, inline
-server errors, and the canonical product in run history. The selected external ID is
-saved in existing run JSONB; no migration is required. Product tokens remain on the
-server. Tests verify safe candidate responses, exact selected-ID ingestion, stale or
-missing selection rejection, durable idempotency, and selection reset when the entered
-name changes. SearchAPI calls are mocked in automated tests; no paid API or LLM calls
-are made. The AI service code is unchanged.
-in this follow-up, so its previously recorded suite was not rerun.

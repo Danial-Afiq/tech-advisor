@@ -1,5 +1,6 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.core;
 
+import com.springboot.backend.ingestion.run.RunLog;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.http.*;

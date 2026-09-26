@@ -1,4 +1,4 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.config;
 
 import org.springframework.context.annotation.*;
 import org.springframework.core.annotation.Order;

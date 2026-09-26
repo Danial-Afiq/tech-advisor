@@ -1,4 +1,4 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.core;
 
 /** Only these code-owned reasons may cross the sanitized run-log boundary. */
 public final class IngestionFailure extends RuntimeException {

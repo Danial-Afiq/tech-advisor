@@ -1,6 +1,6 @@
-package com.springboot.backend.ingestion.searchapi;
+package com.springboot.backend.ingestion.reviews;
 
-import com.springboot.backend.ingestion.IngestionFailure;
+import com.springboot.backend.ingestion.core.IngestionFailure;
 import com.springboot.backend.ingestion.reviews.ReviewEmbeddingClient;
 import com.sun.net.httpserver.HttpServer;
 import static org.junit.jupiter.api.Assertions.*;

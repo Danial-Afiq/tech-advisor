@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 24 September 2026
+> **Last consolidated:** 26 September 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -1561,6 +1561,19 @@ recommendations
 
 A significant ingestion framework already exists on `main`.
 
+The backend ingestion code is grouped by responsibility:
+
+```text
+ingestion/
+├─ api/          # admin HTTP endpoints
+├─ config/       # Spring settings and security
+├─ core/         # orchestration, source/sink contracts, payloads and HTTP limits
+├─ run/          # persisted run state and scheduling
+├─ searchapi/    # SearchAPI matching, HTTP, mapping cache and workflow
+├─ reviews/      # review embeddings and transactional corpus persistence
+└─ simulation/   # demo sources and receipts
+```
+
 ## 16.1 Current normalized ingestion contract
 
 The runner supports typed payload bodies:
@@ -1742,40 +1755,24 @@ No ingestion-time LLM stance classification under the current plan.
 
 ## 17.4 SearchAPI owner reviews — implemented on `feat/searchapi-review-ingestion`
 
-The selected owner-review source for this slice is the documented SearchAPI API,
-using Bearer authorization, never scraping. Source ID: `searchapi-google-product-reviews`.
-It is opt-in via `INGESTION_ENABLED_SOURCES`; enabling it without a key fails at
-startup. Production admin access stays closed; local manual tests use `ingestion-demo`.
+The owner-review source is `searchapi-google-product-reviews`. It uses the documented
+SearchAPI endpoints with Bearer authentication and Singapore localisation; it does not
+scrape. It is opt-in, and enabling it without `SEARCHAPI_API_KEY` fails startup.
 
-Untargeted selection is VERIFIED SMARTPHONE products ordered by ID, default one per
-run (maximum two). Manual discovery returns validated candidate titles/external IDs;
-the admin-selected ID is persisted with the canonical `productName` and revalidated by
-the worker before its server-only token is cached. The first word is the brand and the
-remainder is the full model. Matching requires brand/model tokens and rejects
-accessory/used/refurbished and conflicting or unknown wording. Untargeted runs retain
-least-extra-suffix ranking and fail on equally specific distinct IDs.
+Manual discovery exposes validated titles and external IDs only. The worker revalidates
+the admin-selected ID before caching its server-only token or creating an unknown
+VERIFIED smartphone. Matching rejects accessories, used/refurbished products,
+conflicting models, and unknown wording. V7's `external_product_mapping` scopes cache
+entries by product/provider/locale/canonical name. A clearly invalid cached token gets
+one rediscovery; there is no TTL, pagination, or extra refresh request.
 
-V7's `external_product_mapping` caches provider/product/locale mappings, canonical
-name and verification times. A changed canonical name or locale misses the cache.
-A clear invalid/expired cached-token HTTP 400 allows one rediscovery/retry; no TTL
-or refresh schedule is introduced. Normal runs use one discovery plus `most_relevant`
-and `most_recent` (three searches, two cached); the manual picker adds one preview
-search. There is no pagination. SourceContext retains
-its 60-second deadline, ten-attempt budget, pacing and 429/503 retries/cooldowns.
-External requests use a five-second connect and 20-second request timeout. SearchAPI
-overrides the application cooldown to zero after success and local failures, allowing
-consecutive product runs. Provider Retry-After remains authoritative and is persisted.
-Authenticated GETs validate the exact host, require HTTPS and never follow redirects.
-Only code-owned error enums, never provider messages/credentials, enter diagnostics.
-
-Normalization uses NFKC/whitespace collapsing, strips prompt delimiters, and rejects
-under-20-character, clearly logistics-only, invalid-rating/domain or oversized reviews.
-Identity is SHA-256 over length-prefixed product ID, normalized source domain, title,
-text and rating, excluding dates. No raw provider response/profile data is persisted.
-Spring requires the returned embedder identity to match `AI_INGESTION_EMBEDDER`
-(default `minishlab/potion-retrieval-32M`) and 512 finite components per nonzero vector.
-No ingestion-time LLM call or synchronous recommendation fetch occurs.
-Full limits, verification and live steps: `docs/searchapi-review-ingestion.md`.
+Each product uses two review searches plus one discovery when uncached; the admin
+picker adds one preview search. SearchAPI's application cooldown is zero, while a
+provider `Retry-After` remains authoritative. Reviews are normalized and fingerprinted,
+then batch-embedded through FastAPI and transactionally stored as one document and one
+index-0 chunk per review. No raw profile data or provider response is persisted, and
+no ingestion-time LLM call occurs. Full configuration, limits, and verification steps
+belong in `docs/searchapi-review-ingestion.md`.
 
 ---
 
