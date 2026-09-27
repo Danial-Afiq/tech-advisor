@@ -65,7 +65,7 @@ public class CandidatePruningService {
      * we do not know what the user owns.
      */
     private Context resolve(Long userDeviceId) {
-        UserDevice device = userDeviceRepository.findById(userDeviceId)
+        UserDevice device = userDeviceRepository.findByIdAndIsCurrentTrue(userDeviceId)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Owned device " + userDeviceId + " not found"));
 

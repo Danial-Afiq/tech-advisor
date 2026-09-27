@@ -1,0 +1,129 @@
+name: Telegram - PR Mention
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Notify PR Mention
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Process PR mention
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          IS_PULL_REQUEST: ${{ github.event.issue.pull_request != null }}
+          AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_URL: ${{ github.event.comment.html_url }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_TITLE: ${{ github.event.issue.title }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import os
+          import re
+          import urllib.parse
+          import urllib.request
+
+          if os.environ.get("IS_PULL_REQUEST", "").lower() != "true":
+              print("Not a PR comment; no Telegram message sent.")
+              raise SystemExit(0)
+
+          if os.environ.get("AUTHOR_ASSOCIATION", "") not in {
+              "OWNER", "MEMBER", "COLLABORATOR"
+          }:
+              print("Comment author is not a repository collaborator; no Telegram message sent.")
+              raise SystemExit(0)
+
+          token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          comment = os.environ.get("COMMENT_BODY", "")
+          comment_url = os.environ.get("COMMENT_URL", "")
+          author = os.environ.get("COMMENT_AUTHOR", "")
+          pr_number = os.environ.get("PR_NUMBER", "")
+          pr_title = os.environ.get("PR_TITLE", "")
+
+          mapping = {
+              "chuadongen": "@Ensombre",
+              "russelldesilva": "@russelldegolden",
+              "pestmant-uni": "@pestmant",
+              "zayna31": "@zayynnna",
+              "danial-afiq": "@muhd_danial_afiq",
+              "johntemothy": "@Temmoes",
+          }
+
+          mention_pattern = re.compile(
+              r"(?<![A-Za-z0-9_.-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)",
+              re.IGNORECASE,
+          )
+          github_mentions = mention_pattern.findall(comment)
+
+          if not github_mentions:
+              print("No GitHub @mention found; no Telegram message sent.")
+              raise SystemExit(0)
+
+          if not token or not chat_id:
+              raise SystemExit(
+                  "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets are required."
+              )
+
+          def mapped_handle(username: str) -> str:
+              return mapping.get(username.lower(), f"@{username}")
+
+          mapped_comment = mention_pattern.sub(
+              lambda match: mapped_handle(match.group(1)),
+              comment,
+          )
+
+          seen = set()
+          mapped_mentions = []
+          for username in github_mentions:
+              handle = mapped_handle(username)
+              key = handle.lower()
+              if key not in seen:
+                  seen.add(key)
+                  mapped_mentions.append(handle)
+
+          full_message = (
+              f"💬 PR MENTION\n\n"
+              f"PR #{pr_number}: {pr_title}\n"
+              f"Mentioned: {' '.join(mapped_mentions)}\n"
+              f"By: @{author}\n\n"
+              f"Comment:\n{mapped_comment}\n\n"
+              f"{comment_url}"
+          )
+
+          def chunks(text: str, limit: int = 4000):
+              remaining = text
+              while len(remaining) > limit:
+                  cut = remaining.rfind("\n", 0, limit)
+                  if cut < limit // 2:
+                      cut = remaining.rfind(" ", 0, limit)
+                  if cut < limit // 2:
+                      cut = limit
+                  yield remaining[:cut]
+                  remaining = remaining[cut:]
+              if remaining:
+                  yield remaining
+
+          endpoint = f"https://api.telegram.org/bot{token}/sendMessage"
+          for chunk in chunks(full_message):
+              payload = urllib.parse.urlencode(
+                  {"chat_id": chat_id, "text": chunk}
+              ).encode()
+              request = urllib.request.Request(endpoint, data=payload, method="POST")
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  if response.status != 200:
+                      raise RuntimeError(
+                          f"Telegram API returned HTTP {response.status}"
+                      )
+          PY

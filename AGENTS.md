@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 22 September 2026
+> **Last consolidated:** 23 September 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -303,7 +303,9 @@ tech-advisor/
 ├─ .github/
 │  └─ workflows/
 │     ├─ ci.yml
-│     └─ cd.yml
+│     ├─ cd.yml
+│     ├─ telegram-pr-mention.yml
+│     └─ telegram-review-request.yml
 ├─ ai/                  # FastAPI AI layer (§5.4)
 │  ├─ app/              # service code: assess, prompt, validation, llm, retrieval
 │  ├─ scripts/          # ingest.py, manual_eval.py
@@ -360,6 +362,7 @@ Neon PostgreSQL
 - React
 - TypeScript
 - Vite
+- Tailwind CSS v4 + daisyUI v5 (loaded in `frontend/src/App.css`)
 - Node.js 22 in CI
 - Vitest/tests
 - Vercel deployment
@@ -370,6 +373,10 @@ Current API config pattern:
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 ```
+
+UI look-and-feel rules (shared components, design tokens, layout gotchas) live
+in [`frontend/AGENTS.md`](frontend/AGENTS.md). Read it before building or
+changing any page.
 
 ## 5.2 Backend
 - Java 21
@@ -1610,16 +1617,16 @@ Keep real adapters inside this controlled framework.
 
 ## 16.5 Current scheduling decision
 
-Older Jira text says fortnightly.
+Cadence is **every 14 days** (`RunStore.INTERVAL`), matching the original ticket intent and the current live Jira ticket text.
 
-**Current implementation/docs override that:**
-- cadence changed to **every 24 hours**,
+**History, so this isn't re-litigated:** the interval was deliberately changed to every 24 hours on 2026-09-16, purely to make the scheduler observable within a short testing window — never the target production cadence. It was reverted back to 14 days on 2026-09-22 once that testing was done. There is no data migration for this change (no production data depended on the temporary daily anchor); it is a plain code constant.
+
 - initial anchor: **17 Sep 2026 13:00 SGT / 05:00 UTC**,
 - schedule state is persisted,
 - manual runs do not shift cadence,
 - restart recovery/catch-up is supported.
 
-Do not reintroduce a 14-day scheduler simply because old ticket text says so.
+Do not change this constant based on old references to "daily" in docs, commit messages, or comments predating 2026-09-22 — those describe the temporary testing window, not current behaviour.
 
 ## 16.6 Current simulated/demo ingestion
 Current runner includes simulated fixtures and persisted demo receipts.
@@ -1658,6 +1665,13 @@ The backend fails at startup with a clear error if the JWT secret is invalid
 or the token expiration is not positive. An integration test checks that
 `GET /api/profile` rejects missing or invalid tokens and returns the user's
 profile with a valid token.
+
+Frontend: the `/login` page signs up through `POST /api/auth/register` and
+logs in through `POST /api/auth/login`. The register endpoint takes email +
+password only, with no name field. Token storage is temporary and NOT a
+decision: the JWT is kept in `sessionStorage`, isolated in
+`frontend/src/api/session.ts`. How the frontend should store tokens
+(sessionStorage, localStorage or an httpOnly cookie) is still open.
 
 # 17. External data sources — current status
 
@@ -1709,6 +1723,49 @@ never being provisioned, not a missing sink anymore.
 - MobileAPI.dev isn't in the candidate list below (this section predates
   that decision) — added here for traceability, not because §17.1's "not
   fully confirmed" status has changed.
+
+## 17.1.2 Implemented real adapter — smartphone/GPU reviews (ticket 1.4, revised scope)
+
+`HardwareZoneReviewSource` — smartphone and GPU **review** text
+(owner-evidence/sentiment pipeline, §7.2), not the launch/change feed the
+ticket originally described. Fetch + translate only: no production sink yet
+for `Article` payloads, so not in `ingestion.enabled-sources`. Supersedes an
+earlier RSS-feed attempt (`TechLaunchRssSource`, since removed) that was
+rejected mid-branch — RSS snippets ran ~95 characters (no real body text),
+and GPU reviews are too infrequent to reliably appear in the site's mixed,
+last-20-item feed (verified: a real GPU review from three months prior
+never showed up in either feed checked). Discovery instead walks the site's
+per-category `/reviews` listing pages, which carry a real back-catalogue.
+Budget: 2 listing fetches + up to 4 smartphone + 4 GPU article fetches = 10
+requests, exactly the shared `SourceContext` ceiling.
+
+**The Verge was evaluated and rejected** for the earlier RSS attempt: its
+`robots.txt` explicitly disallows `ClaudeBot`/`anthropic-ai` outside one
+unrelated path (`Allow: /sp/`, `Disallow: /`) — do not add it back without a
+human re-clearing that. **TechRadar was evaluated and rejected**:
+permissive `robots.txt`, but Future plc's Terms of Service
+(`futureplc.com/terms-and-conditions-uk/`) explicitly prohibit "text or data
+mining or web scraping ... including development, training, fine-tuning or
+validation of AI systems," with no academic exception — found only by
+reading the actual ToS text, not just `robots.txt`. **CNET** blocks
+`ClaudeBot`/`anthropic-ai` by name in `robots.txt`. **Android Authority**
+has a general scraping ban. HardwareZone (SPH Media) and Engadget (Static
+Media) were checked against the same evidentiary bar (robots.txt **and**
+actual ToS text, not robots.txt alone) and no AI-training/scraping-
+prohibition clause was found in either, despite a real search effort.
+TechPowerUp (GPU specs, still unimplemented) has a Verge-style block and
+needs the same treatment before any adapter is built against it.
+
+Neither adapter's exact field/source selection is a final decision — both
+are config-driven per §17.1's "keep source adapters replaceable."
+
+**Mandatory standard going forward**: before recommending or building
+against any external source, check both `robots.txt` **and** the site's
+actual Terms of Service text for AI-training/scraping restrictions — a
+permissive `robots.txt` alone is not sufficient clearance (this is exactly
+how TechRadar was nearly built against before its ToS prohibition was
+found).
+
 
 ## 17.2 Compliance requirement
 Before scraping any real site:
@@ -1840,6 +1897,21 @@ Repo checks verify:
 - `.gitignore`
 - `.env` is not tracked
 
+CI failure notification is a step inside `Repository Checks`, so it does not
+create another PR check. The step runs when Backend, Frontend, or one of the
+explicit repository-validation steps fails. It reports repository-check failure
+from those local step outcomes rather than the broad `failure()` status function,
+which also becomes true when a dependency job fails.
+
+Telegram PR automation is split by event so irrelevant jobs are absent rather
+than shown as skipped:
+- `.github/workflows/telegram-review-request.yml` runs only for the
+  `pull_request.review_requested` event. Its `Notify Review Request` check appears
+  only after a reviewer is requested.
+- `.github/workflows/telegram-pr-mention.yml` runs for new issue comments, filters
+  to PR comments by repository collaborators, and sends only when the comment
+  contains a GitHub `@mention`.
+
 ## 18.5 CD currently exists
 `.github/workflows/cd.yml`
 
@@ -1853,7 +1925,9 @@ Behaviour:
 - deploys backend from `backend/`,
 - uses GitHub secret `FLY_API_TOKEN`,
 - polls the public `/actuator/health` route after deployment and succeeds only
-  on a 2xx response whose JSON status is `UP`.
+  on a 2xx response whose JSON status is `UP`,
+- sends Telegram CD-failure notification as a step inside the existing deploy
+  job, so it does not create a separate CD check.
 
 ## 18.6 Ingestion framework
 The ingestion scheduler/orchestrator/admin/demo framework is significantly implemented and documented.
@@ -2146,9 +2220,13 @@ belongs only wherever the AI service runs (§27.9).
 
 ```text
 FLY_API_TOKEN
+TELEGRAM_BOT_TOKEN
+TELEGRAM_CHAT_ID
 ```
 
-Never put the token value in the repo.
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are repository secrets used by the
+CI/CD failure steps and the review-request / PR-mention workflows. Never put any
+secret value in the repo.
 
 ## 20.5 Vercel
 Production frontend should use Vercel environment variable:
@@ -2618,8 +2696,8 @@ Not part of the current plan.
 
 Chunks are embedded/stored; semantic retrieval happens later.
 
-## 28.6 14-day ingestion schedule
-Superseded by current 24-hour cadence in implementation/docs.
+## 28.6 24-hour ingestion schedule
+A deliberate short-term testing measure from 2026-09-16, not a design decision — superseded by the current, and original-intent, 14-day cadence (§16.5) on 2026-09-22.
 
 ## 28.7 Spring Boot 3.x
 Older Architecture wording.

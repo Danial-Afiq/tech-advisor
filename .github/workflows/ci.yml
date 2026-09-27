@@ -49,6 +49,8 @@ jobs:
       # Download the repository onto the GitHub Actions runner
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       # Install Java 21 for the Spring Boot backend
       - name: Set up Java 21
@@ -74,12 +76,15 @@ jobs:
           # the same Maven version installed manually
           if [ -f mvnw ]; then
             chmod +x mvnw
-            ./mvnw test
-            ./mvnw package -DskipTests
+            ./mvnw verify
           else
-            mvn test
-            mvn package -DskipTests
+            mvn verify
           fi
+      
+      - name: SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   frontend:
     name: Frontend - Test and Build
@@ -116,20 +121,29 @@ jobs:
           fi
 
           # Run tests
+          npm run lint
           npm test
           npm run build
 
   repository-checks:
     name: Repository Checks
     runs-on: ubuntu-latest
+    needs:
+      - backend
+      - frontend
+    # Always run the existing Repository Checks job so it can report a CI failure
+    # without creating a separate Telegram check.
+    if: always()
 
     steps:
       # Download the repository so setup files can be checked
       - name: Checkout repository
+        id: repository_checkout
         uses: actions/checkout@v7
 
       # Make sure important project setup files are present
       - name: Verify required setup files
+        id: required_setup_files
         shell: bash
         run: |
           test -f README.md
@@ -139,6 +153,7 @@ jobs:
 
       # Prevent developers from accidentally committing the real local .env file
       - name: Ensure local env file is not committed
+        id: local_env_not_committed
         shell: bash
         run: |
           if git ls-files --error-unmatch .env >/dev/null 2>&1; then
@@ -146,33 +161,18 @@ jobs:
             exit 1
           fi
 
-  notify-ci-failure:
-    name: Notify Telegram - CI Failure
-    runs-on: ubuntu-latest
-    needs:
-      - backend
-      - frontend
-      - repository-checks
-    # Notify only when at least one CI job actually fails.
-    if: >-
-      ${{
-        always() &&
-        (
-          needs.backend.result == 'failure' ||
-          needs.frontend.result == 'failure' ||
-          needs.repository-checks.result == 'failure'
-        )
-      }}
-
-    steps:
-      - name: Send CI failure to Telegram
+      # Keep Telegram notification inside this existing CI check.
+      # On successful CI this step is merely skipped inside the job and does not
+      # appear as a separate PR check.
+      - name: Notify Telegram on CI failure
+        if: ${{ always() && (needs.backend.result == 'failure' || needs.frontend.result == 'failure' || steps.repository_checkout.outcome == 'failure' || steps.required_setup_files.outcome == 'failure' || steps.local_env_not_committed.outcome == 'failure') }}
         shell: bash
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           BACKEND_RESULT: ${{ needs.backend.result }}
           FRONTEND_RESULT: ${{ needs.frontend.result }}
-          REPOSITORY_CHECKS_RESULT: ${{ needs.repository-checks.result }}
+          REPOSITORY_CHECKS_FAILED: ${{ steps.repository_checkout.outcome == 'failure' || steps.required_setup_files.outcome == 'failure' || steps.local_env_not_committed.outcome == 'failure' }}
         run: |
           set -euo pipefail
 
@@ -184,7 +184,7 @@ jobs:
           failed_jobs=()
           [ "$BACKEND_RESULT" = "failure" ] && failed_jobs+=("Backend")
           [ "$FRONTEND_RESULT" = "failure" ] && failed_jobs+=("Frontend")
-          [ "$REPOSITORY_CHECKS_RESULT" = "failure" ] && failed_jobs+=("Repository Checks")
+          [ "$REPOSITORY_CHECKS_FAILED" = "true" ] && failed_jobs+=("Repository Checks")
           failed_list="$(IFS=', '; echo "${failed_jobs[*]}")"
 
           branch_name="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"

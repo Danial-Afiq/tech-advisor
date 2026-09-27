@@ -78,15 +78,17 @@ class IngestionIntegrationTests {
         assertEquals(manual.runId, store.admit(List.of("simulated-release"), "admin", "manual-key", "Release", false, true).runId);
         assertThrows(org.springframework.web.server.ResponseStatusException.class,
                 () -> store.admit(List.of("simulated-release"), "admin", "manual-key", "Changed", false, true));
-        assertEquals(Instant.parse("2026-09-18T05:00:00Z"), store.state().nextDue);
-        assertEquals(Duration.ofHours(24), RunStore.INTERVAL);
+        assertEquals(ANCHOR.plus(RunStore.INTERVAL), store.state().nextDue);
+        assertEquals(Duration.ofDays(14), RunStore.INTERVAL);
     }
     @Test void downtimeCoalescesAndExpiredOwnerCannotWrite() {
-        clock.now.set(ANCHOR.plus(Duration.ofDays(3)).plusSeconds(3600));
+        // 3 missed intervals plus a bit, expressed relative to INTERVAL so this test's intent
+        // (three coalesced slots) survives any future cadence change without hand-recomputed dates.
+        clock.now.set(ANCHOR.plus(RunStore.INTERVAL.multipliedBy(3)).plusSeconds(3600));
         var run = store.admit(List.of("simulated-release"), "scheduler", null, null, true, true);
         assertEquals(3, run.missedSlots);
-        assertEquals(ANCHOR.plus(Duration.ofDays(3)), run.scheduledFor);
-        assertEquals(ANCHOR.plus(Duration.ofDays(4)), store.state().nextDue);
+        assertEquals(ANCHOR.plus(RunStore.INTERVAL.multipliedBy(3)), run.scheduledFor);
+        assertEquals(ANCHOR.plus(RunStore.INTERVAL.multipliedBy(4)), store.state().nextDue);
         var stale = store.claim("old-owner");
         clock.now.set(clock.instant().plusSeconds(91));
         assertNull(store.claim("new-owner"));
