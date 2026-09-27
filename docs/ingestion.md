@@ -1,6 +1,6 @@
 # Ingestion runner: operation and source integration
 
-The runner provides a 14-day schedule, asynchronous admin requests, source isolation and persistent run history. This ticket includes simulated adapters and receipts, not live market sources or catalogue/RAG processors.
+The runner provides a scheduled cadence (currently **2 days**, a temporary override for live data-gathering while the smartphone schema is still moving — see `AGENTS.md` §16.5 for why and when to revert; the real target is 14 days), asynchronous admin requests, source isolation and persistent run history. This ticket includes simulated adapters and receipts, not live market sources or catalogue/RAG processors.
 
 ## Shared contract, different payloads
 
@@ -151,7 +151,7 @@ $env:VITE_API_BASE_URL = 'http://localhost:8080'
 npm run dev
 ```
 
-Open `http://localhost:5173/admin/ingestion`, enter the configured password, select sources and click Run now. The default source fixtures produce three accepted payloads; selecting the failure fixture as well gives one captured exception. Production scheduling stays disabled in this manual demo. Fake-clock PostgreSQL tests exercise the scheduling admission path without shortening the real 14-day interval.
+Open `http://localhost:5173/admin/ingestion`, enter the configured password, select sources and click Run now. The default source fixtures produce three accepted payloads; selecting the failure fixture as well gives one captured exception. Production scheduling stays disabled in this manual demo. Fake-clock PostgreSQL tests exercise the scheduling admission path without shortening `RunStore.INTERVAL`, whatever it's currently set to.
 
 ## References
 

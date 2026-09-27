@@ -1617,16 +1617,18 @@ Keep real adapters inside this controlled framework.
 
 ## 16.5 Current scheduling decision
 
-Cadence is **every 14 days** (`RunStore.INTERVAL`), matching the original ticket intent and the current live Jira ticket text.
+Cadence is **every 2 days** (`RunStore.INTERVAL`) — **this is a temporary override, not the target production cadence**, in effect since 2026-09-27. The real intent is 14 days, matching the original ticket and the current live Jira ticket text.
 
-**History, so this isn't re-litigated:** the interval was deliberately changed to every 24 hours on 2026-09-16, purely to make the scheduler observable within a short testing window — never the target production cadence. It was reverted back to 14 days on 2026-09-22 once that testing was done. There is no data migration for this change (no production data depended on the temporary daily anchor); it is a plain code constant.
+**History, so this isn't re-litigated:** the interval was first deliberately changed to every 24 hours on 2026-09-16, purely to make the scheduler observable within a short testing window, then reverted back to 14 days on 2026-09-22 once that testing was done. It was changed again to 2 days on 2026-09-27, this time so the newly-enabled `MobileApiSmartphoneSource` (ticket 1.2) can gather real data while the smartphone schema is still expected to change (model-variation handling isn't settled yet). There is no data migration for either change (no production data depends on the anchor's spacing); it is a plain code constant.
+
+This is a **single global interval shared by every enabled source** — there is no per-source schedule in this codebase (`CoordinatorState.nextDue` is one timestamp for the whole batch, not one per source). Changing it affects every currently-enabled source, not just the one motivating the change. As of this writing `INGESTION_ENABLED_SOURCES` only has MobileAPI turned on, so the practical blast radius is just that source — but that stops being true the instant a second source (e.g. HardwareZone reviews, once it has a sink) gets enabled while this override is still active. Building real per-source scheduling is a legitimate future fix, deliberately not done now while the schema is still moving.
 
 - initial anchor: **17 Sep 2026 13:00 SGT / 05:00 UTC**,
 - schedule state is persisted,
 - manual runs do not shift cadence,
 - restart recovery/catch-up is supported.
 
-Do not change this constant based on old references to "daily" in docs, commit messages, or comments predating 2026-09-22 — those describe the temporary testing window, not current behaviour.
+Do not change this constant based on old references to "daily"/"14-day" in docs, commit messages, or comments predating 2026-09-27 — those describe earlier states, not current behaviour. **Revert to 14 days once the smartphone schema settles and this stops being an active data-gathering exercise** — do not let this become a second stale "temporary" that nobody reverts, the way the first one nearly did.
 
 ## 16.6 Current simulated/demo ingestion
 Current runner includes simulated fixtures and persisted demo receipts.

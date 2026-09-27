@@ -79,7 +79,11 @@ class IngestionIntegrationTests {
         assertThrows(org.springframework.web.server.ResponseStatusException.class,
                 () -> store.admit(List.of("simulated-release"), "admin", "manual-key", "Changed", false, true));
         assertEquals(ANCHOR.plus(RunStore.INTERVAL), store.state().nextDue);
-        assertEquals(Duration.ofDays(14), RunStore.INTERVAL);
+        // Deliberate guard, not drift-prevention-by-accident: forces whoever changes INTERVAL to
+        // touch this file too, so they see this comment and RunStore.INTERVAL's own comment
+        // pointing at AGENTS.md 16.5. Currently 2 days - a documented TEMPORARY override, not
+        // the real 14-day target. Update this alongside AGENTS.md 16.5 when it next changes.
+        assertEquals(Duration.ofDays(2), RunStore.INTERVAL);
     }
     @Test void downtimeCoalescesAndExpiredOwnerCannotWrite() {
         // 3 missed intervals plus a bit, expressed relative to INTERVAL so this test's intent
