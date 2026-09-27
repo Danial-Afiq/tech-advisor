@@ -1,14 +1,11 @@
 package com.springboot.backend.ingestion.searchapi;
 
-import com.springboot.backend.ingestion.core.IngestionFailure;
-import com.springboot.backend.ingestion.searchapi.ProductMatcher.ProductName;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class SearchApiRepository {
@@ -27,49 +24,31 @@ public class SearchApiRepository {
                 + "AND status='VERIFIED' AND category='SMARTPHONE'",
                 (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)), productId).stream().findFirst();
     }
-    /** Exact catalogue names only. Two rows suffice to detect an ambiguous model-only name. */
-    public List<Product> namedProducts(String normalizedName) {
-        return db.query("""
-                SELECT id, brand, model_name FROM products
-                WHERE status='VERIFIED' AND category='SMARTPHONE'
-                  AND (lower(regexp_replace(trim(brand || ' ' || model_name), '\\s+', ' ', 'g'))=?
-                    OR lower(regexp_replace(trim(model_name), '\\s+', ' ', 'g'))=?)
-                ORDER BY id LIMIT 2
-                """, (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)),
-                normalizedName, normalizedName);
+    /**
+     * Fuzzy-matched against ProductMatcher's token logic, not exact-string
+     * equality - a catalogue name (from MobileAPI, the sole source of truth
+     * for `products` rows) may carry extra suffix words (colour, storage,
+     * "5G") the admin didn't type, same tolerance already proven against
+     * real Google Shopping titles. Matches either "Brand Model" or a bare
+     * "Model" alone. No brand pre-filter: a bare model-only query has no
+     * brand to filter on, so this scans every eligible row - fine at this
+     * catalogue's scale, revisit if it ever grows large. Two rows suffice
+     * to detect an ambiguous name.
+     */
+    public List<Product> namedProducts(String rawName) {
+        var candidates = db.query("""
+                SELECT id, brand, model_name FROM products WHERE status='VERIFIED' AND category='SMARTPHONE'
+                ORDER BY id
+                """, (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)));
+        return ProductMatcher.matchCatalogue(rawName, candidates, Product::name, Product::model).stream()
+                .limit(2).toList();
     }
-    public List<Product> namedCatalogueProducts(String normalizedName) {
-        return db.query("""
-                SELECT id, brand, model_name FROM products
-                WHERE lower(regexp_replace(trim(brand || ' ' || model_name), '\\s+', ' ', 'g'))=?
-                   OR lower(regexp_replace(trim(model_name), '\\s+', ' ', 'g'))=?
-                ORDER BY id LIMIT 2
-                """, (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)),
-                normalizedName, normalizedName);
-    }
-
-    /** Promote only after SearchAPI returned the validated product identity chosen for this run. */
-    @Transactional
-    public Product createVerified(ProductName requested, SearchApiSettings settings,
-                                  ProductMatcher.Match match, Instant now) {
-        var inserted = db.query("""
-                INSERT INTO products(brand,model_name,category,status)
-                VALUES (?,?,'SMARTPHONE','VERIFIED')
-                ON CONFLICT (brand,model_name) DO NOTHING RETURNING id,brand,model_name
-                """, (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)),
-                requested.brand(), requested.model());
-        Product product;
-        if (!inserted.isEmpty()) product = inserted.getFirst();
-        else product = db.query("""
-                SELECT id,brand,model_name FROM products
-                WHERE brand=? AND model_name=? AND category='SMARTPHONE' AND status='VERIFIED'
-                """, (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)),
-                requested.brand(), requested.model()).stream().findFirst()
-                .orElseThrow(() -> new IngestionFailure(
-                        IngestionFailure.Code.SEARCHAPI_NO_ELIGIBLE_PRODUCT));
-        db.update("INSERT INTO phone(product_id) VALUES (?) ON CONFLICT DO NOTHING", product.id());
-        cache(product, settings, match, now);
-        return product;
+    /** Same match, without the VERIFIED/SMARTPHONE filter - distinguishes "doesn't exist" from "exists but ineligible". */
+    public List<Product> namedCatalogueProducts(String rawName) {
+        var candidates = db.query("SELECT id, brand, model_name FROM products ORDER BY id",
+                (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)));
+        return ProductMatcher.matchCatalogue(rawName, candidates, Product::name, Product::model).stream()
+                .limit(2).toList();
     }
     public Optional<String> token(Product p, SearchApiSettings s) {
         return db.query("""

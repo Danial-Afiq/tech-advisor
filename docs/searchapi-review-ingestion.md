@@ -1,9 +1,12 @@
 # SearchAPI customer-review ingestion
 
-This source attaches owner reviews to canonical `VERIFIED` smartphones. In a named
-admin run, it can also create the canonical `products` and `phone` rows after the
-admin selects a SearchAPI identity and the worker validates that identity again.
-It does not score upgrades, select recommendation candidates, or call an LLM.
+This source attaches owner reviews to canonical `VERIFIED` smartphones. MobileAPI
+(ticket 1.2) is the sole source of truth for `products`/`phone` rows — this source
+never creates one. A named admin run resolves the typed name against the existing
+catalogue (fuzzy-matched, not exact-string — see `ProductMatcher.matchCatalogue`)
+and fails closed if nothing eligible matches, rather than inventing a catalogue
+entry from an unverified admin-typed name. It does not score upgrades, select
+recommendation candidates, or call an LLM.
 
 ## How the flow works
 
@@ -50,8 +53,9 @@ with the fewest extra variant words and rejects equally specific distinct matche
 The admin picker returns at most 20 valid titles and external product IDs. Product
 tokens never reach the browser. The selected ID is stored in run metadata, included
 in idempotency checks, and revalidated by the worker before its token is cached.
-A missing or stale selection fails closed. A previously unknown phone is created
-only after this revalidation; an existing ineligible catalogue row is never promoted.
+A missing or stale selection fails closed. A name with no eligible catalogue match
+fails closed too — ingest the device via MobileAPI first; this source never creates
+a `products`/`phone` row. An existing ineligible catalogue row is never promoted.
 
 Mappings are scoped by product, provider, canonical name, `gl`, `hl`, and location.
 A canonical-name or locale change misses the cache. Only a clear HTTP 400 saying a

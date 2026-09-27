@@ -86,24 +86,23 @@ public class IngestionController {
             if (externalProductId.isEmpty() || externalProductId.length() > 1000)
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Find matching products and select one before starting ingestion.");
-            var matches = products.namedProducts(name.toLowerCase(Locale.ROOT));
+            var matches = products.namedProducts(name);
             if (matches.size() > 1)
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "More than one verified smartphone matches that name. Include the brand and full model name.");
             if (!matches.isEmpty()) {
                 var product = matches.getFirst();
                 target = new RunLog.ProductTarget(product.id(), product.name(), externalProductId);
+            } else if (!products.namedCatalogueProducts(name).isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "That catalogue product is not an eligible verified smartphone.");
             } else {
-                if (!products.namedCatalogueProducts(name.toLowerCase(Locale.ROOT)).isEmpty())
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "That catalogue product is not an eligible verified smartphone.");
-                try {
-                    var requested = ProductName.parse(name);
-                    target = new RunLog.ProductTarget(null, requested.canonicalName(), externalProductId);
-                } catch (IllegalArgumentException invalid) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "Enter both the smartphone brand and full model name.");
-                }
+                // MobileAPI is the sole source of truth for `products` rows - SearchAPI never
+                // creates one, so an unmatched name fails closed rather than starting a run that
+                // would otherwise invent a catalogue entry from an unverified admin-typed name.
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "No matching smartphone found in the catalogue. Ingest this device via "
+                                + "MobileAPI before requesting SearchAPI reviews for it.");
             }
         } else if (request.externalProductId() != null)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,

@@ -90,6 +90,38 @@ public final class ProductMatcher {
         return matches;
     }
 
+    /**
+     * Matches a free-text admin-typed name against our OWN catalogue instead
+     * of against SearchAPI's Google Shopping titles. Deliberately not built
+     * on {@link #accepts} - that method requires a separate brand/model
+     * split, but a catalogue lookup must accept either "Brand Model" or a
+     * bare "Model" alone (a sufficiently distinctive model name needs no
+     * brand prefix) exactly like the exact-string lookup this replaces did,
+     * checked via SQL's "brand||model_name" OR "model_name" OR clause.
+     * MobileAPI is the sole creator of `products` rows; this only finds an
+     * existing one, never creates one.
+     */
+    public static boolean matchesCatalogueName(String rawName, String candidateText) {
+        List<String> q = tokens(rawName), t = tokens(candidateText);
+        if (q.isEmpty() || t.isEmpty() || !t.containsAll(q) || t.stream().anyMatch(REJECT::contains)) return false;
+        // Ordered, contiguous query tokens prevent a bag-of-words match across an unrelated product.
+        if (!String.join(" ", t).contains(String.join(" ", q))) return false;
+        if (q.stream().anyMatch(token -> Collections.frequency(t, token) > 1)) return false;
+        int core = 0;
+        for (String token : t) {
+            if (q.contains(token)) { core++; continue; }
+            if (!SUFFIX.contains(token) && !token.matches("(?:64|128|256|512|1024)(?:gb)?|[124]tb")) return false;
+        }
+        return (double) core / t.size() >= 0.4;
+    }
+
+    /** Matches against each candidate's "brand model" AND bare model alone - either is a valid catalogue lookup. */
+    public static <T> List<T> matchCatalogue(String rawName, List<T> candidates,
+            java.util.function.Function<T, String> fullName, java.util.function.Function<T, String> modelOnly) {
+        return candidates.stream().filter(c -> matchesCatalogueName(rawName, fullName.apply(c))
+                || matchesCatalogueName(rawName, modelOnly.apply(c))).toList();
+    }
+
     private static int extraTokenCount(String brand, String model, String title) {
         var expected = new HashSet<>(tokens(brand));
         expected.addAll(tokens(model));

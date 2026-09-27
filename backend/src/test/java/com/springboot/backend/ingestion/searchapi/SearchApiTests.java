@@ -78,6 +78,31 @@ class SearchApiTests {
                 () -> ProductMatcher.choose("Apple", "iPhone 13 Pro Max", variants, "case")).code());
     }
 
+    @Test void catalogueMatchAcceptsFullNameOrBareModelAlone() {
+        // "Brand Model" and a bare "Model" alone are both valid catalogue lookups - same OR
+        // semantics the exact-string SQL this replaced had, just fuzzy instead of exact.
+        assertTrue(ProductMatcher.matchesCatalogueName("Apple iPhone 16 Pro", "Apple iPhone 16 Pro"));
+        assertTrue(ProductMatcher.matchesCatalogueName("iPhone 16 Pro", "iPhone 16 Pro"));
+        // A catalogue name may carry extra suffix words the admin didn't type - same tolerance
+        // already proven against real Google Shopping titles.
+        assertTrue(ProductMatcher.matchesCatalogueName("iPhone 16 Pro", "iPhone 16 Pro 256GB"));
+        assertFalse(ProductMatcher.matchesCatalogueName("iPhone 16 Pro Max", "iPhone 16 Pro"));
+        assertFalse(ProductMatcher.matchesCatalogueName("iPhone 16 Pro", "Galaxy S24 Ultra"));
+    }
+
+    @Test void matchCatalogueChecksEachCandidatesFullNameAndBareModel() {
+        record Row(String brand, String model) {}
+        var catalogue = List.of(new Row("ManualTargetTest", "Later Phone"), new Row("ManualTargetTest", "Earlier Phone"));
+        // "Brand Model" form.
+        assertEquals(1, ProductMatcher.matchCatalogue("ManualTargetTest Later Phone", catalogue,
+                r -> r.brand() + " " + r.model(), Row::model).size());
+        // Bare model form - no brand typed at all.
+        assertEquals(1, ProductMatcher.matchCatalogue("Later Phone", catalogue,
+                r -> r.brand() + " " + r.model(), Row::model).size());
+        assertEquals(0, ProductMatcher.matchCatalogue("Unknown Phone", catalogue,
+                r -> r.brand() + " " + r.model(), Row::model).size());
+    }
+
     @Test void normalizesDedupesDiscardsProfilesAndKeepsDatesRaw() {
         var accepted = ReviewNormalizer.normalize(812, now, reviews("5 months ago"), reviews("6 months ago"));
         assertEquals(1, accepted.size());

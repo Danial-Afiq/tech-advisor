@@ -1885,12 +1885,19 @@ The owner-review source is `searchapi-google-product-reviews`. It uses the docum
 SearchAPI endpoints with Bearer authentication and Singapore localisation; it does not
 scrape. It is opt-in, and enabling it without `SEARCHAPI_API_KEY` fails startup.
 
-Manual discovery exposes validated titles and external IDs only. The worker revalidates
-the admin-selected ID before caching its server-only token or creating an unknown
-VERIFIED smartphone. Matching rejects accessories, used/refurbished products,
-conflicting models, and unknown wording. V7's `external_product_mapping` scopes cache
-entries by product/provider/locale/canonical name. A clearly invalid cached token gets
-one rediscovery; there is no TTL, pagination, or extra refresh request.
+**MobileAPI.dev (ticket 1.2) is the sole source of truth for `products`/`phone`
+rows — SearchAPI never creates one** (revised 28 Sep 2026; it originally could, via
+an admin-named run — that path is removed). Manual discovery exposes validated
+titles and external IDs only. The worker revalidates the admin-selected ID before
+caching its server-only token, and an admin-typed name is matched against the
+existing catalogue via `ProductMatcher.matchCatalogue` (fuzzy, brand+model or a
+bare model name alone — same suffix tolerance already proven against Google
+Shopping titles, not exact-string equality) rather than promoted into a new row.
+No catalogue match fails closed: ingest the device via MobileAPI first. Matching
+rejects accessories, used/refurbished products, conflicting models, and unknown
+wording. V7's `external_product_mapping` scopes cache entries by
+product/provider/locale/canonical name. A clearly invalid cached token gets one
+rediscovery; there is no TTL, pagination, or extra refresh request.
 
 Each product uses two review searches plus one discovery when uncached; the admin
 picker adds one preview search. SearchAPI's application cooldown is zero, while a

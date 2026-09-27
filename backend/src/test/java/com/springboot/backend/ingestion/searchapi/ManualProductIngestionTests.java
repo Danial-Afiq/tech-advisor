@@ -39,7 +39,7 @@ class ManualProductIngestionTests {
     @BeforeEach void setup() throws Exception {
         assertTrue(db.queryForObject("SELECT current_database()", String.class).endsWith("_test"));
         db.update("DELETE FROM system_log WHERE component LIKE 'INGESTION_%'");
-        db.update("DELETE FROM products WHERE brand IN ('ManualTargetTest', 'OtherTargetTest', 'AutoCreateTest')");
+        db.update("DELETE FROM products WHERE brand IN ('ManualTargetTest', 'OtherTargetTest', 'AutoCreateTest', 'NoMatchBrand')");
         first = insert("ManualTargetTest", "Earlier Phone", "SMARTPHONE", "VERIFIED");
         second = insert("ManualTargetTest", "Later Phone", "SMARTPHONE", "VERIFIED");
         mvc = MockMvcBuilders.webAppContextSetup(web).apply(springSecurity()).build();
@@ -48,38 +48,27 @@ class ManualProductIngestionTests {
         when(api.reviews(any(), any(), any())).thenReturn(json.createArrayNode());
     }
     @AfterEach void cleanup() {
-        db.update("DELETE FROM products WHERE brand IN ('ManualTargetTest', 'OtherTargetTest', 'AutoCreateTest')");
+        db.update("DELETE FROM products WHERE brand IN ('ManualTargetTest', 'OtherTargetTest', 'AutoCreateTest', 'NoMatchBrand')");
     }
 
-    @Test void validatesAndCreatesAnUnknownSmartphoneBeforeImportingReviews() throws Exception {
-        String result = mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
-                .header("Idempotency-Key", "auto-create-key").contentType("application/json")
-                .content(body("AutoCreateTest New Phone")))
-                .andExpect(status().isAccepted()).andExpect(jsonPath("$.product.productId").isEmpty())
-                .andExpect(jsonPath("$.product.productName").value("AutoCreateTest New Phone"))
-                .andReturn().getResponse().getContentAsString();
-        String id = json.readTree(result).path("runId").asText();
-        await(id);
-        assertEquals("SUCCESS", store.get(id).status);
-        var product = db.queryForMap("""
-                SELECT p.id,p.brand,p.model_name,p.category,p.status,
-                       EXISTS (SELECT 1 FROM phone ph WHERE ph.product_id=p.id) has_phone,
-                       EXISTS (SELECT 1 FROM external_product_mapping m WHERE m.product_id=p.id
-                               AND m.status='VALID') has_mapping
-                FROM products p WHERE p.brand='AutoCreateTest' AND p.model_name='New Phone'
-                """);
-        assertEquals("SMARTPHONE", product.get("category")); assertEquals("VERIFIED", product.get("status"));
-        assertEquals(true, product.get("has_phone")); assertEquals(true, product.get("has_mapping"));
-        verify(api).shopping(any(), eq("AutoCreateTest New Phone"));
-
-        // Retrying the same request remains idempotent after discovery supplied a database ID.
+    @Test void rejectsAnUnknownSmartphoneRatherThanCreatingOne() throws Exception {
+        // MobileAPI is the sole source of truth for `products` rows - SearchAPI must never create
+        // one, even when the admin types a name and a real device, no matter what SearchAPI itself
+        // would have matched. Fails closed before any provider call.
         mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
                 .header("Idempotency-Key", "auto-create-key").contentType("application/json")
                 .content(body("AutoCreateTest New Phone")))
-                .andExpect(status().isAccepted()).andExpect(jsonPath("$.runId").value(id));
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").isNotEmpty());
+        assertEquals(0, db.queryForObject("SELECT count(*) FROM products WHERE brand='AutoCreateTest'", Integer.class));
+        verifyNoInteractions(api);
     }
 
-    @Test void failedProviderValidationCreatesNoCatalogueRows() throws Exception {
+    @Test void aMatchingExistingProductStillFailsTheRunWhenSearchApiFindsNoListing() throws Exception {
+        // Catalogue-lookup success (an eligible product exists) is a separate concern from
+        // provider-side matching success - this one is real and matched, but SearchAPI itself
+        // returns nothing, so the run starts, then fails during execution rather than at request
+        // time, and never touches the catalogue.
+        insert("NoMatchBrand", "Missing Phone", "SMARTPHONE", "VERIFIED");
         doReturn(json.createArrayNode()).when(api).shopping(any(), eq("NoMatchBrand Missing Phone"));
         String result = mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
                 .header("Idempotency-Key", "no-match-create-key").contentType("application/json")
@@ -88,8 +77,9 @@ class ManualProductIngestionTests {
         String id = json.readTree(result).path("runId").asText();
         await(id);
         assertEquals("FAILED", store.get(id).status);
-        assertEquals(0, db.queryForObject("SELECT count(*) FROM products WHERE brand='NoMatchBrand'",
-                Integer.class));
+        assertEquals(0, db.queryForObject(
+                "SELECT count(*) FROM external_product_mapping m JOIN products p ON p.id=m.product_id "
+                        + "WHERE p.brand='NoMatchBrand'", Integer.class));
     }
     long insert(String brand, String model, String category, String status) {
         return db.queryForObject("INSERT INTO products(brand,model_name,category,status) VALUES (?,?,?,?) RETURNING id",
@@ -105,6 +95,10 @@ class ManualProductIngestionTests {
                 [{"title":"AutoCreateTest Choice Phone 256GB","product_id":"choice-256","product_token":"hidden-a"},
                  {"title":"AutoCreateTest Choice Phone 512GB","product_id":"choice-512","product_token":"hidden-b"}]
                 """)).when(api).shopping(any(), eq("AutoCreateTest Choice Phone"));
+
+        // Candidate discovery itself never touches our catalogue, but starting a run against one
+        // of the discovered candidates does - MobileAPI must have already created this product.
+        insert("AutoCreateTest", "Choice Phone", "SMARTPHONE", "VERIFIED");
 
         mvc.perform(post("/api/admin/ingestion/searchapi/candidates")
                 .with(user("admin").roles("ADMIN")).with(csrf()).contentType("application/json")
