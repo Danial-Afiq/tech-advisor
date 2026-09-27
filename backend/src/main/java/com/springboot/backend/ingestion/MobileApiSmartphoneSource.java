@@ -71,11 +71,18 @@ public class MobileApiSmartphoneSource implements IngestionSource {
             if (processed >= DEVICE_LIMIT) break;
 
             String deviceId = text(device, "id");
-            // Ticket AC: model name always non-null. Skip the device entirely rather than emit a
-            // Specifications payload that Payload.validate() would just reject anyway.
+            // deviceId doubles as externalId - with no id at all there's no way to identify or
+            // route the record, so this case alone is skipped before emission.
+            if (deviceId == null) { processed++; continue; }
+
+            // Ticket AC: model name always non-null; a record missing it must be rejected and
+            // counted as an error in the run's system_log tally, not silently dropped here. So a
+            // missing brand/modelName still gets emitted - Payload.validate() rejects it and the
+            // orchestrator counts that rejection (PayloadTests/IngestionIntegrationTests cover the
+            // validate()/error-counting halves of this; this source's own test suite has no seam
+            // to fake the HTTP call, so this comment is the record of why the skip was removed).
             String modelName = text(device, "name");
             String brand = text(device, "manufacturer_name");
-            if (deviceId == null || modelName == null || brand == null) { processed++; continue; }
 
             String hardware = text(device, "hardware");
             Map<String, BigDecimal> values = new LinkedHashMap<>();
