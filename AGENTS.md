@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 23 September 2026
+> **Last consolidated:** 27 September 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -2223,12 +2223,14 @@ belongs only wherever the AI service runs (§27.9).
 ```text
 FLY_API_TOKEN
 TELEGRAM_BOT_TOKEN
-TELEGRAM_CHAT_ID
 ```
 
-`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are repository secrets used by the
-CI/CD failure steps and the review-request / PR-mention workflows. Never put any
-secret value in the repo.
+`TELEGRAM_BOT_TOKEN` is the repository secret used by the CI/CD failure steps
+and the review-request / PR-mention workflows. All GitHub-originated Telegram
+notifications are routed to the `CICD` forum topic with `chat_id`
+`-1004379768998` and `message_thread_id` `14`; these routing IDs are workflow
+configuration, not secrets. Never put the bot token or any other secret value in
+the repo.
 
 ## 20.5 Vercel
 Production frontend should use Vercel environment variable:
