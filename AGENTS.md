@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 26 September 2026
+> **Last consolidated:** 27 September 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -154,6 +154,13 @@ The product monitors changing technology/market conditions and reassesses whethe
 The current product and recommendation implementation remains **smartphone-first**. The canonical Sprint 1 database foundation nevertheless uses a generic `products` supertype with disjoint `phone` and `gpu` subtype tables so later category work does not require another product-identity model. GPU application flows remain future scope.
 
 Do not treat the presence of the `gpu` table as evidence that GPU ingestion, recommendation logic, or UI is implemented.
+
+Under the current simplified catalogue design, one `products` row represents a
+specific purchasable hardware configuration. Legitimate storage configurations,
+and RAM configurations when RAM distinguishes the offering, may therefore have
+separate product IDs. Colours, carriers, sellers, cosmetic finishes and bundles
+do not create separate products. `price_history` and review evidence attach
+directly to that exact `product_id`; there is no `product_variants` layer.
 
 ## 1.2 Core product behaviour
 
@@ -528,6 +535,26 @@ that way - bounding the candidate set is what bounds every downstream AI cost.
 by tests and seeded data. A named admin SearchAPI run can create a VERIFIED smartphone
 only after the admin selects a validated provider identity and the worker revalidates
 that choice; it does not create price observations.
+
+The branch-local one-time catalogue backfill uses
+`data/catalogue_backfill.json` plus `scripts/backfill_catalogue.py`. It now stages
+453 exact smartphone configurations: the original 352 owned-device-oriented
+records plus a 101-product 2025-2026 candidate batch. Every product in the newer
+batch has an exact current new-device price (69 direct SGD and 32 converted to
+SGD), bringing the staging snapshot to 137 price observations overall. Foreign
+prices use deterministic European Central Bank daily reference rates. Staging
+provenance preserves the exact configuration, original amount/currency,
+conversion rate and timestamp, listing URL and observation time. No benchmark
+is inferred from a generic chipset score. A benchmark-only enrichment now brings
+the snapshot to 332 observations across 147 of 453 configurations: Geekbench 6,
+Geekbench 7 and explicitly named 3DMark tests remain separate. The pinned TechAPI
+records contained specifications but no benchmark fields. New results therefore
+come from cited device-level technical reviews; exact tested configurations are
+marked `DIRECT_DEVICE_RESULT`, while reuse across storage-only configurations is
+marked `SHARED_BASE_MODEL_RESULT` only when base model, chipset, RAM and regional
+processor match. Unsupported configurations intentionally remain without results.
+The script writes only to the fixed local Docker PostgreSQL container and is not
+a runtime ingestion source.
 
 ## 7.2 Channel B — owner evidence grade
 
