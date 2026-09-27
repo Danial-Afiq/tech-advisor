@@ -6,7 +6,10 @@ import java.math.BigDecimal;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -60,46 +63,60 @@ public class MobileApiSmartphoneSource implements IngestionSource {
     @Override
     public void ingest(SourceContext context, Consumer<Payload> output) throws Exception {
         if (apiKey.isBlank()) return;
-
         context.check();
-        JsonNode list = fetchList(context);
-        JsonNode devices = list.get("devices");
-        if (devices == null || !devices.isArray()) return;
-
-        int processed = 0;
-        for (JsonNode device : devices) {
-            if (processed >= DEVICE_LIMIT) break;
-
-            String deviceId = text(device, "id");
-            // deviceId doubles as externalId - with no id at all there's no way to identify or
-            // route the record, so this case alone is skipped before emission.
-            if (deviceId == null) { processed++; continue; }
-
-            // Ticket AC: model name always non-null; a record missing it must be rejected and
-            // counted as an error in the run's system_log tally, not silently dropped here. So a
-            // missing brand/modelName still gets emitted - Payload.validate() rejects it and the
-            // orchestrator counts that rejection (PayloadTests/IngestionIntegrationTests cover the
-            // validate()/error-counting halves of this; this source's own test suite has no seam
-            // to fake the HTTP call, so this comment is the record of why the skip was removed).
-            String modelName = text(device, "name");
-            String brand = text(device, "manufacturer_name");
-
-            String hardware = text(device, "hardware");
-            Map<String, BigDecimal> values = new LinkedHashMap<>();
-            Map<String, String> units = new LinkedHashMap<>();
-            putIfPresent(values, units, "ram", MobileApiFieldExtractor.ramGb(hardware), "GB");
-            putIfPresent(values, units, "storage", MobileApiFieldExtractor.storageGb(text(device, "storage")), "GB");
-            putIfPresent(values, units, "battery", MobileApiFieldExtractor.batteryMah(text(device, "battery_capacity")), "mAh");
-            putIfPresent(values, units, "camera", MobileApiFieldExtractor.cameraMp(text(device, "camera")), "MP");
-            String chipset = MobileApiFieldExtractor.chipset(hardware).orElse(null);
-
-            if (!values.isEmpty()) {
-                output.accept(new Payload(sourceId(), deviceId, context.now(),
-                        new Payload.Specifications(deviceId, brand, modelName, chipset, values, units)));
-            }
-
-            processed++;
+        for (JsonNode device : devicesIn(fetchList(context))) {
+            toPayload(sourceId(), context.now(), device).ifPresent(output::accept);
         }
+    }
+
+    /**
+     * Pulls out the "devices" array and caps it at DEVICE_LIMIT - also pure,
+     * also split out purely for direct testability (missing/non-array
+     * "devices" field, respecting the limit on a longer list).
+     */
+    static List<JsonNode> devicesIn(JsonNode list) {
+        JsonNode devices = list.get("devices");
+        if (devices == null || !devices.isArray()) return List.of();
+        List<JsonNode> result = new ArrayList<>();
+        for (JsonNode device : devices) {
+            if (result.size() >= DEVICE_LIMIT) break;
+            result.add(device);
+        }
+        return result;
+    }
+
+    /**
+     * Pure device-JsonNode -> Payload transform, no network - split out from
+     * {@link #ingest} specifically so it's directly unit-testable against
+     * fixture JSON. {@link #ingest}/{@link #fetchList} are the only parts of
+     * this class that still need a real HTTP call to exercise.
+     */
+    static Optional<Payload> toPayload(String sourceId, Instant observedAt, JsonNode device) {
+        String deviceId = text(device, "id");
+        // deviceId doubles as externalId - with no id at all there's no way to identify or
+        // route the record, so this case alone is skipped before emission.
+        if (deviceId == null) return Optional.empty();
+
+        // Ticket AC: model name always non-null; a record missing it must be rejected and
+        // counted as an error in the run's system_log tally, not silently dropped here. So a
+        // missing brand/modelName still gets emitted - Payload.validate() rejects it and the
+        // orchestrator counts that rejection (PayloadTests/IngestionIntegrationTests cover the
+        // validate()/error-counting halves of this).
+        String modelName = text(device, "name");
+        String brand = text(device, "manufacturer_name");
+
+        String hardware = text(device, "hardware");
+        Map<String, BigDecimal> values = new LinkedHashMap<>();
+        Map<String, String> units = new LinkedHashMap<>();
+        putIfPresent(values, units, "ram", MobileApiFieldExtractor.ramGb(hardware), "GB");
+        putIfPresent(values, units, "storage", MobileApiFieldExtractor.storageGb(text(device, "storage")), "GB");
+        putIfPresent(values, units, "battery", MobileApiFieldExtractor.batteryMah(text(device, "battery_capacity")), "mAh");
+        putIfPresent(values, units, "camera", MobileApiFieldExtractor.cameraMp(text(device, "camera")), "MP");
+        String chipset = MobileApiFieldExtractor.chipset(hardware).orElse(null);
+
+        if (values.isEmpty()) return Optional.empty();
+        return Optional.of(new Payload(sourceId, deviceId, observedAt,
+                new Payload.Specifications(deviceId, brand, modelName, chipset, values, units)));
     }
 
     private JsonNode fetchList(SourceContext context) throws Exception {
@@ -110,7 +127,7 @@ public class MobileApiSmartphoneSource implements IngestionSource {
         return json.readTree(context.get(uri));
     }
 
-    private static String text(JsonNode node, String field) {
+    static String text(JsonNode node, String field) {
         if (node == null) return null;
         JsonNode value = node.get(field);
         return value == null || value.isNull() ? null : value.asText();
