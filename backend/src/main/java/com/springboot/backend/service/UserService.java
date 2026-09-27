@@ -52,6 +52,12 @@ public class UserService {
                 .orElseThrow(() ->
                         new BadCredentialsException("Invalid email or password"));
 
+        if (!"USER".equals(user.getRole())) {
+                throw new BadCredentialsException(
+                        "Invalid email or password"
+                );
+        }
+
         if (!passwordEncoder.matches(
                 request.getPassword(),
                 user.getPasswordHash())) {

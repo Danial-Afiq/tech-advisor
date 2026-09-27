@@ -53,6 +53,8 @@ jobs:
             SPRING_DATASOURCE_URL
             SPRING_DATASOURCE_USERNAME
             SPRING_DATASOURCE_PASSWORD
+            ADMIN_EMAIL
+            ADMIN_PASSWORD
           )
           secret_metadata="$(flyctl secrets list --json)"
 
@@ -119,14 +121,15 @@ jobs:
         shell: bash
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID: '-1004379768998'
+          TELEGRAM_MESSAGE_THREAD_ID: '14'
           SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch }}
           SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
 
-          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
-            echo "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets are required."
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN repository secret is required."
             exit 1
           fi
 
@@ -139,4 +142,5 @@ jobs:
             --request POST \
             "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "message_thread_id=${TELEGRAM_MESSAGE_THREAD_ID}" \
             --data-urlencode "text=${message}"

@@ -97,5 +97,8 @@ const SCAN_OUTCOMES = [
 ];
 
 /** Stand-in for a real recommendation until the page is wired to the API. */
-export const randomScanOutcome = () =>
-  SCAN_OUTCOMES[Math.floor(Math.random() * SCAN_OUTCOMES.length)];
+export const randomScanOutcome = () => {
+  const values = new Uint32Array(1);
+  crypto.getRandomValues(values);
+  return SCAN_OUTCOMES[values[0] % SCAN_OUTCOMES.length];
+};
