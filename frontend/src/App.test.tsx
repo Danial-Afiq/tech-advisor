@@ -1,19 +1,26 @@
 import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import App from './App'
 
-describe('App', () => {
-  it('increments the counter when clicked', async () => {
-    const user = userEvent.setup()
-    render(<App />)
+function renderAt(path: string) {
+  window.history.pushState({}, '', path)
+  render(<App />)
+}
 
-    const button = screen.getByRole('button', { name: /count is 0/i })
+afterEach(() => {
+  window.history.pushState({}, '', '/')
+})
 
-    await user.click(button)
+describe('App routes', () => {
+  it('renders the login page at /login', () => {
+    renderAt('/login')
 
-    expect(
-      screen.getByRole('button', { name: /count is 1/i })
-    ).toBeInTheDocument()
+    expect(screen.getByLabelText('Email')).toBeInTheDocument()
+  })
+
+  it('renders nothing for an unknown path', () => {
+    renderAt('/no-such-page')
+
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument()
   })
 })
