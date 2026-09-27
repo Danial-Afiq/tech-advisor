@@ -49,6 +49,8 @@ jobs:
       # Download the repository onto the GitHub Actions runner
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       # Install Java 21 for the Spring Boot backend
       - name: Set up Java 21
@@ -74,12 +76,27 @@ jobs:
           # the same Maven version installed manually
           if [ -f mvnw ]; then
             chmod +x mvnw
-            ./mvnw test
-            ./mvnw package -DskipTests
+            ./mvnw verify
           else
-            mvn test
-            mvn package -DskipTests
+            mvn verify
           fi
+
+      - name: Set up Node.js for frontend coverage
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Generate frontend coverage
+        working-directory: frontend
+        shell: bash
+        run: |
+          npm ci
+          npm run test:coverage
+
+      - name: SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   frontend:
     name: Frontend - Test and Build
@@ -116,6 +133,7 @@ jobs:
           fi
 
           # Run tests
+          npm run lint
           npm test
           npm run build
 
