@@ -542,7 +542,11 @@ only after the admin selects a validated provider identity and the worker revali
 that choice; it does not create price observations.
 
 The branch-local one-time catalogue backfill uses
-`data/catalogue_backfill.json` plus `scripts/backfill_catalogue.py`. It now stages
+`data/catalogue_backfill.json` plus `scripts/backfill_catalogue.py`. It is
+bootstrap/supporting data for local development, tests, demos, historical and
+older-device coverage, benchmark provenance, and fallback while the planned
+MobileAPI.dev integration is not yet implemented. It is not the intended
+long-term authority for smartphone specifications or prices. It now stages
 453 exact smartphone configurations: the original 352 owned-device-oriented
 records plus a 101-product 2025-2026 candidate batch. Every product in the newer
 batch has an exact current new-device price (69 direct SGD and 32 converted to
@@ -1746,40 +1750,34 @@ decision: the JWT is kept in `sessionStorage`, isolated in
 
 # 17. External data sources — current status
 
-## 17.1 Important: final production sources are NOT fully confirmed
+## 17.1 Source strategy by data type — team decision 27 Sep 2026
 
-Do not hardcode business logic around one source as if the team permanently selected it.
+- **Smartphone specifications and prices:** MobileAPI.dev is the intended
+  authoritative ongoing external provider. Its integration is planned and is
+  not implemented in the current checkout. One-time and periodic ingestion
+  should write normalized data to `products`, `phone`, and `price_history`;
+  normal application requests then read PostgreSQL and do not call MobileAPI.dev.
+- **Owner reviews:** SearchAPI Google Product Reviews (§17.4).
+- **Benchmarks:** separate device-level benchmark sources and the existing
+  benchmark enrichment/provenance. MobileAPI.dev is not currently established
+  as a benchmark source.
+- **Launch/change feeds and sources for future product categories:** still open.
 
-Historical/proposed candidates discussed include:
-- Open Icecat
-- Best Buy API
-- eBay API
-- NVIDIA/AMD RSS feeds
-- public technology launch RSS/Atom feeds
-- manufacturer specification pages
-- PCPartPicker
-- RTINGS
-- TechPowerUp
-- simulated feed/history for testing/demo
+Keep source adapters replaceable, normalize data through the shared ingestion
+contract, and keep the AI/recommendation layers source-agnostic.
 
-Different old docs mention different combinations.
+## 17.1.1 Current and planned real adapters
 
-The safe architectural decision is:
-- keep source adapters replaceable,
-- normalize into the shared ingestion contract,
-- keep AI/recommendation layers source-agnostic.
-
-## 17.1.1 Implemented real adapters — 23 Sep 2026
-
-- **`MobileApiSmartphoneSource`** (ticket 1.2, PR #23, not yet merged as
-  of this writing) — MobileAPI.dev device list endpoint (`/devices/` or
-  `/devices/by-year/`), 1 request/run, up to 10 devices. RAM/storage/
-  battery/chipset parsed from list-response text fields. Has a real
-  production sink now (`SmartphoneCatalogSink`, upserts `products`/
-  `phone`). Requires `sources.mobileapi.api-key` (not yet provisioned),
-  so still not in `ingestion.enabled-sources` even once merged. Not
-  present on this branch (`feat/1.4-tech-launch-rss`) since it branched
-  off `main` before #23 landed.
+- **MobileAPI.dev smartphone catalogue ingestion — PLANNED:** when implemented,
+  it must reconcile incoming records against existing `(brand, model_name)`
+  identities rather than blindly duplicate catalogue rows. Existing backfill
+  data must not be blindly deleted. If an incoming identity represents the same
+  exact hardware configuration, preserve or remap its existing benchmark
+  observations. The files `data/catalogue_backfill.json` and
+  `scripts/backfill_catalogue.py` remain useful for bootstrap/local development,
+  tests/demos, historical and older-device coverage, benchmark provenance, and
+  fallback until the integration exists; they are not a competing long-term
+  authority for specifications or prices once MobileAPI.dev ingestion exists.
 - **`HardwareZoneReviewSource`** (ticket 1.4, revised scope) — smartphone
   and GPU **review** text (owner-evidence/sentiment pipeline, §7.2), not
   the launch/change feed the ticket originally described. Fetch +
@@ -1810,8 +1808,8 @@ The safe architectural decision is:
   either, despite a real search effort. TechPowerUp (GPU specs, still
   unimplemented) has a Verge-style block and needs the same treatment
   before any adapter is built against it.
-- Neither adapter's exact field/source selection is a final decision —
-  both are config-driven per §17.1's "keep source adapters replaceable."
+- Adapter details remain config-driven and replaceable even where the team has
+  selected the intended source for a data type.
 - **Mandatory standard going forward**: before recommending or building
   against any external source, check both `robots.txt` **and** the
   site's actual Terms of Service text for AI-training/scraping
@@ -2619,17 +2617,17 @@ Exact recommendation-expiry/decay policy remains a product decision unless a cur
 
 Keep these explicit so an assistant does not accidentally “decide” them.
 
-## 27.1 Final live data sources
-Not fully confirmed.
+## 27.1 Remaining live-source implementation decisions
 
-Need final selection for:
-- smartphone specs,
-- price,
-- benchmark data,
-- launch/change feeds,
+The team direction for smartphone specifications and pricing is resolved:
+MobileAPI.dev is the intended authoritative ongoing external provider, with
+periodic ingestion into PostgreSQL. The integration is still to be implemented.
 
-Owner reviews are selected for this vertical slice: SearchAPI Google Shopping
-reviews (§17.4). Other source categories remain open; adapters remain replaceable.
+Owner reviews use SearchAPI Google Product Reviews (§17.4). Benchmarks remain a
+separate device-level evidence stream using the existing enrichment/provenance;
+MobileAPI.dev is not assumed to provide them. The exact ongoing benchmark-source
+mix, launch/change feeds, and sources for future product categories remain open.
+Adapters remain replaceable.
 
 ## 27.2 LLM provider/model — mechanism resolved, choice still open
 Hosted API, SMU-X budget available.
@@ -3194,7 +3192,7 @@ Recommended doc cleanup:
 
 If only reading one section, read this:
 
-> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203, backed by a generic product catalogue with `phone` and `gpu` subtype tables for schema evolution. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. Final live ingestion sources are still not fully confirmed, so source adapters must remain replaceable.
+> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203, backed by a generic product catalogue with `phone` and `gpu` subtype tables for schema evolution. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. MobileAPI.dev is the planned authoritative ongoing source for smartphone specifications and prices, ingested periodically into PostgreSQL rather than called per user request. SearchAPI supplies owner reviews, while benchmarks use separate device-level sources. Other live-source choices remain open and adapters remain replaceable.
 
 ---
 
