@@ -29,8 +29,9 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code ai_model} and {@code prompt_version} stay null for the same reason,
  * and {@code reasoning} is a Java template rather than model prose.
  *
- * <p>No trigger: nothing schedules or exposes this yet. {@link #evaluateAllDevices()}
- * is the entry point the trigger is meant to call.
+ * <p>{@link InventoryRecommendationTrigger} calls {@link #evaluateAndPersist} when a
+ * device is added or edited. Nothing schedules a full run yet; {@link #evaluateAllDevices()}
+ * is the entry point a scheduled run is meant to call.
  */
 @Service
 public class DeterministicRecommendationService {

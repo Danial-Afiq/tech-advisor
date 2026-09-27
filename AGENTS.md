@@ -1977,8 +1977,9 @@ Deliberate boundaries:
   ticket's job.
 - **The maturity gate (§8.3) is still not implemented.** Nothing in this package
   checks evidence maturity before spending a call.
-- **No trigger.** No `@Scheduled`, no controller, no HTTP surface. The scheduled job
-  that will drive this calls `DeterministicRecommendationService.evaluateAllDevices()`
+- **No trigger for the AI step.** No `@Scheduled`, no controller, no HTTP surface
+  reaches `assessAndPersist`. The inventory trigger in §18.12 runs the deterministic
+  step only. The scheduled job that will drive this calls `DeterministicRecommendationService.evaluateAllDevices()`
   (§18.11) and then `RecommendationService.assessAndPersist` for the candidates
   worth assessing.
 - **No JPA.** `spring-boot-starter-data-jpa` remains on the classpath and unused;
@@ -2184,6 +2185,46 @@ existing rows are not touched by the run. It does not yet hand `worthAssessing()
 to the AI step; that belongs with the trigger ticket.
 
 Test: `DeterministicRecommendationPersistenceTest` (real PostgreSQL, rolled back).
+
+## 18.12 Inventory trigger - 27 Sep 2026, branch `feat/3.8-evaluate-reccos`
+
+Adding or editing a device re-runs the deterministic pipeline for **that device only**,
+so a user sees verdicts without waiting for a batch run. This pulls part of SCRUM-20
+(capturing a budget) into this branch; that ticket's story points are being reduced.
+
+- `DeviceService.createDevice` / `updateDevice` publish `service/DeviceInventoryChanged(userDeviceId)`.
+  `removeDevice` does not.
+- `recommendation/InventoryRecommendationTrigger` listens with
+  `@TransactionalEventListener(AFTER_COMMIT)` + `@Async("recommendationExecutor")`:
+  after commit, so the evaluation (on another thread) can see the device and a rolled-back
+  save produces nothing; async, so the HTTP response does not wait on the pipeline.
+- It checks `UserDeviceRepository.isEvaluable(id)` (same bar as `findEvaluableDeviceIds`)
+  and calls `DeterministicRecommendationService.evaluateAndPersist`. Not evaluable is
+  logged at INFO and skipped; any failure is logged and swallowed, since the inventory
+  change has already committed.
+- `RecommendationTriggerConfiguration` defines the named executor with **one thread**:
+  evaluations queue and run one at a time, so two quick edits cannot race on the
+  partial unique `ACTIVE` index. A named executor is required because the ingestion
+  `ThreadPoolTaskScheduler` is also an `Executor` and would otherwise catch `@Async`.
+- `recommendation.inventory-trigger-enabled` (default `true`) turns the listener off.
+- Deterministic only - it does not call the AI step (§18.8).
+
+**Budget on the device API (API contract change).** `DeviceRequest` gained optional
+`budget` (>= 0, 10.2 digits) and `currency` (3 upper-case letters). With a budget,
+create/update upserts `device_preferences` (currency defaults to `SGD` on create and is
+kept on update when omitted). Without one, existing preferences are left untouched.
+Only `budget`/`currency` are writable; `priorities`, `pain_points`, urgency, brand
+flexibility and notes still have no API. `DeviceResponse` does not return the budget yet.
+Without a budget a device is never evaluable (§27.10), so a frontend add-device form
+must send one for the demo to show anything.
+
+Not handled yet: removing a device, or unlinking its product, leaves its existing
+`ACTIVE` rows in place.
+
+Tests: `DeviceServiceTest`, `InventoryRecommendationTriggerTest` (Mockito), and
+`InventoryRecommendationTriggerIntegrationTest` - real PostgreSQL and deliberately
+**not** `@Transactional`, because the listener only fires after a real commit; it cleans
+up what it commits.
 
 ---
 
@@ -2810,7 +2851,8 @@ Resolved by SCRUM-34: the budget ceiling is the entire basis of candidate
 shortlisting, so a preferences row without one cannot be evaluated.
 
 **Flag for SCRUM-20 (device inventory management):** the preferences UI must
-always collect a budget. If the product decides a budget should be optional,
+always collect a budget. The backend now accepts `budget`/`currency` on
+`POST`/`PUT /api/devices` (§18.12); the frontend does not send them yet. If the product decides a budget should be optional,
 relax the constraint in a later migration rather than editing V6.
 
 ## 27.11 Where the AI service is hosted — OPEN
