@@ -51,7 +51,7 @@ export function DeviceFormModal({
         {
           // Keep fields this form doesn't edit (productId, specs, …).
           ...device,
-          id: device?.id ?? Math.random().toString(36).slice(2, 9),
+          id: device?.id ?? crypto.randomUUID(),
           type,
           condition,
           brand: brand.trim(),
