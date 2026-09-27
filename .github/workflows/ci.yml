@@ -91,7 +91,6 @@ jobs:
         shell: bash
         run: |
           npm ci
-          npm install --no-save --package-lock=false @vitest/coverage-v8@5.0.0
           npm run test:coverage
 
       - name: SonarQube scan
