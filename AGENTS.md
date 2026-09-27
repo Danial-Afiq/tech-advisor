@@ -1663,7 +1663,7 @@ Current ingestion docs specify safeguards including:
 - emitted-item limit,
 - bounded HTTP attempts,
 - pacing between requests,
-- connect/request timeouts,
+- a 5-second connect timeout and 20-second request timeout,
 - response-size cap,
 - limited retry behaviour for 429/503,
 - cooldown state,
