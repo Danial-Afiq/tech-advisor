@@ -1677,16 +1677,18 @@ Keep real adapters inside this controlled framework.
 
 ## 16.5 Current scheduling decision
 
-Cadence is **every 14 days** (`RunStore.INTERVAL`), matching the original ticket intent and the current live Jira ticket text.
+Cadence is **every 2 days** (`RunStore.INTERVAL`) — **this is a temporary override, not the target production cadence**, in effect since 2026-09-27. The real intent is 14 days, matching the original ticket and the current live Jira ticket text.
 
-**History, so this isn't re-litigated:** the interval was deliberately changed to every 24 hours on 2026-09-16, purely to make the scheduler observable within a short testing window — never the target production cadence. It was reverted back to 14 days on 2026-09-22 once that testing was done. There is no data migration for this change (no production data depended on the temporary daily anchor); it is a plain code constant.
+**History, so this isn't re-litigated:** the interval was first deliberately changed to every 24 hours on 2026-09-16, purely to make the scheduler observable within a short testing window, then reverted back to 14 days on 2026-09-22 once that testing was done. It was changed again to 2 days on 2026-09-27, this time so the newly-enabled `MobileApiSmartphoneSource` (ticket 1.2) can gather real data while the smartphone schema is still expected to change (model-variation handling isn't settled yet). There is no data migration for either change (no production data depends on the anchor's spacing); it is a plain code constant.
+
+This is a **single global interval shared by every enabled source** — there is no per-source schedule in this codebase (`CoordinatorState.nextDue` is one timestamp for the whole batch, not one per source). Changing it affects every currently-enabled source, not just the one motivating the change. As of this writing `INGESTION_ENABLED_SOURCES` only has MobileAPI turned on, so the practical blast radius is just that source — but that stops being true the instant a second source (e.g. HardwareZone reviews, once it has a sink) gets enabled while this override is still active. Building real per-source scheduling is a legitimate future fix, deliberately not done now while the schema is still moving.
 
 - initial anchor: **17 Sep 2026 13:00 SGT / 05:00 UTC**,
 - schedule state is persisted,
 - manual runs do not shift cadence,
 - restart recovery/catch-up is supported.
 
-Do not change this constant based on old references to "daily" in docs, commit messages, or comments predating 2026-09-22 — those describe the temporary testing window, not current behaviour.
+Do not change this constant based on old references to "daily"/"14-day" in docs, commit messages, or comments predating 2026-09-27 — those describe earlier states, not current behaviour. **Revert to 14 days once the smartphone schema settles and this stops being an active data-gathering exercise** — do not let this become a second stale "temporary" that nobody reverts, the way the first one nearly did.
 
 ## 16.6 Current simulated/demo ingestion
 Current runner includes simulated fixtures and persisted demo receipts.
@@ -1768,54 +1770,91 @@ contract, and keep the AI/recommendation layers source-agnostic.
 
 ## 17.1.1 Current and planned real adapters
 
-- **MobileAPI.dev smartphone catalogue ingestion — PLANNED:** when implemented,
-  it must reconcile incoming records against existing `(brand, model_name)`
-  identities rather than blindly duplicate catalogue rows. Existing backfill
-  data must not be blindly deleted. If an incoming identity represents the same
-  exact hardware configuration, preserve or remap its existing benchmark
-  observations. The files `data/catalogue_backfill.json` and
-  `scripts/backfill_catalogue.py` remain useful for bootstrap/local development,
-  tests/demos, historical and older-device coverage, benchmark provenance, and
-  fallback until the integration exists; they are not a competing long-term
-  authority for specifications or prices once MobileAPI.dev ingestion exists.
-- **`HardwareZoneReviewSource`** (ticket 1.4, revised scope) — smartphone
-  and GPU **review** text (owner-evidence/sentiment pipeline, §7.2), not
-  the launch/change feed the ticket originally described. Fetch +
-  translate only: no production sink yet for `Article` payloads, so not in
-  `ingestion.enabled-sources`. Supersedes an earlier RSS-feed attempt
-  (`TechLaunchRssSource`, since removed) that was rejected mid-branch —
-  RSS snippets ran ~95 characters (no real body text), and GPU reviews are
-  too infrequent to reliably appear in the site's mixed, last-20-item feed
-  (verified: a real GPU review from three months prior never showed up in
-  either feed checked). Discovery instead walks the site's per-category
-  `/reviews` listing pages, which carry a real back-catalogue. Budget: 2
-  listing fetches + up to 4 smartphone + 4 GPU article fetches = 10
-  requests, exactly the shared `SourceContext` ceiling.
-  **The Verge was evaluated and rejected** for the earlier RSS attempt:
-  its `robots.txt` explicitly disallows `ClaudeBot`/`anthropic-ai` outside
-  one unrelated path (`Allow: /sp/`, `Disallow: /`) — do not add it back
-  without a human re-clearing that. **TechRadar was evaluated and
-  rejected**: permissive `robots.txt`, but Future plc's Terms of Service
-  (`futureplc.com/terms-and-conditions-uk/`) explicitly prohibit "text or
-  data mining or web scraping ... including development, training,
-  fine-tuning or validation of AI systems," with no academic exception —
-  found only by reading the actual ToS text, not just `robots.txt`.
-  **CNET** blocks `ClaudeBot`/`anthropic-ai` by name in `robots.txt`.
-  **Android Authority** has a general scraping ban. HardwareZone (SPH
-  Media) and Engadget (Static Media) were checked against the same
-  evidentiary bar (robots.txt **and** actual ToS text, not robots.txt
-  alone) and no AI-training/scraping-prohibition clause was found in
-  either, despite a real search effort. TechPowerUp (GPU specs, still
-  unimplemented) has a Verge-style block and needs the same treatment
-  before any adapter is built against it.
-- Adapter details remain config-driven and replaceable even where the team has
-  selected the intended source for a data type.
-- **Mandatory standard going forward**: before recommending or building
-  against any external source, check both `robots.txt` **and** the
-  site's actual Terms of Service text for AI-training/scraping
-  restrictions — a permissive `robots.txt` alone is not sufficient
-  clearance (this is exactly how TechRadar was nearly built against
-  before its ToS prohibition was found).
+The safe architectural decision is:
+- keep source adapters replaceable,
+- normalize into the shared ingestion contract,
+- keep AI/recommendation layers source-agnostic.
+
+- **MobileAPI.dev/`data/catalogue_backfill.json` reconciliation is still
+  open.** MobileAPI ingestion now exists for real (§17.1.1 below), but
+  nothing in `SmartphoneCatalogSink` reconciles against the existing
+  bootstrap backfill data yet — it must, eventually, match incoming
+  records against existing `(brand, model_name)` identities rather than
+  blindly duplicate catalogue rows, and if an incoming identity represents
+  the same exact hardware configuration, preserve or remap its existing
+  benchmark observations rather than lose them. `data/catalogue_backfill.json`
+  and `scripts/backfill_catalogue.py` remain useful for bootstrap/local
+  development, tests/demos, historical and older-device coverage, benchmark
+  provenance, and fallback until that reconciliation exists; they are not a
+  competing long-term authority for specifications or prices once it does.
+
+## 17.1.1 Implemented real adapter + sink — smartphones (ticket 1.2)
+
+`MobileApiSmartphoneSource` (MobileAPI.dev, https://mobileapi.dev/docs/) and
+`SmartphoneCatalogSink` (writes to `products`/`phone` from
+`V6__create_sprint_1_schema.sql`) both exist. **Not** in
+`ingestion.enabled-sources` yet — the blocker is `sources.mobileapi.api-key`
+never being provisioned, not a missing sink anymore.
+
+- `Payload.Specifications` gained `brand`/`modelName`/`chipset` fields
+  (previously numeric-values-only) once the real schema proved `products`
+  requires brand+model_name as a NOT NULL unique pair, and `phone.chipset`
+  is TEXT, not numeric. This is a shared-contract change — any other
+  Specifications emitter (a future GPU source, ticket 1.3) picks up the new
+  fields too; `SimulatedSources.simulatedRelease()` was updated to match.
+- `phone.camera_specs` is TEXT ("48 MP + 12 MP + 12 MP"), not a numeric
+  column — the extractor's numeric camera-MP value has nowhere to go and is
+  currently just not persisted. Revisit if camera detail actually matters
+  to a recommendation, not before.
+- Base-object field names (`hardware`, `storage`, `battery_capacity`,
+  `camera`, `name`, `manufacturer_name`) are confirmed against a real
+  captured API response, not guessed — see `mobileapi-response.json` on the
+  ticket's branch history.
+- MobileAPI.dev isn't in the candidate list below (this section predates
+  that decision) — added here for traceability, not because §17.1's "not
+  fully confirmed" status has changed.
+
+## 17.1.2 Implemented real adapter — smartphone/GPU reviews (ticket 1.4, revised scope)
+
+`HardwareZoneReviewSource` — smartphone and GPU **review** text
+(owner-evidence/sentiment pipeline, §7.2), not the launch/change feed the
+ticket originally described. Fetch + translate only: no production sink yet
+for `Article` payloads, so not in `ingestion.enabled-sources`. Supersedes an
+earlier RSS-feed attempt (`TechLaunchRssSource`, since removed) that was
+rejected mid-branch — RSS snippets ran ~95 characters (no real body text),
+and GPU reviews are too infrequent to reliably appear in the site's mixed,
+last-20-item feed (verified: a real GPU review from three months prior
+never showed up in either feed checked). Discovery instead walks the site's
+per-category `/reviews` listing pages, which carry a real back-catalogue.
+Budget: 2 listing fetches + up to 4 smartphone + 4 GPU article fetches = 10
+requests, exactly the shared `SourceContext` ceiling.
+
+**The Verge was evaluated and rejected** for the earlier RSS attempt: its
+`robots.txt` explicitly disallows `ClaudeBot`/`anthropic-ai` outside one
+unrelated path (`Allow: /sp/`, `Disallow: /`) — do not add it back without a
+human re-clearing that. **TechRadar was evaluated and rejected**:
+permissive `robots.txt`, but Future plc's Terms of Service
+(`futureplc.com/terms-and-conditions-uk/`) explicitly prohibit "text or data
+mining or web scraping ... including development, training, fine-tuning or
+validation of AI systems," with no academic exception — found only by
+reading the actual ToS text, not just `robots.txt`. **CNET** blocks
+`ClaudeBot`/`anthropic-ai` by name in `robots.txt`. **Android Authority**
+has a general scraping ban. HardwareZone (SPH Media) and Engadget (Static
+Media) were checked against the same evidentiary bar (robots.txt **and**
+actual ToS text, not robots.txt alone) and no AI-training/scraping-
+prohibition clause was found in either, despite a real search effort.
+TechPowerUp (GPU specs, still unimplemented) has a Verge-style block and
+needs the same treatment before any adapter is built against it.
+
+Neither adapter's exact field/source selection is a final decision — both
+are config-driven per §17.1's "keep source adapters replaceable."
+
+**Mandatory standard going forward**: before recommending or building
+against any external source, check both `robots.txt` **and** the site's
+actual Terms of Service text for AI-training/scraping restrictions — a
+permissive `robots.txt` alone is not sufficient clearance (this is exactly
+how TechRadar was nearly built against before its ToS prohibition was
+found).
 
 ## 17.2 Compliance requirement
 Before scraping any real site:
@@ -2304,12 +2343,14 @@ belongs only wherever the AI service runs (§27.9).
 ```text
 FLY_API_TOKEN
 TELEGRAM_BOT_TOKEN
-TELEGRAM_CHAT_ID
 ```
 
-`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are repository secrets used by the
-CI/CD failure steps and the review-request / PR-mention workflows. Never put any
-secret value in the repo.
+`TELEGRAM_BOT_TOKEN` is the repository secret used by the CI/CD failure steps
+and the review-request / PR-mention workflows. All GitHub-originated Telegram
+notifications are routed to the `CICD` forum topic with `chat_id`
+`-1004379768998` and `message_thread_id` `14`; these routing IDs are workflow
+configuration, not secrets. Never put the bot token or any other secret value in
+the repo.
 
 ## 20.5 Vercel
 Production frontend should use Vercel environment variable:

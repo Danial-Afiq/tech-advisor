@@ -17,7 +17,8 @@ jobs:
         shell: bash
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID: '-1004379768998'
+          TELEGRAM_MESSAGE_THREAD_ID: '14'
           IS_PULL_REQUEST: ${{ github.event.issue.pull_request != null }}
           AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association }}
           COMMENT_BODY: ${{ github.event.comment.body }}
@@ -46,6 +47,7 @@ jobs:
 
           token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
           chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          thread_id = os.environ.get("TELEGRAM_MESSAGE_THREAD_ID", "")
           comment = os.environ.get("COMMENT_BODY", "")
           comment_url = os.environ.get("COMMENT_URL", "")
           author = os.environ.get("COMMENT_AUTHOR", "")
@@ -71,10 +73,12 @@ jobs:
               print("No GitHub @mention found; no Telegram message sent.")
               raise SystemExit(0)
 
-          if not token or not chat_id:
+          if not token:
               raise SystemExit(
-                  "::error::TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID repository secrets are required."
+                  "::error::TELEGRAM_BOT_TOKEN repository secret is required."
               )
+          if not chat_id or not thread_id:
+              raise SystemExit("::error::Telegram CICD topic routing is not configured.")
 
           def mapped_handle(username: str) -> str:
               return mapping.get(username.lower(), f"@{username}")
@@ -118,7 +122,11 @@ jobs:
           endpoint = f"https://api.telegram.org/bot{token}/sendMessage"
           for chunk in chunks(full_message):
               payload = urllib.parse.urlencode(
-                  {"chat_id": chat_id, "text": chunk}
+                  {
+                      "chat_id": chat_id,
+                      "message_thread_id": thread_id,
+                      "text": chunk,
+                  }
               ).encode()
               request = urllib.request.Request(endpoint, data=payload, method="POST")
               with urllib.request.urlopen(request, timeout=20) as response:
