@@ -76,11 +76,9 @@ jobs:
           # the same Maven version installed manually
           if [ -f mvnw ]; then
             chmod +x mvnw
-            ./mvnw test
-            ./mvnw package -DskipTests
+            ./mvnw verify
           else
-            mvn test
-            mvn package -DskipTests
+            mvn verify
           fi
       
       - name: SonarQube scan

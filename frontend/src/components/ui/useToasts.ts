@@ -7,7 +7,7 @@ export function useToasts(durationMs = 4200) {
 
   const pushToast = useCallback(
     (title: string, text: string, icon = "✓") => {
-      const id = Math.random().toString(36).slice(2, 9);
+      const id = crypto.randomUUID();
       setToasts((current) => [...current, { id, title, text, icon }]);
       window.setTimeout(
         () => setToasts((current) => current.filter((t) => t.id !== id)),
