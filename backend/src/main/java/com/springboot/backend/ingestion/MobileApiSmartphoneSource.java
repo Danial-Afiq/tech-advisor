@@ -2,6 +2,9 @@ package com.springboot.backend.ingestion;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.springboot.backend.ingestion.core.IngestionSource;
+import com.springboot.backend.ingestion.core.Payload;
+import com.springboot.backend.ingestion.core.SourceContext;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.net.URLEncoder;
