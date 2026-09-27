@@ -1,6 +1,6 @@
 package com.springboot.backend.service;
 
-import com.springboot.backend.dto.AdminLoginRequest;
+import com.springboot.backend.dto.LoginRequest;
 import com.springboot.backend.dto.LoginResponse;
 
 import org.springframework.security.authentication.BadCredentialsException;
@@ -29,7 +29,7 @@ public class AdminAuthenticationService {
     }
 
     public LoginResponse login(
-            AdminLoginRequest request) {
+            LoginRequest request) {
 
         String email = request
                 .getEmail()

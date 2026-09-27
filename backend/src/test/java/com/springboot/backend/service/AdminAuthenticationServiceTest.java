@@ -1,6 +1,6 @@
 package com.springboot.backend.service;
 
-import com.springboot.backend.dto.AdminLoginRequest;
+import com.springboot.backend.dto.LoginRequest;
 import com.springboot.backend.dto.LoginResponse;
 import org.springframework.security.authentication.BadCredentialsException;
 import com.springboot.backend.model.User;
@@ -50,8 +50,8 @@ class AdminAuthenticationServiceTest {
     @Test
     void validAdminCredentialsReturnAdminToken() {
 
-        AdminLoginRequest request =
-                new AdminLoginRequest();
+        LoginRequest request =
+                new LoginRequest();
 
         request.setEmail(
                 "admin@techadvisor.com"
@@ -101,8 +101,8 @@ class AdminAuthenticationServiceTest {
     @Test
     void invalidAdminPasswordDoesNotReturnToken() {
 
-        AdminLoginRequest request =
-                new AdminLoginRequest();
+        LoginRequest request =
+                new LoginRequest();
 
         request.setEmail(
                 "admin@techadvisor.com"

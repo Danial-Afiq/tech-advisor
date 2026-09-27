@@ -1,6 +1,6 @@
 package com.springboot.backend.controller;
 
-import com.springboot.backend.dto.AdminLoginRequest;
+import com.springboot.backend.dto.LoginRequest;
 import com.springboot.backend.dto.LoginResponse;
 import com.springboot.backend.service.AdminAuthenticationService;
 import jakarta.validation.Valid;
@@ -28,7 +28,7 @@ public class AdminAuthController {
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(
             @Valid @RequestBody
-            AdminLoginRequest request) {
+            LoginRequest request) {
 
         LoginResponse response =
                 adminAuthenticationService.login(request);
