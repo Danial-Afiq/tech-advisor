@@ -10,8 +10,14 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
     public sealed interface Body permits Article, Specifications, Price, Benchmark {}
     public record Article(String productReference, String title, URI url, Instant publishedAt,
                           String text) implements Body {}
-    public record Specifications(String productReference, Map<String, BigDecimal> values,
-                                 Map<String, String> units) implements Body {}
+    /**
+     * brand/modelName/chipset are text identity/spec fields the catalogue schema (products.brand,
+     * products.model_name, phone.chipset) requires directly - they don't fit the numeric values map.
+     * Added once real schema existed to check against (V6__create_sprint_1_schema.sql), rather than
+     * guessed speculatively beforehand.
+     */
+    public record Specifications(String productReference, String brand, String modelName, String chipset,
+                                 Map<String, BigDecimal> values, Map<String, String> units) implements Body {}
     public record Price(String productReference, BigDecimal amount, String currency) implements Body {}
     public record Benchmark(String productReference, String name, BigDecimal score, String unit)
             implements Body {}
@@ -28,11 +34,14 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
                     throw new IllegalArgumentException("Invalid article");
             }
             case Specifications s -> {
-                if (blank(s.productReference()) || s.values() == null || s.values().isEmpty()
+                if (blank(s.productReference()) || blank(s.brand()) || blank(s.modelName())
+                        || s.values() == null || s.values().isEmpty()
                         || s.units() == null || !s.units().keySet().equals(s.values().keySet())
                         || s.values().values().stream().anyMatch(v -> v == null || v.signum() < 0)
                         || s.units().values().stream().anyMatch(Payload::blank))
                     throw new IllegalArgumentException("Invalid specifications");
+                // chipset is intentionally not required here: the catalogue schema allows it null,
+                // matching the "accept null for fields the source doesn't provide" ticket rule.
             }
             case Price p -> {
                 if (blank(p.productReference()) || p.amount() == null || p.amount().signum() < 0
