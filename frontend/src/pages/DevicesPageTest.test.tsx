@@ -67,7 +67,7 @@ describe("DevicesPageTest", () => {
     renderPage();
 
     expect(screen.getByText(/Demo mode/)).toBeInTheDocument();
-    expect(screen.getByText("iPhone 13 Pro Max")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Apple iPhone 13 Pro Max/ })).toBeInTheDocument();
 
     await user.click(screen.getAllByRole("button", { name: "Edit device" })[0]);
     expect(screen.getByRole("dialog", { name: "Update device details" })).toBeInTheDocument();
@@ -94,7 +94,8 @@ describe("DevicesPageTest", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
     await user.type(screen.getByLabelText("Email"), "user@example.com");
     await user.type(screen.getByLabelText("Password"), "password123");
-    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    const signInDialog = screen.getByRole("dialog", { name: "Sign in to save devices" });
+    await user.click(signInDialog.querySelector('button[type="submit"]') as HTMLButtonElement);
 
     expect(mocks.signIn).toHaveBeenCalledWith("user@example.com", "password123");
     await waitFor(() => expect(mocks.listDevices).toHaveBeenCalled());
@@ -114,7 +115,7 @@ describe("DevicesPageTest", () => {
     expect(screen.getByText("Loading your devices…")).toBeInTheDocument();
     expect(await screen.findByText(/Demo mode/)).toBeInTheDocument();
     expect(await screen.findByText("Couldn't load your devices")).toBeInTheDocument();
-    expect(screen.getByText("iPhone 13 Pro Max")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Apple iPhone 13 Pro Max/ })).toBeInTheDocument();
   });
 
   it("adds a signed-in device and moves to upgrade preferences", async () => {
