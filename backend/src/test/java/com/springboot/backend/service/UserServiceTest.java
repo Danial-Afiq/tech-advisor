@@ -200,4 +200,33 @@ class UserServiceTest {
 
         verify(jwtService, never()).generateToken(any());
     }
+
+    @Test
+    void loginShouldRejectAdminAccount() {
+
+        LoginRequest request = new LoginRequest();
+        request.setEmail("admin@techadvisor.com");
+        request.setPassword("admin-password");
+
+        User admin = new User(
+                "admin@techadvisor.com",
+                "stored-admin-password-hash",
+                "ADMIN"
+        );
+
+        when(userRepository.findByEmailIgnoreCase(
+                "admin@techadvisor.com"
+        )).thenReturn(Optional.of(admin));
+
+        assertThrows(
+                BadCredentialsException.class,
+                () -> userService.login(request)
+        );
+
+        verify(passwordEncoder, never())
+                .matches(anyString(), anyString());
+
+        verify(jwtService, never())
+                .generateToken(any(User.class));
+    }
 }
