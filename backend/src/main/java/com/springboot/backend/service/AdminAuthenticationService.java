@@ -1,15 +1,15 @@
 package com.springboot.backend.service;
 
-import com.springboot.backend.dto.LoginRequest;
-import com.springboot.backend.dto.LoginResponse;
+import java.util.Locale;
 
 import org.springframework.security.authentication.BadCredentialsException;
-import com.springboot.backend.model.User;
-import com.springboot.backend.repository.UserRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import java.util.Locale;
+import com.springboot.backend.dto.LoginRequest;
+import com.springboot.backend.dto.LoginResponse;
+import com.springboot.backend.model.User;
+import com.springboot.backend.repository.UserRepository;
 
 @Service
 public class AdminAuthenticationService {
@@ -59,7 +59,8 @@ public class AdminAuthenticationService {
 
         return new LoginResponse(
                 token,
-                jwtService.getExpirationSeconds()
+                jwtService.getExpirationSeconds(),
+                admin.getRole()
         );
     }
 }
