@@ -81,6 +81,18 @@ jobs:
             mvn verify
           fi
       
+      - name: Set up Node.js for frontend coverage
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Generate frontend coverage
+        working-directory: frontend
+        shell: bash
+        run: |
+          npm ci
+          npm run test:coverage
+
       - name: SonarQube scan
         uses: SonarSource/sonarqube-scan-action@v8
         env:
