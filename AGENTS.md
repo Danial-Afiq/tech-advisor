@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 23 September 2026
+> **Last consolidated:** 27 September 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -362,6 +362,7 @@ Neon PostgreSQL
 - React
 - TypeScript
 - Vite
+- Tailwind CSS v4 + daisyUI v5 (loaded in `frontend/src/App.css`)
 - Node.js 22 in CI
 - Vitest/tests
 - Vercel deployment
@@ -372,6 +373,10 @@ Current API config pattern:
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 ```
+
+UI look-and-feel rules (shared components, design tokens, layout gotchas) live
+in [`frontend/AGENTS.md`](frontend/AGENTS.md). Read it before building or
+changing any page.
 
 ## 5.2 Backend
 - Java 21
@@ -1667,6 +1672,13 @@ or the token expiration is not positive. An integration test checks that
 `GET /api/profile` rejects missing or invalid tokens and returns the user's
 profile with a valid token.
 
+Frontend: the `/login` page signs up through `POST /api/auth/register` and
+logs in through `POST /api/auth/login`. The register endpoint takes email +
+password only, with no name field. Token storage is temporary and NOT a
+decision: the JWT is kept in `sessionStorage`, isolated in
+`frontend/src/api/session.ts`. How the frontend should store tokens
+(sessionStorage, localStorage or an httpOnly cookie) is still open.
+
 # 17. External data sources — current status
 
 ## 17.1 Important: final production sources are NOT fully confirmed
@@ -1691,6 +1703,56 @@ The safe architectural decision is:
 - keep source adapters replaceable,
 - normalize into the shared ingestion contract,
 - keep AI/recommendation layers source-agnostic.
+
+## 17.1.1 Implemented real adapters — 23 Sep 2026
+
+- **`MobileApiSmartphoneSource`** (ticket 1.2, PR #23, not yet merged as
+  of this writing) — MobileAPI.dev device list endpoint (`/devices/` or
+  `/devices/by-year/`), 1 request/run, up to 10 devices. RAM/storage/
+  battery/chipset parsed from list-response text fields. Has a real
+  production sink now (`SmartphoneCatalogSink`, upserts `products`/
+  `phone`). Requires `sources.mobileapi.api-key` (not yet provisioned),
+  so still not in `ingestion.enabled-sources` even once merged. Not
+  present on this branch (`feat/1.4-tech-launch-rss`) since it branched
+  off `main` before #23 landed.
+- **`HardwareZoneReviewSource`** (ticket 1.4, revised scope) — smartphone
+  and GPU **review** text (owner-evidence/sentiment pipeline, §7.2), not
+  the launch/change feed the ticket originally described. Fetch +
+  translate only: no production sink yet for `Article` payloads, so not in
+  `ingestion.enabled-sources`. Supersedes an earlier RSS-feed attempt
+  (`TechLaunchRssSource`, since removed) that was rejected mid-branch —
+  RSS snippets ran ~95 characters (no real body text), and GPU reviews are
+  too infrequent to reliably appear in the site's mixed, last-20-item feed
+  (verified: a real GPU review from three months prior never showed up in
+  either feed checked). Discovery instead walks the site's per-category
+  `/reviews` listing pages, which carry a real back-catalogue. Budget: 2
+  listing fetches + up to 4 smartphone + 4 GPU article fetches = 10
+  requests, exactly the shared `SourceContext` ceiling.
+  **The Verge was evaluated and rejected** for the earlier RSS attempt:
+  its `robots.txt` explicitly disallows `ClaudeBot`/`anthropic-ai` outside
+  one unrelated path (`Allow: /sp/`, `Disallow: /`) — do not add it back
+  without a human re-clearing that. **TechRadar was evaluated and
+  rejected**: permissive `robots.txt`, but Future plc's Terms of Service
+  (`futureplc.com/terms-and-conditions-uk/`) explicitly prohibit "text or
+  data mining or web scraping ... including development, training,
+  fine-tuning or validation of AI systems," with no academic exception —
+  found only by reading the actual ToS text, not just `robots.txt`.
+  **CNET** blocks `ClaudeBot`/`anthropic-ai` by name in `robots.txt`.
+  **Android Authority** has a general scraping ban. HardwareZone (SPH
+  Media) and Engadget (Static Media) were checked against the same
+  evidentiary bar (robots.txt **and** actual ToS text, not robots.txt
+  alone) and no AI-training/scraping-prohibition clause was found in
+  either, despite a real search effort. TechPowerUp (GPU specs, still
+  unimplemented) has a Verge-style block and needs the same treatment
+  before any adapter is built against it.
+- Neither adapter's exact field/source selection is a final decision —
+  both are config-driven per §17.1's "keep source adapters replaceable."
+- **Mandatory standard going forward**: before recommending or building
+  against any external source, check both `robots.txt` **and** the
+  site's actual Terms of Service text for AI-training/scraping
+  restrictions — a permissive `robots.txt` alone is not sufficient
+  clearance (this is exactly how TechRadar was nearly built against
+  before its ToS prohibition was found).
 
 ## 17.2 Compliance requirement
 Before scraping any real site:
@@ -2151,12 +2213,14 @@ belongs only wherever the AI service runs (§27.9).
 ```text
 FLY_API_TOKEN
 TELEGRAM_BOT_TOKEN
-TELEGRAM_CHAT_ID
 ```
 
-`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are repository secrets used by the
-CI/CD failure steps and the review-request / PR-mention workflows. Never put any
-secret value in the repo.
+`TELEGRAM_BOT_TOKEN` is the repository secret used by the CI/CD failure steps
+and the review-request / PR-mention workflows. All GitHub-originated Telegram
+notifications are routed to the `CICD` forum topic with `chat_id`
+`-1004379768998` and `message_thread_id` `14`; these routing IDs are workflow
+configuration, not secrets. Never put the bot token or any other secret value in
+the repo.
 
 ## 20.5 Vercel
 Production frontend should use Vercel environment variable:
