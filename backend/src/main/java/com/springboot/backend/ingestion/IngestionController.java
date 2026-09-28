@@ -5,7 +5,6 @@ import java.security.Principal;
 import java.util.*;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.dao.DataAccessException;
 
 @RestController
@@ -19,9 +18,12 @@ public class IngestionController {
         this.runner = runner; this.store = store; this.registry = registry; this.settings = settings;
     }
     public record Request(List<String> sources, String reason) {}
+    // No CSRF token here: authentication is a bearer JWT the browser must set explicitly
+    // (SecurityConfig disables CSRF protection app-wide), not an ambient cookie a
+    // cross-site request could ride along on - there's nothing for CSRF to protect.
     @GetMapping("/session")
-    public Map<String, String> session(Principal user, CsrfToken csrf) {
-        return Map.of("username", user.getName(), "csrfHeader", csrf.getHeaderName(), "csrfToken", csrf.getToken());
+    public Map<String, String> session(Principal user) {
+        return Map.of("username", user.getName());
     }
     @PostMapping("/runs")
     public ResponseEntity<RunLog> start(@RequestBody Request request, @RequestHeader("Idempotency-Key") String key, Principal user) {
