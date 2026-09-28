@@ -13,7 +13,18 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Component
 public class RunStore {
-    public static final Duration INTERVAL = Duration.ofDays(14);
+    // TEMPORARY override, 27 Sep 2026 - NOT the real production cadence. Set to 2 days
+    // specifically so the newly-enabled MobileAPI source can gather real data to inspect
+    // while the smartphone schema is still expected to change (model-variation handling).
+    // This is a single global interval shared by every enabled source (see AGENTS.md
+    // 16.5/16.9) - there is no per-source schedule in this codebase, so changing it affects
+    // whichever sources are enabled, not just MobileAPI. Nothing else is enabled right now
+    // (INGESTION_ENABLED_SOURCES is blank), so today the blast radius is MobileAPI only, but
+    // that stops being true the moment a second source is turned on. Revert to the real
+    // 14-day value once the schema settles - same pattern as the 24h->14-day history this
+    // constant already has once (AGENTS.md 16.5), do not let this become a second stale
+    // "temporary" that nobody reverts.
+    public static final Duration INTERVAL = Duration.ofDays(2);
     public static final Duration LEASE = Duration.ofSeconds(90);
     private final JdbcTemplate db;
     private final TransactionTemplate tx;
