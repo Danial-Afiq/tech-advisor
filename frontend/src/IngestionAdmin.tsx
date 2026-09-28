@@ -85,7 +85,7 @@ export default function IngestionAdmin() {
       setError('Find matching products and select one before starting ingestion.'); return
     }
     setSubmitting(true); setError('')
-    const body = JSON.stringify({ sources: [...selected].sort(), reason: reason.trim() || null,
+    const body = JSON.stringify({ sources: [...selected].sort((a, b) => a.localeCompare(b)), reason: reason.trim() || null,
       ...(searchApiSelected ? { productName: productName.trim(), externalProductId } : {}) })
     if (!pending.current || pending.current.body !== body) pending.current = { body, key: crypto.randomUUID() }
     try {
