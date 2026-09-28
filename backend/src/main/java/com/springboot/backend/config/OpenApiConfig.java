@@ -12,7 +12,6 @@ import org.springframework.context.annotation.Configuration;
 public class OpenApiConfig {
 
     public static final String BEARER_AUTH = "bearerAuth";
-    public static final String DEMO_BASIC_AUTH = "demoBasicAuth";
 
     @Bean
     public OpenAPI techAdvisorOpenApi() {
@@ -30,11 +29,6 @@ public class OpenApiConfig {
                                 .type(SecurityScheme.Type.HTTP)
                                 .scheme("bearer")
                                 .bearerFormat("JWT")
-                                .description("JWT returned by POST /api/auth/login."))
-                        .addSecuritySchemes(DEMO_BASIC_AUTH, new SecurityScheme()
-                                .name(DEMO_BASIC_AUTH)
-                                .type(SecurityScheme.Type.HTTP)
-                                .scheme("basic")
-                                .description("Local ingestion-demo profile only. Production ingestion routes remain disabled.")));
+                                .description("JWT returned by the user or admin login endpoint.")));
     }
 }

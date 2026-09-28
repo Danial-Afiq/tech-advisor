@@ -14,10 +14,14 @@ public class LoginResponse {
     @Schema(description = "Token lifetime in seconds.", example = "3600")
     private final long expiresIn;
 
-    public LoginResponse(String token, long expiresIn) {
+    @Schema(description = "Role encoded in the JWT.", example = "USER", allowableValues = {"USER", "ADMIN"})
+    private final String role;
+
+    public LoginResponse(String token, long expiresIn, String role) {
         this.token = token;
         this.tokenType = "Bearer";
         this.expiresIn = expiresIn;
+        this.role = role;
     }
 
     public String getToken() {
@@ -30,5 +34,9 @@ public class LoginResponse {
 
     public long getExpiresIn() {
         return expiresIn;
+    }
+
+    public String getRole() {
+        return role;
     }
 }

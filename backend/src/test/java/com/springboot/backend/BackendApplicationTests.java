@@ -34,12 +34,12 @@ class BackendApplicationTests {
     }
 
     @Test
-    void productionIngestionIsDeniedUntilAccountAuthIsIntegrated() throws Exception {
+    void adminCanAccessProductionIngestionAfterAccountAuthIsIntegrated() throws Exception {
         var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup(web)
                 .apply(org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity()).build();
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/admin/ingestion/runs")
                 .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("admin").roles("ADMIN")))
-                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isForbidden());
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/actuator/health"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
     }

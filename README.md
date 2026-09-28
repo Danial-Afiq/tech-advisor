@@ -776,9 +776,10 @@ protected profile or device operation, call `POST /api/auth/login`, copy the
 returned token, choose **Authorize**, and enter the token without adding a
 `Bearer` prefix. Swagger UI adds that prefix automatically.
 
-The **Admin ingestion** group documents the existing ingestion contract, but
-production access remains disabled. Its Basic-auth and CSRF flow is available
-only when the backend runs with the `ingestion-demo` profile.
+The **Admin ingestion** group requires an ADMIN JWT. Call
+`POST /api/auth/admin/login` with the configured administrator account, then
+use its token through the same **Authorize** dialog. Admin ingestion uses bearer
+authentication and does not require a separate Basic-auth or CSRF flow.
 
 ### Run the frontend
 
@@ -812,8 +813,8 @@ Build the frontend:
 npm run build
 ```
 
-Frontend environment variables (`VITE_API_BASE_URL`, `VITE_INGESTION_DEMO`) are
-read from the **repo-root** `.env`, not from `frontend/`. See
+Frontend environment variables (`VITE_API_BASE_URL`) are read from the
+**repo-root** `.env`, not from `frontend/`. See
 [Configuration and secrets](#configuration-and-secrets).
 
 ### Run the AI layer
@@ -1172,14 +1173,21 @@ overridable from the environment when you actually need to change one.
 | `AI_SERVICE_TOKEN` | ai, backend | *(blank)* | not deployed yet |
 | `AI_PORT` | compose | `8000` | — |
 | `VITE_API_BASE_URL` | frontend | `http://localhost:8080` | Vercel environment variable |
-| `VITE_INGESTION_DEMO` | frontend | `false` | Vercel environment variable |
 | `INGESTION_SCHEDULING_ENABLED` | backend | `false` | Fly secret |
 | `INGESTION_ANCHOR` | backend | `2026-09-17T05:00:00Z` | Fly secret |
 | `INGESTION_ENABLED_SOURCES` | backend | *(blank)* | Fly secret |
-| `INGESTION_DEMO_PASSWORD` | backend (`ingestion-demo` profile) | unset — set in your shell | — local demo only |
 | `CORS_ALLOWED_ORIGINS` | backend | `http://localhost:5173` (from `application.properties`) | Fly secret |
 | `JWT_SECRET` | backend | *(required; no default)* | Fly secret |
 | `JWT_EXPIRATION_SECONDS` | backend | `3600` | optional Fly secret/config |
+| `ADMIN_EMAIL` | backend | *(required; no default)* | Fly secret |
+| `ADMIN_PASSWORD` | backend | *(required; minimum 12 characters)* | Fly secret |
+
+At application startup, the backend bootstraps the configured administrator
+into the `users` table with the `ADMIN` role if that email does not already
+exist. The password is stored as a hash rather than plain text. Existing admin
+records are not overwritten. Administrators authenticate through
+`POST /api/auth/admin/login`; normal users authenticate through
+`POST /api/auth/login`.
 
 ### Three things that will bite you silently
 

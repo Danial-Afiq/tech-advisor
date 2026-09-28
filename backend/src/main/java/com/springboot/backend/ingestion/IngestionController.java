@@ -3,7 +3,6 @@ package com.springboot.backend.ingestion;
 import com.springboot.backend.config.OpenApiConfig;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
-import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -17,15 +16,14 @@ import java.time.Instant;
 import java.util.*;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.dao.DataAccessException;
 
 @RestController
 @RequestMapping("/api/admin/ingestion")
 @Tag(
         name = "Admin ingestion",
-        description = "ADMIN-only ingestion operations. Production access remains disabled; Basic authentication is available only with the ingestion-demo profile.")
-@SecurityRequirement(name = OpenApiConfig.DEMO_BASIC_AUTH)
+        description = "Ingestion operations protected by a bearer JWT whose account has the ADMIN role.")
+@SecurityRequirement(name = OpenApiConfig.BEARER_AUTH)
 public class IngestionController {
     private final IngestionOrchestrator runner;
     private final RunStore store;
@@ -43,11 +41,9 @@ public class IngestionController {
             @Schema(description = "Optional audit reason.", example = "Week 7 demonstration", maxLength = 500)
             String reason) {}
 
-    @Schema(name = "IngestionSessionResponse", description = "Authenticated demo identity and CSRF details.")
+    @Schema(name = "IngestionSessionResponse", description = "Authenticated administrator identity.")
     public record SessionResponse(
-            @Schema(example = "demo-admin") String username,
-            @Schema(example = "X-CSRF-TOKEN") String csrfHeader,
-            @Schema(example = "csrf-token-value") String csrfToken) {}
+            @Schema(example = "admin@example.com") String username) {}
 
     @Schema(name = "IngestionScheduleResponse", description = "Persistent ingestion schedule state.")
     public record ScheduleResponse(
@@ -71,27 +67,22 @@ public class IngestionController {
             String message) {}
 
     @GetMapping("/session")
-    @Operation(summary = "Read the demo identity and CSRF token", description = "Save the session cookie and send the returned CSRF header/token when starting a run.")
+    @Operation(summary = "Read the authenticated admin identity")
     @ApiResponses({
             @ApiResponse(
                     responseCode = "200",
-                    description = "Authenticated demo session",
+                    description = "Authenticated administrator",
                     content = @Content(mediaType = "application/json", schema = @Schema(implementation = SessionResponse.class))),
             @ApiResponse(responseCode = "401", description = "Authentication required", content = @Content),
-            @ApiResponse(responseCode = "403", description = "Production access disabled or caller is not an admin", content = @Content)
+            @ApiResponse(responseCode = "403", description = "Caller does not have the ADMIN role", content = @Content)
     })
-    public Map<String, String> session(Principal user, CsrfToken csrf) {
-        return Map.of("username", user.getName(), "csrfHeader", csrf.getHeaderName(), "csrfToken", csrf.getToken());
+    public Map<String, String> session(Principal user) {
+        return Map.of("username", user.getName());
     }
     @PostMapping("/runs")
     @Operation(
             summary = "Start an asynchronous ingestion run",
-            description = "Admits a manual run without moving the recurring schedule.",
-            parameters = @Parameter(
-                    name = "X-CSRF-TOKEN",
-                    description = "Token returned by GET /api/admin/ingestion/session.",
-                    required = true,
-                    in = ParameterIn.HEADER))
+            description = "Admits a manual run without moving the recurring schedule.")
     @ApiResponses({
             @ApiResponse(
                     responseCode = "202",
@@ -99,7 +90,7 @@ public class IngestionController {
                     content = @Content(mediaType = "application/json", schema = @Schema(implementation = RunLog.class))),
             @ApiResponse(responseCode = "400", description = "Invalid source selection, reason, or idempotency key", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "401", description = "Authentication required", content = @Content),
-            @ApiResponse(responseCode = "403", description = "Invalid CSRF token, production access disabled, or caller is not an admin", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Caller does not have the ADMIN role", content = @Content),
             @ApiResponse(responseCode = "409", description = "Another run is active or the idempotency key was reused with a different body", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "503", description = "Ingestion storage is unavailable", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class)))
     })
@@ -120,7 +111,7 @@ public class IngestionController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Persisted or in-flight run state", content = @Content(mediaType = "application/json", schema = @Schema(implementation = RunLog.class))),
             @ApiResponse(responseCode = "401", description = "Authentication required", content = @Content),
-            @ApiResponse(responseCode = "403", description = "Production access disabled or caller is not an admin", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Caller does not have the ADMIN role", content = @Content),
             @ApiResponse(responseCode = "404", description = "Run ID was not found", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "503", description = "Ingestion storage is unavailable", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class)))
     })
@@ -136,7 +127,7 @@ public class IngestionController {
                     content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = RunLog.class)))),
             @ApiResponse(responseCode = "400", description = "Pagination or filter value is invalid", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "401", description = "Authentication required", content = @Content),
-            @ApiResponse(responseCode = "403", description = "Production access disabled or caller is not an admin", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Caller does not have the ADMIN role", content = @Content),
             @ApiResponse(responseCode = "503", description = "Ingestion storage is unavailable", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class)))
     })
     public List<RunLog> history(
@@ -158,7 +149,7 @@ public class IngestionController {
                     description = "Persistent schedule and active-run state",
                     content = @Content(mediaType = "application/json", schema = @Schema(implementation = ScheduleResponse.class))),
             @ApiResponse(responseCode = "401", description = "Authentication required", content = @Content),
-            @ApiResponse(responseCode = "403", description = "Production access disabled or caller is not an admin", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Caller does not have the ADMIN role", content = @Content),
             @ApiResponse(responseCode = "503", description = "Ingestion storage is unavailable", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class)))
     })
     public Map<String, Object> schedule() {
@@ -177,7 +168,7 @@ public class IngestionController {
                     description = "Source availability and cooldown state",
                     content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = SourceResponse.class)))),
             @ApiResponse(responseCode = "401", description = "Authentication required", content = @Content),
-            @ApiResponse(responseCode = "403", description = "Production access disabled or caller is not an admin", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Caller does not have the ADMIN role", content = @Content),
             @ApiResponse(responseCode = "503", description = "Ingestion storage is unavailable", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class)))
     })
     public List<Map<String, Object>> sources() {

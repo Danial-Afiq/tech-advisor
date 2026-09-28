@@ -3,12 +3,15 @@ package com.springboot.backend.service;
 import com.springboot.backend.dto.DeviceRequest;
 import com.springboot.backend.dto.DeviceResponse;
 import com.springboot.backend.exception.ResourceNotFoundException;
+import com.springboot.backend.model.DevicePreference;
 import com.springboot.backend.model.Product;
 import com.springboot.backend.model.User;
 import com.springboot.backend.model.UserDevice;
+import com.springboot.backend.repository.DevicePreferenceRepository;
 import com.springboot.backend.repository.ProductRepository;
 import com.springboot.backend.repository.UserDeviceRepository;
 import com.springboot.backend.repository.UserRepository;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.springboot.backend.exception.InvalidDeviceRequestException;
@@ -22,16 +25,22 @@ public class DeviceService {
     private final UserDeviceRepository userDeviceRepository;
     private final UserRepository userRepository;
     private final ProductRepository productRepository;
+    private final DevicePreferenceRepository devicePreferenceRepository;
+    private final ApplicationEventPublisher eventPublisher;
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
     public DeviceService(
             UserDeviceRepository userDeviceRepository,
             UserRepository userRepository,
-            ProductRepository productRepository) {
+            ProductRepository productRepository,
+            DevicePreferenceRepository devicePreferenceRepository,
+            ApplicationEventPublisher eventPublisher) {
 
         this.userDeviceRepository = userDeviceRepository;
         this.userRepository = userRepository;
         this.productRepository = productRepository;
+        this.devicePreferenceRepository = devicePreferenceRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -61,6 +70,12 @@ public class DeviceService {
 
         UserDevice savedDevice =
                 userDeviceRepository.save(device);
+
+        applyBudget(savedDevice.getId(), request);
+
+        eventPublisher.publishEvent(
+                new DeviceInventoryChanged(savedDevice.getId())
+        );
 
         return new DeviceResponse(savedDevice);
     }
@@ -123,6 +138,12 @@ public class DeviceService {
 
         UserDevice savedDevice =
                 userDeviceRepository.save(device);
+
+        applyBudget(savedDevice.getId(), request);
+
+        eventPublisher.publishEvent(
+                new DeviceInventoryChanged(savedDevice.getId())
+        );
 
         return new DeviceResponse(savedDevice);
     }
@@ -239,6 +260,36 @@ public class DeviceService {
                         ? "{}"
                         : request.getSpecOverrides()
         );
+    }
+
+    /**
+     * Creates or updates the device's preferences when the request carries a
+     * budget. A null budget leaves existing preferences as they are, so an edit
+     * that does not mention the budget does not wipe it.
+     */
+    private void applyBudget(
+            Long deviceId,
+            DeviceRequest request) {
+
+        if (request.getBudget() == null) {
+            return;
+        }
+
+        DevicePreference preference = devicePreferenceRepository
+                .findById(deviceId)
+                .orElseGet(() -> new DevicePreference(
+                        deviceId,
+                        request.getBudget(),
+                        "SGD"
+                ));
+
+        preference.setBudget(request.getBudget());
+
+        if (request.getCurrency() != null) {
+            preference.setCurrency(request.getCurrency());
+        }
+
+        devicePreferenceRepository.save(preference);
     }
 
     private void validateJsonFields(DeviceRequest request) {

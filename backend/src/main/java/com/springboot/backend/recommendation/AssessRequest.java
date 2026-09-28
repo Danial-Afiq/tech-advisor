@@ -89,9 +89,19 @@ public record AssessRequest(
         }
     }
 
+    /**
+     * Channel A's output (AGENTS.md §7.1). {@code upgradeScore} is the single
+     * aggregate produced by the deterministic classifier on a 0-1 scale, where
+     * 1.0 is a strong upgrade recommendation and 0.0 is not recommended; the
+     * verdict is the tier that score maps to, never the model's opinion.
+     *
+     * <p>This replaced an earlier pair of 0-1 {@code relevance_score} /
+     * {@code preference_score} fields. One score is what the tier is actually
+     * derived from, and two numbers that never independently drove anything
+     * invited callers to average or compare them.
+     */
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
-    public record Analysis(
-            String verdict, double relevanceScore, double preferenceScore, List<String> decidingFactors) {
+    public record Analysis(String verdict, double upgradeScore, List<String> decidingFactors) {
         public Analysis {
             decidingFactors = decidingFactors == null ? List.of() : List.copyOf(decidingFactors);
         }

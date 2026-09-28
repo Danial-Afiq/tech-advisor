@@ -31,8 +31,7 @@
   "computed": {},
   "analysis": {
     "verdict": "WORTH_WATCHING",
-    "relevance_score": 0.6,
-    "preference_score": 0.4,
+    "upgrade_score": 0.55,
     "deciding_factors": ["thermals", "build_quality"]
   },
   "retrieval": { "k": 6 }

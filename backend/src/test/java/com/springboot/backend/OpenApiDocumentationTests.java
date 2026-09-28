@@ -21,6 +21,8 @@ import org.springframework.web.context.WebApplicationContext;
 
 @SpringBootTest(properties = {
         "ingestion.reconciliation-enabled=false",
+        "admin.email=swagger-test-admin@example.com",
+        "admin.password=swagger-test-password",
         "logging.level.root=WARN",
         "debug=false"
 })
@@ -66,7 +68,6 @@ class OpenApiDocumentationTests {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.info.title").value("Tech Advisor API"))
                 .andExpect(jsonPath("$.components.securitySchemes.bearerAuth.scheme").value("bearer"))
-                .andExpect(jsonPath("$.components.securitySchemes.demoBasicAuth.scheme").value("basic"))
 
                 .andExpect(jsonPath("$['paths']['/api/auth/register']['post']").exists())
                 .andExpect(jsonPath("$['paths']['/api/auth/register']['post']['requestBody']['content']['application/json']['schema']['$ref']")
@@ -82,6 +83,14 @@ class OpenApiDocumentationTests {
                         .value("#/components/schemas/LoginResponse"))
                 .andExpect(jsonPath("$['paths']['/api/auth/login']['post']['responses']['400']").exists())
                 .andExpect(jsonPath("$['paths']['/api/auth/login']['post']['responses']['401']").exists())
+
+                .andExpect(jsonPath("$['paths']['/api/auth/admin/login']['post']").exists())
+                .andExpect(jsonPath("$['paths']['/api/auth/admin/login']['post']['requestBody']['content']['application/json']['schema']['$ref']")
+                        .value("#/components/schemas/LoginRequest"))
+                .andExpect(jsonPath("$['paths']['/api/auth/admin/login']['post']['responses']['200']['content']['application/json']['schema']['$ref']")
+                        .value("#/components/schemas/LoginResponse"))
+                .andExpect(jsonPath("$['paths']['/api/auth/admin/login']['post']['responses']['400']").exists())
+                .andExpect(jsonPath("$['paths']['/api/auth/admin/login']['post']['responses']['401']").exists())
 
                 .andExpect(jsonPath("$['paths']['/api/profile']['get']").exists())
                 .andExpect(jsonPath("$['paths']['/api/profile']['get']['security'][0]['bearerAuth']").isArray())
@@ -118,7 +127,7 @@ class OpenApiDocumentationTests {
                         .value("#/components/schemas/IngestionSessionResponse"))
                 .andExpect(jsonPath("$['paths']['/api/admin/ingestion/runs']['get']").exists())
                 .andExpect(jsonPath("$['paths']['/api/admin/ingestion/runs']['post']").exists())
-                .andExpect(jsonPath("$['paths']['/api/admin/ingestion/runs']['post']['security'][0]['demoBasicAuth']").isArray())
+                .andExpect(jsonPath("$['paths']['/api/admin/ingestion/runs']['post']['security'][0]['bearerAuth']").isArray())
                 .andExpect(jsonPath("$['paths']['/api/admin/ingestion/runs']['post']['responses']['202']['content']['application/json']['schema']['$ref']")
                         .value("#/components/schemas/RunLog"))
                 .andExpect(jsonPath("$['paths']['/api/admin/ingestion/runs']['post']['responses']['400']").exists())
@@ -137,6 +146,9 @@ class OpenApiDocumentationTests {
                 .andExpect(jsonPath("$.components.schemas.RegisterRequest.properties.email.format").value("email"))
                 .andExpect(jsonPath("$.components.schemas.RegisterRequest.properties.password.minLength").value(8))
                 .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.satisfactionScore.minimum").value(0))
-                .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.satisfactionScore.maximum").value(100));
+                .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.satisfactionScore.maximum").value(100))
+                .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.budget.minimum").value(0))
+                .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.currency.pattern").value("[A-Z]{3}"))
+                .andExpect(jsonPath("$.components.schemas.LoginResponse.properties.role.enum").isArray());
     }
 }

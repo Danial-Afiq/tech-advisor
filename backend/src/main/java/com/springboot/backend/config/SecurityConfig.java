@@ -39,19 +39,31 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/auth/register",
                                 "/api/auth/login",
+                                "/api/auth/admin/login",
                                 "/actuator/health",
                                 "/v3/api-docs/**",
                                 "/swagger-ui.html",
                                 "/swagger-ui/**"
                         ).permitAll()
-                        .anyRequest().authenticated()
-                )
 
-                .exceptionHandling(errors ->
-                        errors.authenticationEntryPoint(
+                        .requestMatchers("/api/admin/**")
+                        .hasRole("ADMIN")
+
+                        .anyRequest()
+                        .authenticated()
+        )
+
+                .exceptionHandling(errors -> errors
+                        .authenticationEntryPoint(
                                 (request, response, exception) ->
-                                        response.sendError(
+                                        response.setStatus(
                                                 HttpServletResponse.SC_UNAUTHORIZED
+                                        )
+                        )
+                        .accessDeniedHandler(
+                                (request, response, exception) ->
+                                        response.setStatus(
+                                                HttpServletResponse.SC_FORBIDDEN
                                         )
                         )
                 )

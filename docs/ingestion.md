@@ -120,7 +120,7 @@ ORDER BY created_at DESC;
 
 The panel is at `/admin/ingestion`. It displays source choices, optional reason, next scheduled time and recent results. Requests are asynchronous (`202` plus a Location header). The browser polls results, handles conflicts and retains an idempotency key for retrying a failed submission with the same body. Server admission also blocks overlapping requests, including from different browser tabs.
 
-Production routes are deliberately denied until the account-auth ticket supplies the trusted ADMIN identity. Replace the scoped `closedIngestion` chain with the account integration, retain server-side role checks and appropriate CSRF protection, and rerun security tests. Do not enable `ingestion-demo` in production to bypass this dependency. The demo uses a localhost-bound HTTP Basic admin account with a required environment password and CSRF-protected writes. Credentials are held only in browser memory; do not put them in Vite configuration or localStorage. `VITE_INGESTION_DEMO=true` exposes the local demo login form, not a production authorization mechanism.
+Admin access uses the app's normal `ROLE_ADMIN` JWT login (`POST /api/auth/admin/login`, bootstrapped from `ADMIN_EMAIL`/`ADMIN_PASSWORD`) - the same session used for every other `/api/admin/**` route, with no ingestion-specific credential and no CSRF token (the whole app is a stateless bearer-token API; CSRF protects ambient cookie auth, which this isn't). Sign in on `/login` and open `/IngestionAdmin`; a signed-out or non-ADMIN account sees a sign-in prompt instead of the run controls. `ingestion-demo` is still a real Spring profile, but only for enabling the `simulated-release`/`simulated-failure` test sources locally - it has no effect on who can authenticate. `VITE_INGESTION_DEMO` no longer exists on the frontend.
 
 API contracts are in `docs/ingestion-openapi.yaml`. The endpoint group supports run submission, run detail/history, source availability, schedule state and an authenticated CSRF/session read. Idempotency keys are scoped to the actor, with differing payloads rejected. History is paginated using `page`/`size` and optional `status`/`trigger` filters.
 
@@ -142,16 +142,15 @@ Tests intentionally require a database name ending `_test`; they delete ingestio
 
 Verification on 2026-09-16: 14 backend tests passed, backend packaging passed, 3 frontend tests passed, and frontend build/lint passed. The recorded manual success run accepted 3 payloads in 240 ms with 0 exception stacks; the partial-failure run accepted 3 in 125 ms with 1 exception stack. Both were retrieved after an actual backend shutdown/restart and checked directly in PostgreSQL. Browser visual verification could not run because the installed browser runtime rejected its bootstrap dependency; the admin flow was covered by component tests and the backend API demo.
 
-For interactive UI use, start the backend yourself with `POSTGRES_DB=techadvisor_ingestion_demo`, `SPRING_PROFILES_ACTIVE=ingestion-demo` and an `INGESTION_DEMO_PASSWORD` of at least 12 characters. In another terminal:
+For interactive UI use, start the backend yourself with `POSTGRES_DB=techadvisor_ingestion_demo`, `SPRING_PROFILES_ACTIVE=ingestion-demo` (enables the simulated sources only - not a separate login), plus the usual `ADMIN_EMAIL`/`ADMIN_PASSWORD`/`JWT_SECRET`. In another terminal:
 
 ```powershell
 cd frontend
-$env:VITE_INGESTION_DEMO = 'true'
 $env:VITE_API_BASE_URL = 'http://localhost:8080'
 npm run dev
 ```
 
-Open `http://localhost:5173/admin/ingestion`, enter the configured password, select sources and click Run now. The default source fixtures produce three accepted payloads; selecting the failure fixture as well gives one captured exception. Production scheduling stays disabled in this manual demo. Fake-clock PostgreSQL tests exercise the scheduling admission path without shortening `RunStore.INTERVAL`, whatever it's currently set to.
+Open `http://localhost:5173/login`, sign in with `ADMIN_EMAIL`/`ADMIN_PASSWORD`, then open `/IngestionAdmin`, select sources and click Run now. The default source fixtures produce three accepted payloads; selecting the failure fixture as well gives one captured exception. Production scheduling stays disabled in this manual demo. Fake-clock PostgreSQL tests exercise the scheduling admission path without shortening `RunStore.INTERVAL`, whatever it's currently set to.
 
 ## References
 

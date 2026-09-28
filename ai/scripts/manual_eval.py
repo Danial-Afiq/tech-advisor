@@ -82,7 +82,8 @@ async def run_case(assessor: Assessor, path: Path) -> None:
     print(f"CASE {path.stem}  (product_id={request.candidate.product_id})")
     print(f"deciding_factors : {request.analysis.deciding_factors}")
     print(f"priorities       : {dict(request.user_context.preferences.priorities)}")
-    print(f"verdict fed in   : {request.analysis.verdict}")
+    print(f"verdict fed in   : {request.analysis.verdict}"
+          f"  (upgrade_score {request.analysis.upgrade_score})")
     print("-" * WIDTH)
     print(f"evidence_grade : {response.evidence_grade}")
     if response.meta.retry_count:

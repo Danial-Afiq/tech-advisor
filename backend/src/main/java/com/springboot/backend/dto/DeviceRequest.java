@@ -1,12 +1,16 @@
 package com.springboot.backend.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.PastOrPresent;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Schema(description = "Owned-device fields. Supply at least one of productId or customName.")
@@ -58,6 +62,34 @@ public class DeviceRequest {
             example = "{\"storage_gb\":256}",
             defaultValue = "{}")
     private String specOverrides = "{}";
+
+    /**
+     * Upgrade budget for this device. Optional, but a device is not evaluated
+     * for recommendations until it has one (AGENTS.md §27.10). Null leaves any
+     * existing preferences untouched.
+     */
+    @Schema(
+            description = "Device-specific upgrade budget; recommendations require a budget.",
+            example = "1200.00",
+            minimum = "0")
+    @PositiveOrZero(message = "Budget must not be negative")
+    @Digits(
+            integer = 10,
+            fraction = 2,
+            message = "Budget must have at most 10 digits and 2 decimal places"
+    )
+    private BigDecimal budget;
+
+    /** ISO 4217 code for the budget. Defaults to SGD when a budget is given without one. */
+    @Schema(
+            description = "Three-letter ISO 4217 budget currency; defaults to SGD when a budget is supplied.",
+            example = "SGD",
+            pattern = "[A-Z]{3}")
+    @Pattern(
+            regexp = "[A-Z]{3}",
+            message = "Currency must be a 3-letter ISO code"
+    )
+    private String currency;
 
     public Long getProductId() {
         return productId;
@@ -113,5 +145,21 @@ public class DeviceRequest {
 
     public void setSpecOverrides(String specOverrides) {
         this.specOverrides = specOverrides;
+    }
+
+    public BigDecimal getBudget() {
+        return budget;
+    }
+
+    public void setBudget(BigDecimal budget) {
+        this.budget = budget;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String currency) {
+        this.currency = currency;
     }
 }
