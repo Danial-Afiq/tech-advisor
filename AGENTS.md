@@ -1814,7 +1814,13 @@ never being provisioned, not a missing sink anymore.
   that decision) — added here for traceability, not because §17.1's "not
   fully confirmed" status has changed.
 
-## 17.1.2 Implemented real adapter — smartphone/GPU reviews (ticket 1.4, revised scope)
+## 17.1.2 Commented-out adapter — smartphone/GPU reviews (ticket 1.4, revised scope, superseded)
+
+**Commented out 28 Sep 2026** (every line prefixed `//`, not deleted) —
+ticket 1.4 moved to the SearchAPI approach on `feat/searchapi-review-ingestion`
+(§17.4). Kept in `HardwareZoneReviewSource.java`/`HardwareZoneReviewParser.java`
+and their tests in case it's wanted again as a reference or fallback; not
+wired into any build output while commented.
 
 `HardwareZoneReviewSource` — smartphone and GPU **review** text
 (owner-evidence/sentiment pipeline, §7.2), not the launch/change feed the
