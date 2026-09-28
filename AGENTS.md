@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 27 September 2026
+> **Last consolidated:** 28 September 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -386,6 +386,7 @@ changing any page.
 - Spring Data JPA
 - Spring Security
 - Spring Boot Actuator
+- springdoc-openapi 3.1.1
 - Flyway
 - PostgreSQL driver
 
@@ -419,9 +420,21 @@ still open (see §27.9).
 - Docker Compose locally
 - Flyway migrations
 
-## 5.6 Required API docs
-- Swagger / OpenAPI for Spring Boot routes
-- Swagger UI must be demoable for Week 7
+## 5.6 API documentation — IMPLEMENTED
+
+- Springdoc OpenAPI 3.1.1 generates the Spring Boot contract.
+- Swagger UI is served at `/swagger-ui.html`; JSON is served at `/v3/api-docs`.
+- Both documentation endpoints are intentionally unauthenticated so the Week 7
+  demo and deployed API contract are reachable. Documented operations retain
+  their runtime security.
+- Authentication, profile, owned-device, and admin-ingestion routes include
+  their HTTP methods, request/response schemas, expected status codes, and
+  security requirements.
+- Swagger UI defines `bearerAuth` for account JWTs. The admin-ingestion group
+  separately defines `demoBasicAuth`; that group remains denied in production
+  and is usable only with the `ingestion-demo` profile plus its CSRF flow.
+- `OpenApiDocumentationTests` protects the UI/API-doc availability and the
+  generated route, schema, security, and response-status contract in CI.
 
 ---
 
