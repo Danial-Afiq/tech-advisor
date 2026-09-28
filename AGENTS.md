@@ -1905,13 +1905,24 @@ wording. V7's `external_product_mapping` scopes cache entries by
 product/provider/locale/canonical name. A clearly invalid cached token gets one
 rediscovery; there is no TTL, pagination, or extra refresh request.
 
-Each product uses two review searches plus one discovery when uncached; the admin
-picker adds one preview search. SearchAPI's application cooldown is zero, while a
-provider `Retry-After` remains authoritative. Reviews are normalized and fingerprinted,
-then batch-embedded through FastAPI and transactionally stored as one document and one
+Each product uses two review searches plus one discovery when uncached (3 HTTP
+requests); the admin picker adds one preview search. `SourceContext` caps every
+source at 10 requests per run, so `SEARCHAPI_MAX_PRODUCTS_PER_RUN`
+tops out at `floor(10/3) = 3` (validated 1-3) — raising it further requires raising that shared
+per-source ceiling first, not just the setting. SearchAPI's application cooldown
+is zero, while a provider `Retry-After` remains authoritative. An untargeted run
+excludes products already attempted for this provider/locale (VALID or INVALID
+via `markNoMatch`) so it advances through the catalogue instead of retrying the
+same unmatchable product forever. Reviews are normalized and fingerprinted, then
+batch-embedded through FastAPI and transactionally stored as one document and one
 index-0 chunk per review. No raw profile data or provider response is persisted, and
 no ingestion-time LLM call occurs. Full configuration, limits, and verification steps
 belong in `docs/searchapi-review-ingestion.md`.
+
+Sources run in `IngestionSource.priority()` order (lower first), not alphabetical
+`sourceId` order — `MobileApiSmartphoneSource` overrides it to 10 so its catalogue
+writes are visible to SearchAPI's untargeted product pick within the same run,
+regardless of source naming.
 
 ---
 

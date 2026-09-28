@@ -121,7 +121,9 @@ VITE_INGESTION_DEMO=true
 VITE_API_BASE_URL=http://localhost:18087
 ```
 
-`SEARCHAPI_MAX_PRODUCTS_PER_RUN` defaults to 1 and accepts at most 2. Enabling the
+`SEARCHAPI_MAX_PRODUCTS_PER_RUN` defaults to 1 and accepts at most 3 — the real
+ceiling under `SourceContext`'s 10-request-per-run budget, since each uncached
+product costs 3 requests (1 discovery + 2 review searches). Enabling the
 source without `SEARCHAPI_API_KEY` fails startup. The demo password must be at least
 12 characters, `AI_SERVICE_TOKEN` must match between Spring and FastAPI, and the JWT
 secret must meet the normal backend requirements. Restart services after `.env`
