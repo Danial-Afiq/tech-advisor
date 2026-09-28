@@ -52,7 +52,9 @@ export default function IngestionAdmin() {
   }, [request])
 
   useEffect(() => {
-    if (!account || account.role !== 'ADMIN') { setReady(true); return }
+    // `ready` gates the loading spinner on the signed-in-as-admin render path only - the
+    // signed-out/non-admin path below never reads it, so there's nothing to set here.
+    if (!account || account.role !== 'ADMIN') return
     let stopped = false
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
