@@ -19,7 +19,7 @@ import tools.jackson.databind.json.JsonMapper;
  * not enough to justify introducing the first JPA entity in this codebase
  * (spring-boot-starter-data-jpa is on the classpath but unused everywhere
  * else too). JdbcTemplate + TransactionTemplate follows the one existing
- * persistence precedent, {@link com.springboot.backend.ingestion.RunStore}.
+ * persistence precedent, {@link com.springboot.backend.ingestion.run.RunStore}.
  */
 @Component
 public class RecommendationRepository {

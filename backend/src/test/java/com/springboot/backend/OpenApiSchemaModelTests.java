@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.springboot.backend.dto.ApiErrorResponse;
-import com.springboot.backend.ingestion.IngestionController;
+import com.springboot.backend.ingestion.api.IngestionController;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -17,14 +17,18 @@ class OpenApiSchemaModelTests {
     void errorAndRequestSchemasExposeTheirDocumentedValues() {
         var apiError = new ApiErrorResponse("Device not found");
         var request = new IngestionController.Request(
-                List.of("simulated-prices"),
-                "Week 7 demonstration");
+                List.of("searchapi-google-product-reviews"),
+                "Week 7 demonstration",
+                "Samsung Galaxy S25",
+                "searchapi-product-id");
         var ingestionError = new IngestionController.ErrorResponse("Invalid request");
 
         assertAll(
                 () -> assertEquals("Device not found", apiError.error()),
-                () -> assertEquals(List.of("simulated-prices"), request.sources()),
+                () -> assertEquals(List.of("searchapi-google-product-reviews"), request.sources()),
                 () -> assertEquals("Week 7 demonstration", request.reason()),
+                () -> assertEquals("Samsung Galaxy S25", request.productName()),
+                () -> assertEquals("searchapi-product-id", request.externalProductId()),
                 () -> assertEquals("Invalid request", ingestionError.message()));
     }
 

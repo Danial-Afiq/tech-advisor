@@ -1,5 +1,7 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.core;
 
+import com.springboot.backend.ingestion.run.RunLog;
+import com.springboot.backend.ingestion.run.RunStore;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -29,10 +31,13 @@ public class IngestionOrchestrator {
         this.store = store; this.registry = registry; this.sinks = sinks; this.clock = clock; this.scheduler = scheduler;
     }
     public RunLog manual(List<String> sources, String actor, String key, String reason) {
+        return manual(sources, actor, key, reason, null);
+    }
+    public RunLog manual(List<String> sources, String actor, String key, String reason, RunLog.ProductTarget product) {
         if (key == null || !key.matches("[A-Za-z0-9_-]{8,128}") || reason != null && reason.length() > 500)
             throw new IllegalArgumentException("Provide an 8-128 character idempotency key and a reason of at most 500 characters");
         var ids = registry.select(sources);
-        var run = store.admit(ids, actor, key, reason, false, ids.stream().allMatch(id -> registry.get(id).simulation()));
+        var run = store.admit(ids, actor, key, reason, false, ids.stream().allMatch(id -> registry.get(id).simulation()), product);
         kick(); return run;
     }
     public void scheduled() {
@@ -74,7 +79,7 @@ public class IngestionOrchestrator {
                     store.progress(run, owner); continue;
                 }
                 store.progress(run, owner);
-                try (var context = new SourceContext(clock, check)) {
+                try (var context = new SourceContext(clock, check, run.product)) {
                     Future<?> future = sourceWorker.submit(() -> {
                         try {
                             var seen = new HashSet<String>();
@@ -93,7 +98,7 @@ public class IngestionOrchestrator {
                                     else {
                                         var matching = sinks.stream().filter(sink -> sink.supports(adapter, payload.body())).toList();
                                         if (matching.size() != 1) throw new IllegalStateException("Exactly one typed sink must accept this source payload");
-                                        if (matching.getFirst().accept(run.runId, payload) == IngestionSink.Result.DUPLICATE) duplicate(run, result);
+                                        if (matching.getFirst().accept(run.runId, payload, context) == IngestionSink.Result.DUPLICATE) duplicate(run, result);
                                         else { result.processedPayloadCount++; run.processedPayloadCount++; }
                                     }
                                     store.progress(run, owner);
@@ -104,15 +109,18 @@ public class IngestionOrchestrator {
                     try { future.get(60, TimeUnit.SECONDS); }
                     finally { context.close(); future.cancel(true); }
                     result.status = result.errorCount == 0 ? "SUCCESS" : "PARTIAL_FAILURE";
+                    applyCooldown(run.runId, owner, id, adapter.cooldown());
                 } catch (Exception e) {
                     synchronized (run) {
                         Throwable error = e;
                         while ((error instanceof ExecutionException || error instanceof CompletionException) && error.getCause() != null) error = error.getCause();
                         if (error instanceof SourceContext.RetryLater retry)
                             store.deferSource(run.runId, owner, id, retry.until);
+                        else applyCooldown(run.runId, owner, id, failureCooldown(adapter, error));
                         result.status = "FAILED"; result.errorCount++; result.errorStackCount++;
                         run.errorCount++; run.errorStackCount++;
                         result.errors.add(error.getClass().getSimpleName());
+                        if (error instanceof IngestionFailure failure) result.errors.add(failure.code().name());
                         Arrays.stream(error.getStackTrace()).filter(frame -> frame.getClassName().startsWith("com.springboot.backend.ingestion"))
                                 .limit(5).map(StackTraceElement::toString).forEach(result.errors::add);
                     }
@@ -125,6 +133,19 @@ public class IngestionOrchestrator {
                     : run.errorCount == 0 ? "SUCCESS" : run.processedPayloadCount > 0 ? "PARTIAL_FAILURE" : "FAILED";
             store.finish(run, owner);
         } finally { heartbeat.cancel(false); }
+    }
+    static Duration failureCooldown(IngestionSource source, Throwable error) {
+        if (error instanceof SourceContext.TransportFailure)
+            return source.cooldown().isZero() ? Duration.ZERO : Duration.ofMinutes(1);
+        if (error instanceof IllegalArgumentException) return Duration.ZERO;
+        if (error instanceof IngestionFailure failure && switch (failure.code()) {
+            case SEARCHAPI_NO_MATCH, SEARCHAPI_AMBIGUOUS_MATCH, SEARCHAPI_NO_ELIGIBLE_PRODUCT -> true;
+            default -> false;
+        }) return Duration.ZERO;
+        return source.cooldown();
+    }
+    private void applyCooldown(String runId, String owner, String sourceId, Duration duration) {
+        if (!duration.isZero()) store.deferSource(runId, owner, sourceId, clock.instant().plus(duration));
     }
     private static void duplicate(RunLog run, RunLog.SourceResult result) { result.duplicatePayloadCount++; run.duplicatePayloadCount++; }
     @PreDestroy public void close() { worker.shutdownNow(); sourceWorker.shutdownNow(); }

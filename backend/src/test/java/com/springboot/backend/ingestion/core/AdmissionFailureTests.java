@@ -1,5 +1,7 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.core;
 
+import com.springboot.backend.ingestion.config.IngestionSettings;
+import com.springboot.backend.ingestion.run.RunStore;
 import java.time.Clock;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -15,7 +17,7 @@ class AdmissionFailureTests {
         when(source.sourceId()).thenReturn("source");
         when(source.cooldown()).thenReturn(java.time.Duration.ofMinutes(15));
         var registry = new SourceRegistry(List.of(source), new IngestionSettings(false, null, List.of("source")));
-        when(store.admit(anyList(), anyString(), anyString(), isNull(), eq(false), eq(false)))
+        when(store.admit(anyList(), anyString(), anyString(), isNull(), eq(false), eq(false), isNull()))
                 .thenThrow(new DataAccessResourceFailureException("offline"));
         var runner = new IngestionOrchestrator(store, registry, List.of(), Clock.systemUTC(), new ThreadPoolTaskScheduler());
         try {

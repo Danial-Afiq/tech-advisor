@@ -1,5 +1,7 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.run;
 
+import com.springboot.backend.ingestion.config.IngestionSettings;
+import com.springboot.backend.ingestion.core.IngestionSource;
 import java.time.*;
 import java.util.*;
 import java.util.function.Function;
@@ -56,6 +58,11 @@ public class RunStore {
 
     public RunLog admit(List<String> ids, String actor, String key, String reason, boolean scheduled,
                         boolean simulation) {
+        return admit(ids, actor, key, reason, scheduled, simulation, null);
+    }
+
+    public RunLog admit(List<String> ids, String actor, String key, String reason, boolean scheduled,
+                        boolean simulation, RunLog.ProductTarget product) {
         return locked(state -> {
             Instant now = clock.instant();
             recover(state, now);
@@ -65,7 +72,8 @@ public class RunStore {
                         (rs, row) -> json.readValue(rs.getString(1), RunLog.class), actor, key);
                 if (!existing.isEmpty()) {
                     var run = existing.getFirst();
-                    if (!run.sourceIds.equals(ids) || !Objects.equals(run.reason, reason))
+                    if (!run.sourceIds.equals(ids) || !Objects.equals(run.reason, reason)
+                            || !sameProduct(run.product, product))
                         throw new ResponseStatusException(HttpStatus.CONFLICT, "Idempotency key used for a different request");
                     return run;
                 }
@@ -80,6 +88,7 @@ public class RunStore {
             run.triggerType = scheduled ? "SCHEDULED" : "MANUAL";
             run.requestedBy = actor; run.reason = reason; run.idempotencyKey = key;
             run.requestedAt = now; run.simulation = simulation;
+            run.product = product;
             if (scheduled) {
                 run.missedSlots = Duration.between(state.nextDue, now).dividedBy(INTERVAL);
                 run.scheduledFor = state.nextDue.plus(INTERVAL.multipliedBy(run.missedSlots));
@@ -90,6 +99,14 @@ public class RunStore {
             state.activeRunId = run.runId; state.owner = null; state.leaseUntil = now.plus(LEASE);
             return run;
         });
+    }
+
+    private boolean sameProduct(RunLog.ProductTarget first, RunLog.ProductTarget second) {
+        if (first == null || second == null) return first == second;
+        return Objects.equals(first.productName(), second.productName())
+                && Objects.equals(first.externalProductId(), second.externalProductId())
+                && (Objects.equals(first.productId(), second.productId())
+                    || first.productId() == null || second.productId() == null);
     }
 
     public RunLog claim(String owner) {
@@ -113,7 +130,7 @@ public class RunStore {
             check(state, runId, owner);
             Instant now = clock.instant();
             if (now.isBefore(state.nextAllowed.getOrDefault(source.sourceId(), Instant.MIN))) return false;
-            state.nextAllowed.put(source.sourceId(), now.plus(source.cooldown())); return true;
+            state.nextAllowed.remove(source.sourceId()); return true;
         });
     }
 
@@ -124,7 +141,8 @@ public class RunStore {
     public void deferSource(String runId, String owner, String sourceId, Instant until) {
         locked(state -> {
             check(state, runId, owner);
-            state.nextAllowed.merge(sourceId, until, (a, b) -> a.isAfter(b) ? a : b);
+            if (!until.isAfter(clock.instant())) state.nextAllowed.remove(sourceId);
+            else state.nextAllowed.merge(sourceId, until, (a, b) -> a.isAfter(b) ? a : b);
             return null;
         });
     }
