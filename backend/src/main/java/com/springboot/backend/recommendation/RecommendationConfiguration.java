@@ -1,5 +1,6 @@
 package com.springboot.backend.recommendation;
 
+import com.springboot.backend.recommendation.classification.ScoringSettings;
 import java.net.http.HttpClient;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -9,7 +10,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 @Configuration
-@EnableConfigurationProperties(AiSettings.class)
+@EnableConfigurationProperties({AiSettings.class, ScoringSettings.class})
 public class RecommendationConfiguration {
 
     /**

@@ -7,7 +7,7 @@
  * switching to another mechanism (e.g. an httpOnly cookie) is a one-file change.
  */
 
-export type Session = { token: string; email: string };
+export type Session = { token: string; email: string; role: "USER" | "ADMIN";};
 
 const KEY = "techAdvisor.session";
 

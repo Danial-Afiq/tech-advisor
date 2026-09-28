@@ -19,7 +19,8 @@ import java.io.IOException;
 import java.util.List;
 
 @Component
-public class JwtAuthenticationFilter extends OncePerRequestFilter {
+public class JwtAuthenticationFilter
+        extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final UserRepository userRepository;
@@ -43,7 +44,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 request.getHeader("Authorization");
 
         if (authorizationHeader == null
-                || !authorizationHeader.startsWith("Bearer ")) {
+                || !authorizationHeader
+                        .startsWith("Bearer ")) {
 
             filterChain.doFilter(request, response);
             return;
@@ -52,48 +54,84 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = authorizationHeader.substring(7);
 
         try {
-            String email = jwtService.extractEmail(token);
+            String subject =
+                    jwtService.extractEmail(token);
+
+            String tokenRole =
+                    jwtService.extractRole(token);
 
             if (SecurityContextHolder
                     .getContext()
-                    .getAuthentication() == null) {
+                    .getAuthentication() == null
+                    && jwtService.isTokenValid(
+                            token,
+                            subject)) {
 
-                User user = userRepository.findByEmail(email)
-                        .orElse(null);
-
-                if (user != null
-                        && jwtService.isTokenValid(
-                                token,
-                                user.getEmail())) {
-
-                    SimpleGrantedAuthority authority =
-                            new SimpleGrantedAuthority(
-                                    "ROLE_" + user.getRole()
-                            );
-
-                    UsernamePasswordAuthenticationToken authentication =
-                            new UsernamePasswordAuthenticationToken(
-                                    user.getEmail(),
-                                    null,
-                                    List.of(authority)
-                            );
-
-                    authentication.setDetails(
-                            new WebAuthenticationDetailsSource()
-                                    .buildDetails(request)
-                    );
-
-                    SecurityContextHolder
-                            .getContext()
-                            .setAuthentication(authentication);
-                }
+                authenticateDatabaseUser(
+                        request,
+                        subject,
+                        tokenRole
+                );
             }
-        } catch (JwtException | IllegalArgumentException exception) {
-            // Invalid, expired or altered token:
-            // leave the request unauthenticated.
+        } catch (JwtException
+                 | IllegalArgumentException exception) {
+
             SecurityContextHolder.clearContext();
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private void authenticateDatabaseUser(
+            HttpServletRequest request,
+            String subject,
+            String tokenRole) {
+
+        if (!"USER".equals(tokenRole)
+                && !"ADMIN".equals(tokenRole)) {
+            return;
+        }
+
+        User user = userRepository
+                .findByEmailIgnoreCase(subject)
+                .orElse(null);
+
+        if (user == null
+                || !tokenRole.equals(user.getRole())) {
+            return;
+        }
+
+        setAuthentication(
+                request,
+                user.getEmail(),
+                user.getRole()
+        );
+    }
+
+    private void setAuthentication(
+            HttpServletRequest request,
+            String subject,
+            String role) {
+
+        SimpleGrantedAuthority authority =
+                new SimpleGrantedAuthority(
+                        "ROLE_" + role
+                );
+
+        UsernamePasswordAuthenticationToken authentication =
+                new UsernamePasswordAuthenticationToken(
+                        subject,
+                        null,
+                        List.of(authority)
+                );
+
+        authentication.setDetails(
+                new WebAuthenticationDetailsSource()
+                        .buildDetails(request)
+        );
+
+        SecurityContextHolder
+                .getContext()
+                .setAuthentication(authentication);
     }
 }

@@ -30,7 +30,7 @@ class AssessContractTests {
                         61.2,
                         new AssessRequest.Price(1099.0, "SGD", -101.0, -8.3),
                         null),
-                new AssessRequest.Analysis("WORTH_CONSIDERING", 0.71, 0.88, List.of("battery")),
+                new AssessRequest.Analysis("WORTH_CONSIDERING", 0.72, List.of("battery")),
                 new AssessRequest.RetrievalOptions(12));
     }
 
@@ -71,7 +71,7 @@ class AssessContractTests {
 
         Map<String, Object> analysis = (Map<String, Object>) body.get("analysis");
         assertEquals(
-                java.util.Set.of("verdict", "relevance_score", "preference_score", "deciding_factors"),
+                java.util.Set.of("verdict", "upgrade_score", "deciding_factors"),
                 analysis.keySet());
     }
 
@@ -81,7 +81,7 @@ class AssessContractTests {
         // an explicit JSON null is a 422 rather than "use the default".
         var device = new AssessRequest.OwnedDevice("Phone", 12, "GOOD", 60, null);
         var preferences = new AssessRequest.Preferences(null, null, "NOT_URGENT", "FLEXIBLE", null, null, null);
-        var analysis = new AssessRequest.Analysis("WORTH_WATCHING", 0.1, 0.2, null);
+        var analysis = new AssessRequest.Analysis("WORTH_WATCHING", 0.58, null);
         var request = new AssessRequest(
                 "req-2",
                 new AssessRequest.UserContext(device, preferences),

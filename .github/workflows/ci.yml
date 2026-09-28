@@ -44,6 +44,8 @@ jobs:
       POSTGRES_DB: techadvisor_test
       POSTGRES_USER: techadvisor
       POSTGRES_PASSWORD: devpassword
+      ADMIN_EMAIL: test-admin@example.com
+      ADMIN_PASSWORD: test-admin-password
 
     steps:
       # Download the repository onto the GitHub Actions runner
