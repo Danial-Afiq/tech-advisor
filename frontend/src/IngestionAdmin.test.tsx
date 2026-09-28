@@ -80,6 +80,60 @@ describe('Ingestion admin', () => {
     expect(getSession()).toBeNull()
   })
 
+  it('clears the session when manual ingestion is forbidden', async () => {
+    signInAsAdmin()
+    vi.stubGlobal('fetch', searchApiServer(() => ({
+      ok: false,
+      status: 403,
+      data: { error: 'Admin access required.' },
+    })))
+
+    withAppRoutes()
+    await userEvent.click(await screen.findByRole('checkbox', { name: /simulated-release/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Run now' }))
+
+    expect(await screen.findByText('login route')).toBeInTheDocument()
+    expect(getSession()).toBeNull()
+  })
+
+  it('clears the session when SearchAPI product lookup is unauthorized', async () => {
+    signInAsAdmin()
+    const successfulRequests = searchApiServer(() => ({ ok: true, data: {} }))
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      if (url.endsWith('/searchapi/candidates')) {
+        return { ok: false, status: 401, json: async () => ({ error: 'Session expired.' }) }
+      }
+      return successfulRequests(url, init)
+    }))
+
+    withAppRoutes()
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
+    await userEvent.type(screen.getByRole('textbox', { name: 'Smartphone name' }), 'Apple iPhone 16 Pro')
+    await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
+
+    expect(await screen.findByText('login route')).toBeInTheDocument()
+    expect(getSession()).toBeNull()
+  })
+
+  it('shows a SearchAPI lookup error without clearing a valid session', async () => {
+    signInAsAdmin()
+    const successfulRequests = searchApiServer(() => ({ ok: true, data: {} }))
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      if (url.endsWith('/searchapi/candidates')) {
+        return { ok: false, status: 502, json: async () => ({ error: 'SearchAPI is unavailable.' }) }
+      }
+      return successfulRequests(url, init)
+    }))
+
+    withAppRoutes()
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
+    await userEvent.type(screen.getByRole('textbox', { name: 'Smartphone name' }), 'Apple iPhone 16 Pro')
+    await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('SearchAPI is unavailable.')
+    expect(getSession()).toMatchObject({ role: 'ADMIN' })
+  })
+
   it('sends the real bearer token and idempotency key, with no CSRF header', async () => {
     signInAsAdmin()
     let submitted = false
