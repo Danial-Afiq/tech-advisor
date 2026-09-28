@@ -756,6 +756,31 @@ Health endpoint:
 http://localhost:8080/actuator/health
 ```
 
+### Explore the backend API with Swagger UI
+
+With the backend running, open:
+
+```text
+http://localhost:8080/swagger-ui.html
+```
+
+The machine-readable OpenAPI document is available at:
+
+```text
+http://localhost:8080/v3/api-docs
+```
+
+The documentation endpoints are public so the API can be inspected and demoed,
+but the operations themselves keep their normal security rules. To try a
+protected profile or device operation, call `POST /api/auth/login`, copy the
+returned token, choose **Authorize**, and enter the token without adding a
+`Bearer` prefix. Swagger UI adds that prefix automatically.
+
+The **Admin ingestion** group requires an ADMIN JWT. Call
+`POST /api/auth/admin/login` with the configured administrator account, then
+use its token through the same **Authorize** dialog. Admin ingestion uses bearer
+authentication and does not require a separate Basic-auth or CSRF flow.
+
 ### Run the frontend
 
 From:
