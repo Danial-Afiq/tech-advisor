@@ -480,12 +480,31 @@ Question:
 
 > “Does this candidate make sense for this specific user's current device, budget, and priorities?”
 
+> **Priorities do not weight this verdict for now (26 Sep 2026).** The group has
+> not agreed how `device_preferences.priorities` should weight the deterministic
+> score, so every measurable factor counts equally (§18.9, §27.5). Priorities are
+> still collected and still drive retrieval and the LLM explanation (§8.4, §9).
+
 Outputs include:
 - `verdict`
-- `relevance_score`
-- `preference_score`
+- `upgrade_score`
 - `deciding_factors`
 - deterministic `factor_analysis`
+
+### One score, not two — CHANGED 23 Sep 2026
+
+Channel A previously carried two 0-1 floats, `relevance_score` and
+`preference_score`. They are replaced by a single `upgrade_score`, because the
+tier was only ever derived from one number and two fields that never
+independently drove anything invited callers to average or compare them (§23.4).
+
+`upgrade_score` is **0-1**, where 1.0 is a strong upgrade recommendation and 0.0
+is not recommended - not the 0-100 scale an earlier draft of this file used.
+
+This changed the §9 wire contract on both sides at once: `ai/app/schemas.py`,
+`AssessRequest.Analysis`, every manual-eval case and both contract tests. Anything
+still sending `relevance_score` gets a 422 from `extra="forbid"`, which is the
+intended failure mode - a silent mismatch here would be far worse.
 
 Allowed verdicts:
 
@@ -829,8 +848,7 @@ Representative request:
   },
   "analysis": {
     "verdict": "WORTH_CONSIDERING",
-    "relevance_score": 0.71,
-    "preference_score": 0.88,
+    "upgrade_score": 0.72,
     "deciding_factors": ["battery", "camera", "value"]
   },
   "retrieval": {
@@ -1094,6 +1112,18 @@ Test:
   - valid/passing corpus,
 - delta computation,
 - `higher_is_better` inversion.
+
+Implemented for the classifier (§18.9) in
+`backend/src/test/java/com/springboot/backend/recommendation/classification/`:
+`TierMapperTest` (every band boundary, both sides), `UpgradeScoringServiceTest`
+(regressions, mixed improvements, capping, coverage, determinism),
+`SpecComparisonServiceTest` (`higher_is_better` inversion, `spec_overrides`,
+missing values) and `UpgradeClassificationIntegrationTest` (real PostgreSQL).
+
+Still untested because unimplemented: the maturity gate rows above.
+
+Unlike the LLM's letter grade, which drifts between runs (§13.5), the verdict is
+deterministic and **must** be asserted exactly.
 
 ## 13.2 Python tests — mocked LLM
 Test:
@@ -1449,6 +1479,14 @@ Longer-term naming may be cleaner as `evidence_grade`, but the agreed current pl
 semantics documented in a `COMMENT ON COLUMN` so the next reader does not mistake it
 for a probability.
 
+**`NULL` on deterministic-only rows (decided 27 Sep 2026, §18.11).** Every row written
+by the deterministic pipeline leaves `confidence` `NULL`, whatever its verdict -
+including `NO_MEANINGFUL_CHANGE` gate exits that will never get a model call. `-`
+stays reserved for rows the AI path wrote after failing to produce a grade (maturity
+failure, any degraded path). A reader must therefore treat `NULL` as "no evidence
+grade on this row", not as "a grade is coming". An earlier proposal to write `-` on
+gate-exit rows and `NULL` only on pending ones was **rejected**.
+
 ### `input_snapshot`
 Preserve the generation-time inputs because:
 - preferences may later change,
@@ -1465,7 +1503,7 @@ Keep deterministic and model evidence separate:
 {
   "deterministic": {
     "battery": {
-      "priority": 5,
+      "contribution": 1.0,
       "impact": "HIGH_POSITIVE"
     }
   },
@@ -2019,14 +2057,21 @@ result. It is **not** the deterministic verdict engine and **not** a trigger.
 
 Deliberate boundaries:
 
-- **Channel A is still absent.** `verdict`, `relevance_score`, `preference_score`,
-  `deciding_factors` and every figure in `computed` arrive as *input* on
-  `RecommendationInput`. Nothing here computes or second-guesses them, and the
-  verdict persisted is whatever the caller supplied (§7.1).
+- **Channel A now exists** in `recommendation/classification/` (§18.9), but this
+  package still does not call it. `verdict`, `upgrade_score`, `deciding_factors`
+  and every figure in `computed` continue to arrive as *input* on
+  `RecommendationInput`; nothing here computes or second-guesses them, and the
+  verdict persisted is whatever the caller supplied (§7.1). Shortlisting and
+  classification are now joined by `CandidateEvaluationService` (§18.10), but
+  nothing yet feeds its output into `assessAndPersist` - that is the trigger
+  ticket's job.
 - **The maturity gate (§8.3) is still not implemented.** Nothing in this package
   checks evidence maturity before spending a call.
-- **No trigger.** No `@Scheduled`, no controller, no HTTP surface. The scheduled job
-  that will drive this calls `RecommendationService.assessAndPersist`.
+- **No trigger for the AI step.** No `@Scheduled`, no controller, no HTTP surface
+  reaches `assessAndPersist`. The inventory trigger in §18.12 runs the deterministic
+  step only. The scheduled job that will drive this calls `DeterministicRecommendationService.evaluateAllDevices()`
+  (§18.11) and then `RecommendationService.assessAndPersist` for the candidates
+  worth assessing.
 - **No JPA.** `spring-boot-starter-data-jpa` remains on the classpath and unused;
   this package follows the `JdbcTemplate` precedent set by `RunStore` rather than
   introducing the first `@Entity` for one write-once table.
@@ -2054,6 +2099,222 @@ Tests: `AssessContractTests` (no Spring context) pins the wire shape against
 `extra="forbid"`; `RecommendationPersistenceTests` runs the real client against a
 local `HttpServer` stub and asserts what lands in the database on the success,
 degraded, re-assessment and transport-failure paths. No live model call, no API cost.
+
+## 18.9 Channel A — deterministic upgrade classification, 23 Sep 2026
+
+Implemented under
+`backend/src/main/java/com/springboot/backend/recommendation/classification/`.
+This is the deterministic verdict engine §7.1 describes and §18.8 previously
+recorded as absent. It closes the gap between candidate shortlisting (§7.1,
+SCRUM-34) and persistence (§18.8).
+
+| Class | Responsibility |
+|---|---|
+| `Factors` | Java mirror of the twelve closed factors in `ai/app/factors.py` |
+| `SpecFactorCatalog` | which `phone` column feeds which factor, its direction, its improvement cap |
+| `SpecComparisonService` | two spec sheets to finished, direction-corrected deltas, benchmark uplift and price-vs-budget |
+| `UpgradeScoringService` | normalise, equal-weight every measured factor, aggregate to 0-1 |
+| `TierMapper` | score to one of the four verdicts; also the notification-eligibility read (§27.7) |
+| `UpgradeClassificationService` | orchestration, JSONB parsing, the preference-gate exit |
+| `ScoringSettings` | `@ConfigurationProperties("recommendation.scoring")`, thresholds and version |
+
+New entities, filling a real gap: `Phone` / `PhoneRepository` and
+`BenchmarkResult` / `BenchmarkResultRepository`. Before this,
+`benchmark_results.higher_is_better` had **no Java reader at all** despite §8.2
+requiring direction correction. `findLatestPerBenchmark` uses the same
+`DISTINCT ON ... observed_at DESC, id DESC` tiebreaker as the candidate filter,
+for the same reproducibility reason.
+
+How the score is built:
+
+1. each spec normalises to a signed contribution in `[-1, 1]` against its own cap,
+   so GHz, GB, watts and dollars never get added together;
+2. specs sharing a factor average, so a factor with four measurable specs does not
+   outvote one with a single spec;
+3. every measured factor carries **equal weight**, and their plain mean is the
+   final 0-1 score, where 1.0 is a strong upgrade recommendation and 0.0 is not
+   recommended;
+4. coverage is judged against every factor a spec column can feed (twelve minus
+   the five unscorable ones), not against the factors the user ranked.
+
+**CHANGED 26 Sep 2026 (`scoring-version` v3):** weighting by the user's 1-5
+`device_preferences.priorities` is **removed** from Channel A, because the group
+has not agreed how preferences should weight the verdict. The v2 design (priority
+weights, `default-priority` fallback, per-factor `priority` in the breakdown,
+coverage measured against ranked factors) is superseded until that is decided
+(§27.5). The breakdown now records `"weighting": "EQUAL"`. Priorities still reach
+the AI service unchanged.
+
+Decisions worth not re-litigating:
+
+- **Regressions carry their sign and cancel improvements**, but the final score
+  clamps at 0. A net-worse candidate is simply not an upgrade. The per-factor
+  breakdown still records what went backwards, so the clamp loses no information.
+- **Missing is not zero.** A null spec is skipped and shrinks the coverage
+  denominator. If coverage falls below `min-spec-coverage`, the result is flagged
+  `sufficient_data: false` and reported as `NO_MEANINGFUL_CHANGE` - because
+  "nothing improved" and "we could not tell" average to the same zero and must not
+  look the same to a reader.
+- **Five factors cannot be scored at all**: `camera`, `build_quality`, `thermals`,
+  `connectivity`, `audio`. V6 stores `camera_specs` and `ip_rating` as free text and
+  has no column for the other three. They are listed in
+  `SpecFactorCatalog.UNSCORED_FACTORS` and surfaced in the breakdown as
+  `unmeasurable_factors` rather than contributing a silent zero. The owner-evidence
+  channel still grades them.
+- **Text specs are reported, never scored.** `chipset`, `camera_specs`, `ip_rating`
+  and `os` go on the wire as `SpecDelta` with a null `delta_pct`, which is what the
+  Python-side `float | str | None` union exists for.
+- **`spec_overrides` win over the catalogue** and are applied as an overlay rather
+  than by mutating the shared `Phone` row (§14.3). A malformed override costs that
+  one spec and is logged, not the whole assessment.
+
+Persistence: unchanged schema, **no migration**. The tier is `verdict`, the
+breakdown is `factor_analysis.deterministic`, and `upgrade_score` plus
+`scoring_version` ride in both that breakdown and `input_snapshot.analysis`, added
+to `RecommendationService.buildInputSnapshot` so an old row stays explainable after
+the thresholds move.
+
+Still absent, deliberately:
+
+- **No trigger.** Still no `@Scheduled` and no controller. The only production
+  caller is `CandidateEvaluationService` (§18.10), which itself has no trigger.
+- **The maturity gate (§8.3) is still not implemented.**
+- **Nothing populates the catalogue.** Ingestion still writes only to `system_log`,
+  so against a real database there are no products, spec sheets or benchmarks to
+  compare. Every test here seeds its own fixtures.
+
+## 18.10 Deterministic evaluation pipeline — 26 Sep 2026, branch `feat/3.8-evaluate-reccos`
+
+`recommendation/CandidateEvaluationService.evaluate(userDeviceId)` joins candidate
+shortlisting (§7.1, SCRUM-34) to Channel A classification (§18.9) in one read-only
+transaction:
+
+1. `CandidatePruningService.getViableCandidates` - same category, latest price
+   within budget, verified, not the owned product;
+2. `UpgradeClassificationService.loadOwnedSide` - owned spec sheet, overrides,
+   benchmarks and budget, read **once** per run rather than once per candidate;
+3. `UpgradeClassificationService.classify(OwnedSide, ...)` per candidate, carrying
+   the shortlist's `latest_price` straight through;
+4. rank by `upgrade_score` descending, ties broken by `product_id` so the order is
+   reproducible.
+
+Returns `CandidateEvaluation`: `ranked`, `skipped` (with reason), and
+`worthAssessing()` - the ranked candidates whose verdict is not
+`NO_MEANINGFUL_CHANGE`, i.e. those past the early preference-gate exit and the only
+ones a later step should spend retrieval and a model call on.
+
+Failure rules:
+
+- the **owned** device unevaluable (no device, preferences, catalogue link or spec
+  sheet) fails the whole run with `ResourceNotFoundException` - no candidate can be
+  compared against nothing;
+- a **candidate** with no spec sheet is logged and recorded in `skipped`; the run
+  continues. The per-candidate `classify` is deliberately not `@Transactional`, so
+  catching that exception cannot mark the surrounding transaction rollback-only;
+- no viable candidates is an empty result, not an error.
+
+Deliberately **not** done here: no trigger (`@Scheduled`/controller), no maturity
+gate, no AI call. `evaluate` itself stays read-only; persistence is layered on top
+by `DeterministicRecommendationService` (§18.11). The head of the pipeline - what
+calls it and hands `worthAssessing()` to `RecommendationService.assessAndPersist` -
+is a separate ticket.
+
+The owned side is loaded even when the shortlist is empty, so an unevaluable owned
+device always fails rather than passing for one with nothing to recommend.
+
+Test: `CandidateEvaluationIntegrationTest` (real PostgreSQL, rolled back).
+
+## 18.11 Persisting deterministic results — 27 Sep 2026, branch `feat/3.8-evaluate-reccos`
+
+`recommendation/DeterministicRecommendationService.evaluateAndPersist(userDeviceId)`
+runs §18.10 and writes one `recommendations` row per classified candidate. No
+schema change, no migration.
+
+Row contents:
+
+| Column | Value |
+|---|---|
+| `verdict` | Channel A verdict |
+| `confidence` | `NULL` on every row, gate exits included - see §14.12 |
+| `factor_analysis` | `deterministic` = the §18.9 breakdown; `evidence` and `irrelevant_chunk_ids` present but empty |
+| `input_snapshot` | `candidate` (id, brand, model, latest price, currency), `computed`, `analysis` - the same keys `RecommendationService` writes, minus AI-only ones |
+| `reasoning` | fixed Java template built only from verdict, score and deciding factors (§12 fallback) |
+| `ai_model`, `prompt_version`, `trigger_event_id` | `NULL` - no model, no trigger yet |
+
+Lifecycle rules (decided 27 Sep 2026):
+
+- **Still shortlisted:** normal supersede-and-insert - the previous `ACTIVE` row for
+  that (user, candidate) becomes `SUPERSEDED` and is kept as history.
+- **Dropped off this device's shortlist** (over budget, delisted, unverified): every
+  row for that device and candidate is **deleted**, history included, not superseded.
+  Users come for products that are recommended; a record that a product once was is
+  of no use to them. Scoped by `current_device_id`, so another device's rows are
+  never touched.
+- **Shortlisted but skipped** (no spec sheet): nothing new is written - a verdict the
+  classifier did not produce is not fabricated (§12) - and its previous row is left
+  as it was.
+- **Empty shortlist:** every row for the device is deleted.
+
+The delete and all inserts run in **one transaction** (`RecommendationRepository.replaceForDevice`),
+so a run lands completely or not at all. `save` and `replaceForDevice` share one
+supersede-and-insert helper.
+
+Worth-assessing rows (verdict other than `NO_MEANINGFUL_CHANGE`) are expected to be superseded by the AI
+step's `assessAndPersist` row once the trigger ticket wires it, so a full cycle
+leaves a deterministic row and an AI row in history for those candidates.
+
+**Batch entry point for the trigger.** `DeterministicRecommendationService.evaluateAllDevices()`
+is the method the scheduled/controller trigger is meant to call. It evaluates every
+device from `UserDeviceRepository.findEvaluableDeviceIds()` - current, linked to a
+catalogue product, with a `device_preferences` row - in id order, each through
+`evaluateAndPersist`. It is deliberately not `@Transactional`: every device commits
+on its own, and any exception is caught per device, logged and returned in
+`BatchRun.failed` so one bad device cannot stop the rest. A failed device keeps its
+previous rows. Devices that are not evaluable are never attempted, and their
+existing rows are not touched by the run. It does not yet hand `worthAssessing()`
+to the AI step; that belongs with the trigger ticket.
+
+Test: `DeterministicRecommendationPersistenceTest` (real PostgreSQL, rolled back).
+
+## 18.12 Inventory trigger - 27 Sep 2026, branch `feat/3.8-evaluate-reccos`
+
+Adding or editing a device re-runs the deterministic pipeline for **that device only**,
+so a user sees verdicts without waiting for a batch run. This pulls part of SCRUM-20
+(capturing a budget) into this branch; that ticket's story points are being reduced.
+
+- `DeviceService.createDevice` / `updateDevice` publish `service/DeviceInventoryChanged(userDeviceId)`.
+  `removeDevice` does not.
+- `recommendation/InventoryRecommendationTrigger` listens with
+  `@TransactionalEventListener(AFTER_COMMIT)` + `@Async("recommendationExecutor")`:
+  after commit, so the evaluation (on another thread) can see the device and a rolled-back
+  save produces nothing; async, so the HTTP response does not wait on the pipeline.
+- It checks `UserDeviceRepository.isEvaluable(id)` (same bar as `findEvaluableDeviceIds`)
+  and calls `DeterministicRecommendationService.evaluateAndPersist`. Not evaluable is
+  logged at INFO and skipped; any failure is logged and swallowed, since the inventory
+  change has already committed.
+- `RecommendationTriggerConfiguration` defines the named executor with **one thread**:
+  evaluations queue and run one at a time, so two quick edits cannot race on the
+  partial unique `ACTIVE` index. A named executor is required because the ingestion
+  `ThreadPoolTaskScheduler` is also an `Executor` and would otherwise catch `@Async`.
+- `recommendation.inventory-trigger-enabled` (default `true`) turns the listener off.
+- Deterministic only - it does not call the AI step (§18.8).
+
+**Budget on the device API (API contract change).** `DeviceRequest` gained optional
+`budget` (>= 0, 10.2 digits) and `currency` (3 upper-case letters). With a budget,
+create/update upserts `device_preferences` (currency defaults to `SGD` on create and is
+kept on update when omitted). Without one, existing preferences are left untouched.
+Only `budget`/`currency` are writable; `priorities`, `pain_points`, urgency, brand
+flexibility and notes still have no API. `DeviceResponse` does not return the budget yet.
+Without a budget a device is never evaluable (§27.10), so a frontend add-device form
+must send one for the demo to show anything.
+
+Not handled yet: removing a device, or unlinking its product, leaves its existing
+`ACTIVE` rows in place.
+
+Tests: `DeviceServiceTest`, `InventoryRecommendationTriggerTest` (Mockito), and
+`InventoryRecommendationTriggerIntegrationTest` - real PostgreSQL and deliberately
+**not** `@Transactional`, because the listener only fires after a real commit; it cleans
+up what it commits.
 
 ---
 
@@ -2602,15 +2863,41 @@ Suggested starting values:
 
 They are tunable config, not immutable product truth.
 
-## 27.5 Verdict scoring/band thresholds
-Need deterministic tuning and boundary tests.
+## 27.5 Verdict scoring/band thresholds — MECHANISM BUILT, VALUES STILL OPEN
 
-Current Jira contains tasks to:
-- define thresholds,
-- create weighted score,
-- test boundaries.
+The weighted score, the band mapping and the boundary tests now exist
+(§18.9). What remains open is the **numbers**, which are configuration, not code.
 
-Do not let the LLM choose these thresholds.
+`upgrade_score` is 0-1: 1.0 is a strong upgrade recommendation, 0.0 is not
+recommended. The shipped values (scoring version, the three band thresholds,
+minimum spec coverage, score precision) live **only** in the
+`recommendation.scoring.*` block of `backend/src/main/resources/application.properties`.
+That block is the single source of truth: unit tests bind it through
+`ShippedScoringSettings` rather than restating numbers, and `.env.example` lists
+the `SCORING_*` overrides commented out with no values. Do not copy the numbers
+into docs, fixtures or tests. Each value can be overridden by environment
+variable, and none of them is agreed with the product owner.
+
+Current band shape (unchanged since `scoring-version` v2): everything below the watching
+threshold is `NO_MEANINGFUL_CHANGE`, which is the bottom half of the scale. The
+remaining half is split into three roughly equal bands for `WORTH_WATCHING`,
+`WORTH_CONSIDERING` and `STRONG_UPGRADE_CANDIDATE`. This supersedes the v1 shape,
+which split the scale into four equal quarters.
+
+Per-spec improvement caps live in `SpecFactorCatalog` rather than in properties,
+because each one is a judgement about that specific spec ("a 50% battery increase
+is a full-strength win") and belongs next to the spec it describes.
+
+Still to do:
+- calibrate thresholds and caps against representative product pairs,
+- **decide how user `device_preferences.priorities` weight the verdict.** Until
+  then every measured factor weighs equally (v3); do not reintroduce priority
+  weighting without a group decision,
+- decide whether weights should vary per product category,
+- bump `scoring-version` whenever any of the above changes.
+
+Do not let the LLM choose these thresholds, and do not present the current
+defaults as the agreed configuration.
 
 ## 27.6 Recommendation expiry
 Still under research/ticketing.
@@ -2624,6 +2911,15 @@ Because the current “confidence” concept has become an evidence grade, notif
 - user settings.
 
 Do not blindly reuse old “confidence > x” wording.
+
+**Current state:** `TierMapper.isEmailEligible(verdict)` returns true only for
+`STRONG_UPGRADE_CANDIDATE`. That is deliberately narrower than the policy above
+and is **not** the finished rule - it considers the verdict alone, not evidence
+maturity or the user's settings. It is also only *eligibility*: nothing sends
+anything. There is no mail dependency, no template, no delivery and no
+deduplication anywhere in the backend, and the only Telegram in the repository is
+`.github/workflows/telegram-notifications.yml`, which alerts on CI/CD and has
+nothing to do with product notifications.
 
 ## 27.8 PC/GPU expansion
 The canonical V6 now includes the generic `products` table and a `gpu` subtype table alongside `phone`.
@@ -2651,7 +2947,8 @@ Resolved by SCRUM-34: the budget ceiling is the entire basis of candidate
 shortlisting, so a preferences row without one cannot be evaluated.
 
 **Flag for SCRUM-20 (device inventory management):** the preferences UI must
-always collect a budget. If the product decides a budget should be optional,
+always collect a budget. The backend now accepts `budget`/`currency` on
+`POST`/`PUT /api/devices` (§18.12); the frontend does not send them yet. If the product decides a budget should be optional,
 relax the constraint in a later migration rather than editing V6.
 
 ## 27.11 Where the AI service is hosted — OPEN
@@ -2778,17 +3075,29 @@ Current intended mapping into `recommendations`:
 
 | AI/system output | Recommendation storage |
 |---|---|
-| Java verdict | `verdict` |
+| Java verdict (the tier) | `verdict` |
 | A–F / `-` owner evidence grade | `confidence` |
 | deterministic impacts | `factor_analysis.deterministic` |
 | evidence findings | `factor_analysis.evidence` |
 | user-facing summary | `reasoning` |
 | request/context snapshot | `input_snapshot` |
+| Channel A score and deciding factors | `input_snapshot.analysis` |
 | retrieved real chunk IDs | `input_snapshot.retrieved_chunk_ids` |
 | model ID | `ai_model` |
 | prompt revision | `prompt_version` |
+| scoring configuration revision | `factor_analysis.deterministic.scoring_version` |
 
 `input_snapshot` should preserve enough to reconstruct why the old recommendation existed even after live records change.
+
+There is deliberately **no** `upgrade_score` or `scoring_version` column and no
+migration for one (§18.9). The score lives in JSONB alongside the breakdown that
+explains it, which keeps the two from drifting apart; PostgreSQL can still filter
+and sort on it through a JSONB path. Add columns only if a query pattern makes the
+JSONB path genuinely painful, not on principle.
+
+`scoring_version` is to Channel A what `prompt_version` is to the model call: two
+analyses sharing a version must have been produced by the same weights, caps and
+thresholds, or reproducibility is lost.
 
 ---
 
