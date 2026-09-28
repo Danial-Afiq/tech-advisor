@@ -1695,10 +1695,17 @@ stored password is hashed.
 
 The JWT authentication filter verifies the token signature, subject and role,
 then confirms that the corresponding database account still exists with the
-same role. Routes under `/api/admin/**` require `ROLE_ADMIN`.
+same role. Routes under `/api/admin/**` require `ROLE_ADMIN`, and that
+includes `/api/admin/ingestion/**` - it has no ingestion-specific security
+config anymore (removed 28 Sep 2026, chore/ingestion-admin-auth). There is
+no separate credential or CSRF token for ingestion admin: the frontend
+authenticates with the same signed-in session used everywhere else
+(`frontend/src/api/session.ts`), and `GET .../session` is a plain identity
+check, not a CSRF-token issuer.
 
-The ingestion demo profile may still use its separate demo-only protection.
-Do not treat that mechanism as the production administrator login.
+`ingestion-demo` remains a real Spring profile, but only for enabling the
+simulated data sources (`SimulatedSources`/`SimulationSink`) for local/demo
+use - it no longer changes who can authenticate.
 
 ---
 
@@ -2412,7 +2419,6 @@ VECTOR_STORE              # local | pgvector
 EMBEDDER                  # must match what ingested the corpus (§18.2)
 
 VITE_API_BASE_URL
-VITE_INGESTION_DEMO
 INGESTION_SCHEDULING_ENABLED
 INGESTION_ANCHOR
 INGESTION_ENABLED_SOURCES

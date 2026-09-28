@@ -38,9 +38,16 @@ export async function apiFetch<T>(
     method = "GET",
     body,
     auth = true,
-  }: { method?: string; body?: unknown; auth?: boolean } = {}
+    headers: extraHeaders,
+  }: {
+    method?: string;
+    body?: unknown;
+    auth?: boolean;
+    /** Extra request headers, e.g. an Idempotency-Key. Never Content-Type or Authorization. */
+    headers?: Record<string, string>;
+  } = {}
 ): Promise<T> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...extraHeaders };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const session = auth ? getSession() : null;
   if (session) headers.Authorization = `Bearer ${session.token}`;
