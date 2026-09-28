@@ -441,8 +441,10 @@ still open (see §27.9).
   security requirements.
 - Swagger UI defines `bearerAuth` for account JWTs. Profile and owned-device
   operations require a USER JWT; admin-ingestion operations require an ADMIN
-  JWT obtained from `POST /api/auth/admin/login`. There is no separate Basic
-  authentication or CSRF flow for ingestion.
+  JWT. `POST /api/auth/login` authenticates both USER and ADMIN accounts and
+  returns the actual role; `POST /api/auth/admin/login` remains as a compatible
+  admin-only endpoint. There is no separate Basic authentication or CSRF flow
+  for ingestion.
 - `OpenApiDocumentationTests` protects the UI/API-doc availability and the
   generated route, schema, security, and response-status contract in CI.
 
@@ -1749,17 +1751,15 @@ Current frontend contains an ingestion admin panel.
 Known route:
 
 ```text
-/IngestionAdmin
+/admin/ingestion
 ```
 
-The canonical `/admin/ingestion` route and shared ADMIN login flow are being
-implemented separately on `fix/frontend-routing-auth-flow`; until that work is
-merged, the source tree still exposes the legacy route above.
-
-Production admin authentication uses JWTs issued by
-`POST /api/auth/admin/login`. The configured administrator is bootstrapped into
-the `users` table with the `ADMIN` role when the application starts, and the
-stored password is hashed.
+Production authentication uses one normal login experience backed by
+`POST /api/auth/login`, which accepts either USER or ADMIN accounts and returns
+the account's actual role. `POST /api/auth/admin/login` remains available for
+backwards compatibility and still accepts ADMIN accounts only. The configured
+administrator is bootstrapped into the `users` table with the `ADMIN` role when
+the application starts, and the stored password is hashed.
 
 The JWT authentication filter verifies the token signature, subject and role,
 then confirms that the corresponding database account still exists with the
@@ -1770,6 +1770,13 @@ no separate credential or CSRF token for ingestion admin: the frontend
 authenticates with the same signed-in session used everywhere else
 (`frontend/src/api/session.ts`), and `GET .../session` is a plain identity
 check, not a CSRF-token issuer.
+
+Frontend routes are role-guarded before their pages render. `/devices` accepts
+USER sessions, `/admin/ingestion` accepts ADMIN sessions, and `/login` redirects
+an existing session to its role-appropriate page. `/DevicesPageTest` and
+`/IngestionAdmin` are compatibility redirects only. The admin ingestion page
+signs out by clearing the shared frontend session and replacing the route with
+`/login`.
 
 The SearchAPI source is labelled **SearchAPI customer reviews** in the source list.
 Selecting it shows a required **Smartphone name** field. `POST
@@ -1805,9 +1812,10 @@ or the token expiration is not positive. An integration test checks that
 profile with a valid token.
 
 Frontend: the `/login` page signs up through `POST /api/auth/register` and
-logs in through `POST /api/auth/login`. The register endpoint takes email +
-password only, with no name field. Token storage is temporary and NOT a
-decision: the JWT is kept in `sessionStorage`, isolated in
+logs both USER and ADMIN accounts in through `POST /api/auth/login`; the role in
+the response selects `/devices` or `/admin/ingestion`. The register endpoint
+takes email + password only, with no name field. Token storage is temporary and
+NOT a decision: the JWT is kept in `sessionStorage`, isolated in
 `frontend/src/api/session.ts`. How the frontend should store tokens
 (sessionStorage, localStorage or an httpOnly cookie) is still open.
 
@@ -2674,17 +2682,16 @@ Future auth should replace temporary/demo mechanisms rather than exposing privil
 
 ---
 
-# 21. Vercel routing note
+# 21. Vercel + BrowserRouter routing — IMPLEMENTED
 
-A previous production issue showed the Vercel 404 page on client-side routes.
+The Vercel project root is `frontend`, so `frontend/vercel.json` owns the SPA
+fallback. Its catch-all rewrite serves `/index.html`, allowing BrowserRouter
+routes such as `/login`, `/devices`, and `/admin/ingestion` to be entered or
+refreshed directly without a Vercel filesystem 404.
 
-The planned robust fix is to add a `vercel.json` SPA rewrite so React routes fall back to the Vite app.
-
-As of the current `main` root snapshot, no top-level `vercel.json` is present.
-
-When adding it, ensure its location matches the Vercel project/root-directory setup (`frontend` is the configured frontend root).
-
-Do not use a manual dashboard rewrite as the permanent source-of-truth workaround if the routing rule should live in version control.
+The repository configuration is the source of truth; no manual Vercel dashboard
+routing rule is required. The frontend deliberately remains on BrowserRouter,
+not HashRouter.
 
 ---
 

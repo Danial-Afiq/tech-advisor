@@ -782,10 +782,12 @@ protected profile or device operation, call `POST /api/auth/login`, copy the
 returned token, choose **Authorize**, and enter the token without adding a
 `Bearer` prefix. Swagger UI adds that prefix automatically.
 
-The **Admin ingestion** group requires an ADMIN JWT. Call
-`POST /api/auth/admin/login` with the configured administrator account, then
-use its token through the same **Authorize** dialog. Admin ingestion uses bearer
-authentication and does not require a separate Basic-auth or CSRF flow.
+The **Admin ingestion** group requires an ADMIN JWT. Use the same
+`POST /api/auth/login` endpoint with the configured administrator account, then
+use its token through the same **Authorize** dialog. The legacy
+`POST /api/auth/admin/login` endpoint remains available for compatibility.
+Admin ingestion uses bearer authentication and does not require a separate
+Basic-auth or CSRF flow.
 
 ### Run the frontend
 
@@ -1093,6 +1095,9 @@ Output Directory: dist
 
 Vercel can automatically build and deploy the frontend when changes are merged into the configured production branch.
 
+`frontend/vercel.json` contains the BrowserRouter SPA fallback to `/index.html`,
+so direct visits and refreshes on React routes do not depend on dashboard rules.
+
 This means frontend deployment does not require a separate custom `flyctl`-style GitHub Actions job.
 
 ## CI/CD overview
@@ -1192,8 +1197,9 @@ At application startup, the backend bootstraps the configured administrator
 into the `users` table with the `ADMIN` role if that email does not already
 exist. The password is stored as a hash rather than plain text. Existing admin
 records are not overwritten. Administrators authenticate through
-`POST /api/auth/admin/login`; normal users authenticate through
-`POST /api/auth/login`.
+the same `POST /api/auth/login` endpoint as normal users, and the response
+contains the account's actual role. `POST /api/auth/admin/login` remains as an
+admin-only compatibility endpoint.
 
 ### Three things that will bite you silently
 

@@ -1,14 +1,22 @@
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import type { ReactElement } from 'react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import IngestionAdmin from './IngestionAdmin'
-import { clearSession, setSession } from './api/session'
+import { clearSession, getSession, setSession } from './api/session'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); clearSession() })
 
 const withRouter = (element: ReactElement) => render(<MemoryRouter>{element}</MemoryRouter>)
+const withAppRoutes = () => render(
+  <MemoryRouter initialEntries={['/admin/ingestion']}>
+    <Routes>
+      <Route path="/admin/ingestion" element={<IngestionAdmin />} />
+      <Route path="/login" element={<p>login route</p>} />
+    </Routes>
+  </MemoryRouter>
+)
 const signInAsAdmin = () => setSession({ token: 'admin-token', email: 'admin@example.com', role: 'ADMIN' })
 
 /** `searchapi/candidates`, `/runs`, `/sources`, `/schedule` fixture server. */
@@ -52,11 +60,78 @@ describe('Ingestion admin', () => {
     expect(screen.queryByRole('button', { name: 'Run now' })).not.toBeInTheDocument()
   })
 
-  it('signs out and re-shows the sign-in prompt when the backend rejects the admin session', async () => {
-    signInAsAdmin()
+  it('clears the session and returns to login when the backend rejects the admin session', async () => {
+    setSession({ token: 'stale-token', email: 'admin@example.com', role: 'ADMIN' })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }))
-    withRouter(<IngestionAdmin />)
-    expect(await screen.findByText('Sign in required')).toBeInTheDocument()
+    withAppRoutes()
+    expect(await screen.findByText('login route')).toBeInTheDocument()
+    expect(getSession()).toBeNull()
+  })
+
+  it('signs out through the normal session abstraction and returns to login', async () => {
+    setSession({ token: 'admin-token', email: 'admin@example.com', role: 'ADMIN' })
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => {})))
+    const user = userEvent.setup()
+
+    withAppRoutes()
+    await user.click(screen.getByRole('button', { name: 'Sign out' }))
+
+    expect(await screen.findByText('login route')).toBeInTheDocument()
+    expect(getSession()).toBeNull()
+  })
+
+  it('clears the session when manual ingestion is forbidden', async () => {
+    signInAsAdmin()
+    vi.stubGlobal('fetch', searchApiServer(() => ({
+      ok: false,
+      status: 403,
+      data: { error: 'Admin access required.' },
+    })))
+
+    withAppRoutes()
+    await userEvent.click(await screen.findByRole('checkbox', { name: /simulated-release/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Run now' }))
+
+    expect(await screen.findByText('login route')).toBeInTheDocument()
+    expect(getSession()).toBeNull()
+  })
+
+  it('clears the session when SearchAPI product lookup is unauthorized', async () => {
+    signInAsAdmin()
+    const successfulRequests = searchApiServer(() => ({ ok: true, data: {} }))
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      if (url.endsWith('/searchapi/candidates')) {
+        return { ok: false, status: 401, json: async () => ({ error: 'Session expired.' }) }
+      }
+      return successfulRequests(url, init)
+    }))
+
+    withAppRoutes()
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
+    await userEvent.type(screen.getByRole('textbox', { name: 'Smartphone name' }), 'Apple iPhone 16 Pro')
+    await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
+
+    expect(await screen.findByText('login route')).toBeInTheDocument()
+    expect(getSession()).toBeNull()
+  })
+
+  it('shows a SearchAPI lookup error without clearing a valid session', async () => {
+    signInAsAdmin()
+    const successfulRequests = searchApiServer(() => ({ ok: true, data: {} }))
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      if (url.endsWith('/searchapi/candidates')) {
+        return { ok: false, status: 502, json: async () => ({ error: 'SearchAPI is unavailable.' }) }
+      }
+      return successfulRequests(url, init)
+    }))
+
+    withAppRoutes()
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
+    await userEvent.type(screen.getByRole('textbox', { name: 'Smartphone name' }), 'Apple iPhone 16 Pro')
+    await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('SearchAPI is unavailable.')
+    expect(getSession()).toMatchObject({ role: 'ADMIN' })
   })
 
   it('sends the real bearer token and idempotency key, with no CSRF header', async () => {

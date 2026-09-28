@@ -1,17 +1,12 @@
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { signIn, signOut, signUp } from "../api/auth";
+import { signIn, signUp } from "../api/auth";
 import { AuthCard } from "../components/auth/AuthCard";
 import type { AuthMode } from "../components/auth/AuthCard";
 import { BrandMark } from "../components/layout/BrandMark";
 import { ThemeRoot } from "../components/layout/ThemeRoot";
-import { Button } from "../components/ui/Button";
-import { Callout } from "../components/ui/Callout";
 import { Eyebrow } from "../components/ui/Eyebrow";
-
-/** Where users land after signing up or logging in. */
-const USER_AFTER_AUTH_PATH = "/DevicesPageTest";
-const ADMIN_AFTER_AUTH_PATH = "/IngestionAdmin";
+import { homePathForRole } from "../routing/paths";
 
 const HIGHLIGHTS = [
   {
@@ -46,16 +41,7 @@ export default function Login() {
         ? await signUp(email, password)
         : await signIn(email, password);
 
-    navigate(
-      session.role === "ADMIN"
-        ? ADMIN_AFTER_AUTH_PATH
-        : USER_AFTER_AUTH_PATH
-    );
-  };
-
-  const openDemo = () => {
-    signOut(); // the devices page shows demo data when signed out
-    navigate(USER_AFTER_AUTH_PATH);
+    navigate(homePathForRole(session.role), { replace: true });
   };
 
   return (
@@ -100,18 +86,6 @@ export default function Login() {
             mode={mode}
             onModeChange={setMode}
             onSubmit={submit}
-            footer={
-              <>
-                <Button variant="secondary" className="w-full" onClick={openDemo}>
-                  Open demo account
-                </Button>
-                <Callout className="mt-3">
-                  The demo shows a phone with a S$1,000 battery-focused upgrade
-                  profile and a laptop with a S$2,000 performance-focused
-                  profile. Nothing you do in the demo is saved.
-                </Callout>
-              </>
-            }
           />
         </section>
       </div>

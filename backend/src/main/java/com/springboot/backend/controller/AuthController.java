@@ -59,7 +59,7 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    @Operation(summary = "Log in", description = "Validates account credentials and returns a bearer JWT.")
+    @Operation(summary = "Log in", description = "Validates USER or ADMIN account credentials and returns a bearer JWT with the account's role.")
     @ApiResponses({
             @ApiResponse(
                     responseCode = "200",

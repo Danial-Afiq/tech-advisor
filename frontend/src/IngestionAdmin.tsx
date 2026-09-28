@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { signOut } from './api/auth'
 import { apiFetch, ApiError } from './api/client'
 import { getSession, clearSession } from './api/session'
 import type { Session } from './api/session'
@@ -75,14 +76,23 @@ export default function IngestionAdmin() {
       try { await refresh(); setError('') }
       catch (e) {
         if (stopped) return
-        if (e instanceof ApiError && (e.status === 401 || e.status === 403)) { clearSession(); setAccount(null) }
+        if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+          clearSession()
+          setAccount(null)
+          navigate('/login', { replace: true })
+        }
         else setError((e as Error).message)
       }
       finally { if (!stopped) { setReady(true); timer = setTimeout(poll, 2000) } }
     }
     void poll()
     return () => { stopped = true; clearTimeout(timer) }
-  }, [account, refresh])
+  }, [account, navigate, refresh])
+
+  const handleSignOut = () => {
+    signOut()
+    navigate('/login', { replace: true })
+  }
 
   async function start() {
     if (!account) return
@@ -101,7 +111,16 @@ export default function IngestionAdmin() {
       await request('/runs', { method: 'POST', headers: { 'Idempotency-Key': pending.current.key }, body: payload })
       pending.current = null
       await refresh()
-    } catch (e) { setError((e as Error).message); await refresh().catch(() => {}) }
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        clearSession()
+        setAccount(null)
+        navigate('/login', { replace: true })
+        return
+      }
+      setError((e as Error).message)
+      await refresh().catch(() => {})
+    }
     finally { setSubmitting(false) }
   }
 
@@ -114,7 +133,15 @@ export default function IngestionAdmin() {
       const found = await request<ProductCandidate[]>('/searchapi/candidates', { method: 'POST',
         body: { productName: productName.trim() } })
       setCandidates(found)
-    } catch (e) { setError((e as Error).message) }
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        clearSession()
+        setAccount(null)
+        navigate('/login', { replace: true })
+        return
+      }
+      setError((e as Error).message)
+    }
     finally { setFinding(false) }
   }
 
@@ -140,7 +167,8 @@ export default function IngestionAdmin() {
     <ThemeRoot>
       <div className="mx-auto max-w-[1100px] p-7 max-[620px]:p-4">
         <PageHeader eyebrow="Tech Advisor · Admin" title="Market data ingestion"
-          description="Import market updates and customer reviews for your catalogue." />
+          description="Import market updates and customer reviews for your catalogue."
+          action={<Button size="sm" variant="ghost" onClick={handleSignOut}>Sign out</Button>} />
         <FormError message={error} />
         {!ready ? <LoadingBlock label="Loading ingestion status…" /> : <>
           <div className="grid grid-cols-3 gap-4 max-[700px]:grid-cols-1">
@@ -206,16 +234,17 @@ export default function IngestionAdmin() {
                 {candidates.length > 0 && (
                   <fieldset className="grid gap-2 rounded-[12px] border border-white/[0.09] p-3">
                     <legend className="px-1 text-[13px] font-semibold text-[#c6d1df]">Select a SearchAPI product</legend>
-                    {candidates.map(candidate => (
-                      <label key={candidate.externalProductId} className="flex items-start gap-3">
-                        <input type="radio" name="searchapi-product" className="radio radio-sm mt-[2px]"
+                    {candidates.map((candidate, index) => (
+                      <div key={candidate.externalProductId} className="flex items-start gap-3">
+                        <input id={`searchapi-product-${index}`} type="radio" name="searchapi-product"
+                          className="radio radio-sm mt-[2px]"
                           value={candidate.externalProductId} checked={externalProductId === candidate.externalProductId}
                           onChange={() => setExternalProductId(candidate.externalProductId)} />
-                        <span className="flex flex-col gap-1">
+                        <label htmlFor={`searchapi-product-${index}`} className="flex flex-col gap-1">
                           <span className="text-[14px] text-[#eef5ff]">{candidate.title}</span>
                           <small className="text-[12px] text-[#8fa0b8]">Product ID: {candidate.externalProductId}</small>
-                        </span>
-                      </label>
+                        </label>
+                      </div>
                     ))}
                   </fieldset>
                 )}

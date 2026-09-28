@@ -93,6 +93,36 @@ class AdminAuthorizationIntegrationTest {
     }
 
     @Test
+    void normalLoginAcceptsAdminCredentialsAndReturnsAdminRole()
+            throws Exception {
+
+        var mvc = MockMvcBuilders
+                .webAppContextSetup(web)
+                .apply(
+                        SecurityMockMvcConfigurers
+                                .springSecurity()
+                )
+                .build();
+
+        mvc.perform(
+                        MockMvcRequestBuilders
+                                .post("/api/auth/login")
+                                .contentType("application/json")
+                                .content("""
+                                        {
+                                            "email": "test-admin@example.com",
+                                            "password": "test-admin-password"
+                                        }
+                                        """)
+                )
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.token").isNotEmpty())
+                .andExpect(jsonPath("$.tokenType").value("Bearer"))
+                .andExpect(jsonPath("$.expiresIn").value(3600))
+                .andExpect(jsonPath("$.role").value("ADMIN"));
+    }
+
+    @Test
     void invalidAdminCredentialsReturnUnauthorized()
             throws Exception {
 

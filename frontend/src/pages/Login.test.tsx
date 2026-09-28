@@ -16,7 +16,7 @@ function renderLogin(url = "/login") {
     <MemoryRouter initialEntries={[url]}>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/DevicesPageTest" element={<p>devices page</p>} />
+        <Route path="/devices" element={<p>devices page</p>} />
       </Routes>
     </MemoryRouter>
   );
@@ -69,7 +69,7 @@ describe("Login page", () => {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route
-            path="/IngestionAdmin"
+            path="/admin/ingestion"
             element={<div>Manual Ingestion Page</div>}
           />
         </Routes>

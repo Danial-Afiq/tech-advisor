@@ -162,16 +162,15 @@ $env:SERVER_PORT = '18087'
 .\mvnw.cmd spring-boot:run
 ```
 
-Then start the frontend with `npm run dev`. On this branch the legacy frontend
-URL is `http://localhost:5173/IngestionAdmin`; the routing/auth-flow branch will
-make `/admin/ingestion` canonical. With an ADMIN session already stored through
-the shared session abstraction, follow this workflow:
+Then start the frontend with `npm run dev`, open
+`http://localhost:5173/admin/ingestion`, and follow this workflow:
 
-1. Check **SearchAPI customer reviews**.
-2. Enter the brand and full model name.
-3. Select **Find matching products**.
-4. Choose one exact SearchAPI product.
-5. Select **Run now** and inspect the result/history.
+1. Sign in through `/login` with the configured ADMIN account.
+2. Check **SearchAPI customer reviews**.
+3. Enter the brand and full model name.
+4. Select **Find matching products**.
+5. Choose one exact SearchAPI product.
+6. Select **Run now** and inspect the result/history.
 
 The helper below instead starts an untargeted run against an existing eligible
 catalogue phone and polls it to completion:

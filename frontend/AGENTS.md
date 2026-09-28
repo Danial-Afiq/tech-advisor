@@ -246,9 +246,9 @@ as one deliberate change across all components, not piecemeal.
 
 ## 7. Current state (keep this section up to date)
 
-- Built to this system: `DevicesPageTest`. Signed out, it shows demo data.
-  Signed in, it loads devices from `GET /api/devices` and saves new ones with
-  `POST /api/devices`. Edit, remove and upgrade preferences are still
+- Built to this system: `DevicesPageTest`, mounted at the authenticated USER
+  route `/devices`. It loads devices from `GET /api/devices` and saves new ones
+  with `POST /api/devices`. Edit, remove and upgrade preferences are still
   local-only, and the page says so in its toasts. `PUT` / `DELETE
   /api/devices/{id}` exist but aren't wired yet, and there is no endpoint for
   device preferences.
@@ -258,14 +258,20 @@ as one deliberate change across all components, not piecemeal.
 - JWT storage is **temporary**: `sessionStorage` via `src/api/session.ts`.
   The token-storage decision is still open. Change `session.ts` when it's
   decided.
+- `components/auth/SessionRoute.tsx` applies route-level session/role guards.
+  `/` and `/login` redirect an existing session to `/devices` for USER or
+  `/admin/ingestion` for ADMIN. The two protected routes redirect signed-out
+  visitors to `/login` and redirect the wrong role to its own home route.
+  `/DevicesPageTest` and `/IngestionAdmin` remain compatibility redirects.
 - `pages/Login.tsx` (`/login`, `/login?mode=signup`) is built to this system.
   Sign up calls `POST /api/auth/register`, then logs in. Log in calls
-  `POST /api/auth/login`. Both then go to `/DevicesPageTest`. The backend
-  stores only email + password, so there is no name field.
-- `IngestionAdmin.tsx` now uses `ThemeRoot` and the shared UI components. It
-  reads the normal ADMIN JWT through `api/session.ts`; there is no separate
-  demo password or ingestion-specific login. Its route remains the legacy
-  `/IngestionAdmin` until the separate routing/auth-flow work lands.
+  `POST /api/auth/login` for USER and ADMIN accounts, then routes by the returned
+  role. The backend stores only email + password, so there is no name field.
+- `IngestionAdmin.tsx` uses the shared UI components and the application's ADMIN
+  session only. It has no ingestion-specific password gate and signs out through
+  `api/auth.ts`. SearchAPI review ingestion adds a validated product picker to
+  the same authenticated page. It still uses `ThemeRoot` rather than the full
+  signed-in `AppShell`.
 - **Not yet migrated:** `pages/ThingieMagiggie.tsx`. When you touch it, move it
   onto the shared components.
 - `DeviceResponse` does not yet include the product category, the `phone`
