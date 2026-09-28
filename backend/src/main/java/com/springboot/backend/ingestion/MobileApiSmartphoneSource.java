@@ -63,6 +63,18 @@ public class MobileApiSmartphoneSource implements IngestionSource {
         return "mobileapi-smartphone";
     }
 
+    /**
+     * Runs before the default priority(). Deliberate, not incidental: this is
+     * the sole source of truth for products/phone rows (AGENTS.md 17.1.1),
+     * so anything that reads the catalogue in the same run - SearchAPI's
+     * untargeted product pick, for one - must see this source's writes
+     * first, not depend on alphabetical sourceId ordering happening to agree.
+     */
+    @Override
+    public int priority() {
+        return 10;
+    }
+
     @Override
     public void ingest(SourceContext context, Consumer<Payload> output) throws Exception {
         if (apiKey.isBlank()) return;
