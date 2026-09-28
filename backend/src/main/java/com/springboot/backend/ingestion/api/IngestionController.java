@@ -13,7 +13,6 @@ import java.time.Clock;
 import java.util.*;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.dao.DataAccessException;
 import com.springboot.backend.ingestion.searchapi.SearchApiRepository;
 import com.springboot.backend.ingestion.searchapi.SearchApiSource;
@@ -39,9 +38,12 @@ public class IngestionController {
     }
     public record Request(List<String> sources, String reason, String productName, String externalProductId) {}
     public record CandidateRequest(String productName) {}
+    // No CSRF token here: authentication is a bearer JWT the browser must set explicitly
+    // (SecurityConfig disables CSRF protection app-wide), not an ambient cookie a
+    // cross-site request could ride along on - there's nothing for CSRF to protect.
     @GetMapping("/session")
-    public Map<String, String> session(Principal user, CsrfToken csrf) {
-        return Map.of("username", user.getName(), "csrfHeader", csrf.getHeaderName(), "csrfToken", csrf.getToken());
+    public Map<String, String> session(Principal user) {
+        return Map.of("username", user.getName());
     }
     @PostMapping("/searchapi/candidates")
     public List<ProductMatcher.Candidate> candidates(@RequestBody CandidateRequest request) {

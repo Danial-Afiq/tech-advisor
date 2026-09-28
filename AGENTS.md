@@ -1745,7 +1745,13 @@ stored password is hashed.
 
 The JWT authentication filter verifies the token signature, subject and role,
 then confirms that the corresponding database account still exists with the
-same role. Routes under `/api/admin/**` require `ROLE_ADMIN`.
+same role. Routes under `/api/admin/**` require `ROLE_ADMIN`, and that
+includes `/api/admin/ingestion/**` - it has no ingestion-specific security
+config anymore (removed 28 Sep 2026, chore/ingestion-admin-auth). There is
+no separate credential or CSRF token for ingestion admin: the frontend
+authenticates with the same signed-in session used everywhere else
+(`frontend/src/api/session.ts`), and `GET .../session` is a plain identity
+check, not a CSRF-token issuer.
 
 The SearchAPI source is labelled **SearchAPI customer reviews** in the source list.
 Selecting it shows a required **Smartphone name** field. `POST
@@ -1759,17 +1765,14 @@ model-only name resolves to a VERIFIED SMARTPHONE via `ProductMatcher.matchCatal
 an unknown brand/full-model name is rejected before admission rather than creating
 one.** The target persists in `RunLog.product`, participates in idempotency, survives
 restarts and appears in history. API clients omitting both fields and scheduled runs
-retain default selection. No migration is needed. Existing auth, CSRF and cooldowns
-remain.
+retain default selection. No migration is needed.
 
-**`/api/admin/ingestion/**` is NOT yet wired to the `ROLE_ADMIN` JWT login above** -
-it still runs on its own separate mechanism gated by the `ingestion-demo` Spring
-profile: a standalone `demo-admin` Basic-auth user (`INGESTION_DEMO_PASSWORD`),
-unrelated to the `users` table. A real ADMIN-role account cannot currently reach
-these endpoints through its normal login. Do not treat the demo mechanism as the
-production administrator login, and do not assume the reverse either - closing this
-gap (accepting the real `ROLE_ADMIN` JWT here too, and updating the ingestion admin
-frontend's login flow to match) is tracked as separate follow-up work, not yet done.
+`ingestion-demo` remains a real Spring profile, but only for enabling the
+simulated data sources (`SimulatedSources`/`SimulationSink`) for local/demo
+use - it no longer changes who can authenticate. There is no ingestion-specific
+credential or CSRF token (chore/ingestion-admin-auth, 28 Sep 2026): the SearchAPI
+picker above authenticates with the same `ROLE_ADMIN` JWT session as everything
+else under `/api/admin/**`.
 
 ---
 
@@ -2540,7 +2543,6 @@ VECTOR_STORE              # local | pgvector
 EMBEDDER                  # must match what ingested the corpus (§18.2)
 
 VITE_API_BASE_URL
-VITE_INGESTION_DEMO
 INGESTION_SCHEDULING_ENABLED
 INGESTION_ANCHOR
 INGESTION_ENABLED_SOURCES

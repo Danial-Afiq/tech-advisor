@@ -23,9 +23,11 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import tools.jackson.databind.json.JsonMapper;
 
-@SpringBootTest(properties={"ingestion.demo-password=test-password-only", "ingestion.reconciliation-enabled=false",
+@SpringBootTest(properties={"ingestion.reconciliation-enabled=false",
         "ingestion.enabled-sources=searchapi-google-product-reviews,simulated-release", "searchapi.api-key=test-key-only",
         "logging.level.root=WARN", "debug=false"})
+// Only for SimulatedSources (simulated-release), not for admin auth - that's the app's normal
+// ROLE_ADMIN JWT check now, with no ingestion-specific profile gate.
 @ActiveProfiles("ingestion-demo")
 class ManualProductIngestionTests {
     @Autowired JdbcTemplate db;
@@ -55,7 +57,7 @@ class ManualProductIngestionTests {
         // MobileAPI is the sole source of truth for `products` rows - SearchAPI must never create
         // one, even when the admin types a name and a real device, no matter what SearchAPI itself
         // would have matched. Fails closed before any provider call.
-        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
+        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
                 .header("Idempotency-Key", "auto-create-key").contentType("application/json")
                 .content(body("AutoCreateTest New Phone")))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").isNotEmpty());
@@ -70,7 +72,7 @@ class ManualProductIngestionTests {
         // time, and never touches the catalogue.
         insert("NoMatchBrand", "Missing Phone", "SMARTPHONE", "VERIFIED");
         doReturn(json.createArrayNode()).when(api).shopping(any(), eq("NoMatchBrand Missing Phone"));
-        String result = mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
+        String result = mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
                 .header("Idempotency-Key", "no-match-create-key").contentType("application/json")
                 .content(body("NoMatchBrand Missing Phone")))
                 .andExpect(status().isAccepted()).andReturn().getResponse().getContentAsString();
@@ -101,7 +103,7 @@ class ManualProductIngestionTests {
         insert("AutoCreateTest", "Choice Phone", "SMARTPHONE", "VERIFIED");
 
         mvc.perform(post("/api/admin/ingestion/searchapi/candidates")
-                .with(user("admin").roles("ADMIN")).with(csrf()).contentType("application/json")
+                .with(user("admin").roles("ADMIN")).contentType("application/json")
                 .content("{\"productName\":\"AutoCreateTest Choice Phone\"}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$[0].externalProductId").value("choice-256"))
                 .andExpect(jsonPath("$[1].externalProductId").value("choice-512"))
@@ -110,7 +112,7 @@ class ManualProductIngestionTests {
         String request = json.writeValueAsString(Map.of("sources", java.util.List.of(SearchApiSource.ID),
                 "productName", "AutoCreateTest Choice Phone", "externalProductId", "choice-512"));
         String result = mvc.perform(post("/api/admin/ingestion/runs")
-                .with(user("admin").roles("ADMIN")).with(csrf()).header("Idempotency-Key", "selected-choice-key")
+                .with(user("admin").roles("ADMIN")).header("Idempotency-Key", "selected-choice-key")
                 .contentType("application/json").content(request)).andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.product.externalProductId").value("choice-512"))
                 .andReturn().getResponse().getContentAsString();
@@ -124,12 +126,12 @@ class ManualProductIngestionTests {
         String changedSelection = json.writeValueAsString(Map.of("sources", java.util.List.of(SearchApiSource.ID),
                 "productName", "AutoCreateTest Choice Phone", "externalProductId", "choice-256"));
         mvc.perform(post("/api/admin/ingestion/runs")
-                .with(user("admin").roles("ADMIN")).with(csrf()).header("Idempotency-Key", "selected-choice-key")
+                .with(user("admin").roles("ADMIN")).header("Idempotency-Key", "selected-choice-key")
                 .contentType("application/json").content(changedSelection)).andExpect(status().isConflict());
     }
 
     @Test void resolvesNamePersistsTargetAndExecutesOnlyTheRequestedProduct() throws Exception {
-        String result = mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
+        String result = mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
                 .header("Idempotency-Key", "targeted-run-key").contentType("application/json")
                 .content(body("  manualtargettest   LATER Phone  ")))
                 .andExpect(status().isAccepted()).andExpect(jsonPath("$.product.productId").value(second))
@@ -146,10 +148,10 @@ class ManualProductIngestionTests {
         assertEquals(0, db.queryForObject("SELECT count(*) FROM external_product_mapping WHERE product_id=?", Integer.class, first));
 
         // A retry resolves to the same canonical identity; changing products conflicts.
-        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
+        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
                 .header("Idempotency-Key", "targeted-run-key").contentType("application/json").content(body("Later Phone")))
                 .andExpect(status().isAccepted()).andExpect(jsonPath("$.runId").value(id));
-        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
+        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
                 .header("Idempotency-Key", "targeted-run-key").contentType("application/json").content(body("Earlier Phone")))
                 .andExpect(status().isConflict());
     }
@@ -159,15 +161,15 @@ class ManualProductIngestionTests {
         insert("ManualTargetTest", "Unverified Phone", "SMARTPHONE", "UNVERIFIED");
         insert("ManualTargetTest", "Graphics Card", "GPU", "VERIFIED");
         for (String name : java.util.List.of("Unknown", "Later Phone", "Unverified Phone", "Graphics Card", " ", "x".repeat(201))) {
-            mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
+            mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
                     .header("Idempotency-Key", "rejected-run-key").contentType("application/json").content(body(name)))
                     .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").isNotEmpty());
         }
-        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
+        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
                 .header("Idempotency-Key", "wrong-source-key").contentType("application/json")
                 .content("{\"sources\":[\"simulated-release\"],\"productName\":\"Later Phone\",\"externalProductId\":\"mock-product\"}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
+        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
                 .header("Idempotency-Key", "missing-selection-key").contentType("application/json")
                 .content("{\"sources\":[\"searchapi-google-product-reviews\"],\"productName\":\"ManualTargetTest Later Phone\"}"))
                 .andExpect(status().isBadRequest());

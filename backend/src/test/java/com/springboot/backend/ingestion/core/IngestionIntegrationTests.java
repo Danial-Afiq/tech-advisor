@@ -22,9 +22,11 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@SpringBootTest(properties={"ingestion.demo-password=test-password-only", "ingestion.reconciliation-enabled=false",
+@SpringBootTest(properties={"ingestion.reconciliation-enabled=false",
         "ingestion.anchor=2026-09-17T05:00:00Z", "logging.level.root=WARN", "debug=false",
         "ingestion.enabled-sources=simulated-release,simulated-failure,test-quality"})
+// Only for SimulatedSources/SimulationSink (test fixtures), not for admin auth - that's the
+// app's normal ROLE_ADMIN JWT check now, with no ingestion-specific profile gate.
 @ActiveProfiles("ingestion-demo")
 @Import(IngestionIntegrationTests.TimeConfig.class)
 class IngestionIntegrationTests {
@@ -184,21 +186,17 @@ class IngestionIntegrationTests {
         active.status = "SUCCESS"; store.finish(active, "manual-owner");
         assertNotNull(store.admit(List.of("simulated-release"), "scheduler", null, null, true, true));
     }
-    @Test void adminAuthorizationCsrfValidationAndAsyncResponse() throws Exception {
-        mvc.perform(get("/api/admin/ingestion/session").with(httpBasic("demo-admin", "test-password-only")))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.username").value("demo-admin"))
-                .andExpect(jsonPath("$.csrfToken").isNotEmpty());
-        mvc.perform(get("/api/admin/ingestion/session").with(httpBasic("demo-admin", "wrong-password")))
-                .andExpect(status().isUnauthorized());
+    @Test void realAdminRoleIsRequiredAndNoCsrfTokenIsNeeded() throws Exception {
+        // Ingestion admin auth is just the app's normal ROLE_ADMIN JWT check (SecurityConfig) -
+        // there is no ingestion-specific credential or CSRF dance anymore (AGENTS.md 16.7).
+        mvc.perform(get("/api/admin/ingestion/session").with(user("admin").roles("ADMIN")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.username").value("admin"));
         mvc.perform(get("/api/admin/ingestion/runs")).andExpect(status().isUnauthorized());
         mvc.perform(get("/api/admin/ingestion/runs").with(user("ordinary").roles("USER"))).andExpect(status().isForbidden());
         mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
-                .header("Idempotency-Key", "test-api-key").contentType("application/json").content("{}"))
-                .andExpect(status().isForbidden());
-        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
                 .header("Idempotency-Key", "test-api-key").contentType("application/json").content("{\"sources\":[\"unknown\"]}"))
                 .andExpect(status().isBadRequest());
-        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN")).with(csrf())
+        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
                 .header("Idempotency-Key", "test-api-key").contentType("application/json").content("{\"sources\":[\"simulated-release\"]}"))
                 .andExpect(status().isAccepted()).andExpect(header().exists("Location"));
         var run = await(store.history(0, 1, "", "").getFirst().runId);

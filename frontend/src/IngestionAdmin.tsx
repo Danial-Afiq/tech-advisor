@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { API_BASE_URL } from './config'
-import './IngestionAdmin.css'
+import { useNavigate } from 'react-router-dom'
+import { apiFetch, ApiError } from './api/client'
+import { getSession, clearSession } from './api/session'
+import type { Session } from './api/session'
+import { ThemeRoot } from './components/layout/ThemeRoot'
+import { Button } from './components/ui/Button'
+import { Card } from './components/ui/Card'
+import { Callout } from './components/ui/Callout'
+import { EmptyState } from './components/ui/EmptyState'
+import { Eyebrow } from './components/ui/Eyebrow'
+import { Field, FormError, Input } from './components/ui/Form'
+import { LoadingBlock } from './components/ui/LoadingBlock'
+import { PageHeader } from './components/ui/PageHeader'
+import { Tag } from './components/ui/Tag'
 
 type Source = { sourceId: string; enabled: boolean; simulation: boolean; nextAllowedAt: string | null }
 type Run = { runId: string; status: string; triggerType: string; requestedAt: string; startedAt: string | null;
@@ -8,17 +20,28 @@ type Run = { runId: string; status: string; triggerType: string; requestedAt: st
   finishedAt: string | null; processedPayloadCount: number; errorStackCount: number;
   sources: { sourceId: string; status: string; processedPayloadCount: number; errorStackCount: number }[] }
 type Schedule = { enabled: boolean; intervalHours: number; nextScheduledAt: string | null; activeRunId: string | null }
-type Session = { username: string; csrfHeader: string; csrfToken: string }
 type ProductCandidate = { externalProductId: string; title: string }
 const SEARCHAPI_SOURCE = 'searchapi-google-product-reviews'
 const sourceLabel = (id: string) => id === SEARCHAPI_SOURCE ? 'SearchAPI customer reviews' : id
 const when = (value: string | null) => value ? new Date(value).toLocaleString() : '—'
 
+/**
+ * Market data ingestion admin panel. Authenticates with the app's normal
+ * signed-in session (the same `ROLE_ADMIN` JWT used everywhere else, from
+ * `frontend/src/api/session.ts`) - there is no separate ingestion-only
+ * credential to enter here. Signed out, or signed in without the ADMIN
+ * role, shows a link to `/login` instead of the run controls.
+ *
+ * Selecting the SearchAPI source additionally requires naming a smartphone
+ * already in the catalogue (MobileAPI is the sole source of truth for
+ * `products` rows - SearchAPI only attaches reviews to an existing one) and
+ * picking one of its validated SearchAPI listings before a run can start.
+ */
 export default function IngestionAdmin() {
-  const [password, setPassword] = useState('')
-  const auth = useRef('')
+  const navigate = useNavigate()
+  const [account, setAccount] = useState<Session | null>(getSession)
+  const [ready, setReady] = useState(false)
   const pending = useRef<{ key: string; body: string } | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
   const [sources, setSources] = useState<Source[]>([])
   const [selected, setSelected] = useState<string[]>([])
   const [runs, setRuns] = useState<Run[]>([])
@@ -30,54 +53,39 @@ export default function IngestionAdmin() {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [finding, setFinding] = useState(false)
-  const demo = import.meta.env.VITE_INGESTION_DEMO === 'true'
   const searchApiSelected = selected.includes(SEARCHAPI_SOURCE)
 
-  const request = useCallback(async (path: string, init: RequestInit = {}) => {
-    const response = await fetch(`${API_BASE_URL}/api/admin/ingestion${path}`, {
-      ...init, credentials: 'include', headers: { ...(auth.current ? { Authorization: auth.current } : {}), ...init.headers },
-    })
-    if (!response.ok) {
-      const body = typeof response.json === 'function' ? await response.json().catch(() => null) : null
-      if (typeof body?.message === 'string') throw new Error(body.message)
-      const descriptions: Record<number, string> = { 401: 'Sign in with an admin account to continue.',
-        403: 'Admin access is unavailable or your session has expired.', 409: 'A run is already active, or this request conflicts with an earlier submission.',
-        429: 'SearchAPI is rate limited. Try again later.', 502: 'SearchAPI could not return product choices. Try again later.',
-        503: 'Run storage is unavailable. Retry the same request when it recovers.' }
-      throw new Error(descriptions[response.status] ?? `Request failed (${response.status}).`)
-    }
-    return response.json()
-  }, [])
+  const request = useCallback(<T,>(path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) =>
+    apiFetch<T>(`/api/admin/ingestion${path}`, init), [])
 
   const refresh = useCallback(async () => {
-    const [nextSources, nextRuns, nextSchedule] = await Promise.all([request('/sources'), request('/runs'), request('/schedule')])
+    const [nextSources, nextRuns, nextSchedule] = await Promise.all([
+      request<Source[]>('/sources'), request<Run[]>('/runs'), request<Schedule>('/schedule'),
+    ])
     setSources(nextSources); setRuns(nextRuns); setSchedule(nextSchedule)
   }, [request])
 
   useEffect(() => {
-    if (!session) return
+    // `ready` gates the loading spinner on the signed-in-as-admin render path only - the
+    // signed-out/non-admin path below never reads it, so there's nothing to set here.
+    if (!account || account.role !== 'ADMIN') return
     let stopped = false
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
-      try { await refresh() } catch (e) { if (!stopped) setError((e as Error).message) }
-      if (!stopped) timer = setTimeout(poll, 2000)
+      try { await refresh(); setError('') }
+      catch (e) {
+        if (stopped) return
+        if (e instanceof ApiError && (e.status === 401 || e.status === 403)) { clearSession(); setAccount(null) }
+        else setError((e as Error).message)
+      }
+      finally { if (!stopped) { setReady(true); timer = setTimeout(poll, 2000) } }
     }
-    timer = setTimeout(poll, 2000)
+    void poll()
     return () => { stopped = true; clearTimeout(timer) }
-  }, [session, refresh])
-
-  async function connect() {
-    setSubmitting(true); setError('')
-    if (demo) auth.current = `Basic ${btoa(`demo-admin:${password}`)}`
-    try {
-      const identity = await request('/session')
-      await refresh(); setSession(identity); setPassword('')
-    } catch (e) { setError((e as Error).message); auth.current = '' }
-    finally { setSubmitting(false) }
-  }
+  }, [account, refresh])
 
   async function start() {
-    if (!session) return
+    if (!account) return
     if (searchApiSelected && !productName.trim()) {
       setError('Enter the smartphone name to import its customer reviews.'); return
     }
@@ -85,12 +93,12 @@ export default function IngestionAdmin() {
       setError('Find matching products and select one before starting ingestion.'); return
     }
     setSubmitting(true); setError('')
-    const body = JSON.stringify({ sources: [...selected].sort((a, b) => a.localeCompare(b)), reason: reason.trim() || null,
-      ...(searchApiSelected ? { productName: productName.trim(), externalProductId } : {}) })
+    const payload = { sources: [...selected].sort((a, b) => a.localeCompare(b)), reason: reason.trim() || null,
+      ...(searchApiSelected ? { productName: productName.trim(), externalProductId } : {}) }
+    const body = JSON.stringify(payload)
     if (!pending.current || pending.current.body !== body) pending.current = { body, key: crypto.randomUUID() }
     try {
-      await request('/runs', { method: 'POST', headers: { 'Content-Type': 'application/json',
-        'Idempotency-Key': pending.current.key, [session.csrfHeader]: session.csrfToken }, body })
+      await request('/runs', { method: 'POST', headers: { 'Idempotency-Key': pending.current.key }, body: payload })
       pending.current = null
       await refresh()
     } catch (e) { setError((e as Error).message); await refresh().catch(() => {}) }
@@ -98,85 +106,179 @@ export default function IngestionAdmin() {
   }
 
   async function findProducts() {
-    if (!session || !productName.trim()) {
+    if (!account || !productName.trim()) {
       setError('Enter the smartphone brand and full model name first.'); return
     }
     setFinding(true); setError(''); setCandidates([]); setExternalProductId('')
     try {
-      const found = await request('/searchapi/candidates', { method: 'POST',
-        headers: { 'Content-Type': 'application/json', [session.csrfHeader]: session.csrfToken },
-        body: JSON.stringify({ productName: productName.trim() }) })
+      const found = await request<ProductCandidate[]>('/searchapi/candidates', { method: 'POST',
+        body: { productName: productName.trim() } })
       setCandidates(found)
     } catch (e) { setError((e as Error).message) }
     finally { setFinding(false) }
   }
 
-  return <main className="ingestion-admin">
-    <header><p className="eyebrow">TECH ADVISOR · ADMIN</p><h1>Market data ingestion</h1>
-      <p>Import market updates and customer reviews for your catalogue.</p></header>
-    {error && <p className="ingestion-error" role="alert">{error}</p>}
-    {!session ? <section className="ingestion-card"><h2>Admin access</h2>
-      <p>{demo ? 'Local admin access. Enter the configured demo admin password.' : 'Connect using your authenticated admin session.'}</p>
-      <form onSubmit={e => { e.preventDefault(); void connect() }}>
-        {demo && <label>Demo password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required /></label>}
-        <button disabled={submitting} type="submit">{submitting ? 'Connecting…' : 'Connect as admin'}</button>
-      </form></section> : <>
-      <section className="ingestion-summary" aria-label="Schedule">
-        <div><span>Recurring cycle</span><strong>Every {schedule?.intervalHours ?? 336} hours</strong></div>
-        <div><span>Next scheduled run</span><strong>{schedule?.enabled ? when(schedule.nextScheduledAt) : 'Scheduling disabled'}</strong></div>
-        <div><span>Pipeline</span><strong>{schedule?.activeRunId ? 'Running' : 'Ready'}</strong></div>
-      </section>
-      <section className="ingestion-card"><h2>Run a market update</h2><p>Manual runs leave the recurring schedule unchanged.</p>
-        <form onSubmit={e => { e.preventDefault(); void start() }}>
-          <fieldset disabled={submitting || finding || !!schedule?.activeRunId}><legend>Sources</legend>
-            {sources.length === 0 && <p>No sources have been registered.</p>}
-            {sources.map(source => <label className="source-choice" key={source.sourceId}>
-              <input type="checkbox" disabled={!source.enabled} checked={selected.includes(source.sourceId)}
-                onChange={e => setSelected(old => e.target.checked ? [...old, source.sourceId] : old.filter(id => id !== source.sourceId))} />
-              <span>{sourceLabel(source.sourceId)}{source.simulation && <small>Simulation</small>}
-                {!source.enabled && <small>Disabled</small>}
-                {source.sourceId === SEARCHAPI_SOURCE && !source.enabled && <small>SearchAPI ingestion must be enabled on the server.</small>}
-                {source.nextAllowedAt && new Date(source.nextAllowedAt) > new Date() && <small>Available after {when(source.nextAllowedAt)}</small>}</span>
-            </label>)}
-          </fieldset>
-          {searchApiSelected && <div className="ingestion-product">
-            <label htmlFor="ingestion-product-name">Smartphone name
-              <input id="ingestion-product-name" value={productName} maxLength={200} required
-                disabled={submitting || finding || !!schedule?.activeRunId} aria-describedby="ingestion-product-help"
-                onChange={e => { setProductName(e.target.value); setCandidates([]); setExternalProductId('') }}
-                placeholder="For example, Apple iPhone 16 Pro" />
-            </label>
-            <small id="ingestion-product-help">Enter the brand followed by the full model, then find and select the SearchAPI product whose reviews you want.</small>
-            <button type="button" onClick={() => void findProducts()}
-              disabled={submitting || finding || !!schedule?.activeRunId || !productName.trim()}>
-              {finding ? 'Finding products…' : 'Find matching products'}
-            </button>
-            {candidates.length > 0 && <fieldset className="product-candidates">
-              <legend>Select a SearchAPI product</legend>
-              {candidates.map(candidate => <label className="product-choice" key={candidate.externalProductId}>
-                <input type="radio" name="searchapi-product" value={candidate.externalProductId}
-                  checked={externalProductId === candidate.externalProductId}
-                  onChange={() => setExternalProductId(candidate.externalProductId)} />
-                <span>{candidate.title}<small>Product ID: {candidate.externalProductId}</small></span>
-              </label>)}
-            </fieldset>}
-          </div>}
-          <label>Reason (optional)<input value={reason} maxLength={500} onChange={e => setReason(e.target.value)} placeholder="For example, a major mid-cycle phone release" /></label>
-          <button type="submit" disabled={submitting || finding || !!schedule?.activeRunId || selected.length === 0
-            || (searchApiSelected && (!productName.trim() || !externalProductId))}>
-            {submitting ? 'Submitting…' : schedule?.activeRunId ? 'Run in progress' : 'Run now'}</button>
-        </form>
-      </section>
-      <section className="ingestion-card" aria-live="polite"><h2>Recent runs</h2>
-        {runs.length === 0 ? <p>No runs yet. Select a source to start your first update.</p> : <div className="ingestion-table"><table>
-          <thead><tr><th>Requested</th><th>Trigger</th><th>Product</th><th>Status</th><th>Processed</th><th>Error stacks</th><th>Source results</th></tr></thead>
-          <tbody>{runs.map(run => <tr key={run.runId}><td title={run.runId}>{when(run.requestedAt)}</td><td>{run.triggerType}</td>
-            <td>{run.product?.productName ?? 'Source defaults'}</td>
-            <td>{run.status}<small>{run.finishedAt ? `Finished ${when(run.finishedAt)}` : 'Awaiting completion'}</small></td>
-            <td>{run.processedPayloadCount}</td><td>{run.errorStackCount}</td>
-            <td>{run.sources.map(source => <small key={source.sourceId}>{sourceLabel(source.sourceId)}: {source.status} ({source.processedPayloadCount} processed)</small>)}</td></tr>)}</tbody>
-        </table></div>}
-      </section>
-    </>}
-  </main>
+  if (!account || account.role !== 'ADMIN') {
+    return (
+      <ThemeRoot>
+        <div className="mx-auto max-w-[520px] p-7">
+          <PageHeader eyebrow="Tech Advisor · Admin" title="Market data ingestion" />
+          <EmptyState
+            icon="🔒"
+            title={account ? 'Admin access required' : 'Sign in required'}
+            description={account
+              ? 'Your signed-in account does not have the ADMIN role.'
+              : 'Sign in with an administrator account to manage data ingestion.'}
+            action={<Button variant="primary" onClick={() => navigate('/login')}>Go to login</Button>}
+          />
+        </div>
+      </ThemeRoot>
+    )
+  }
+
+  return (
+    <ThemeRoot>
+      <div className="mx-auto max-w-[1100px] p-7 max-[620px]:p-4">
+        <PageHeader eyebrow="Tech Advisor · Admin" title="Market data ingestion"
+          description="Import market updates and customer reviews for your catalogue." />
+        <FormError message={error} />
+        {!ready ? <LoadingBlock label="Loading ingestion status…" /> : <>
+          <div className="grid grid-cols-3 gap-4 max-[700px]:grid-cols-1">
+            <Card><div className="card-body gap-1 p-[18px]">
+              <Eyebrow>Recurring cycle</Eyebrow>
+              <strong className="text-[17px] text-[#eef5ff]">Every {schedule?.intervalHours ?? 336} hours</strong>
+            </div></Card>
+            <Card><div className="card-body gap-1 p-[18px]">
+              <Eyebrow>Next scheduled run</Eyebrow>
+              <strong className="text-[17px] text-[#eef5ff]">
+                {schedule?.enabled ? when(schedule.nextScheduledAt) : 'Scheduling disabled'}</strong>
+            </div></Card>
+            <Card><div className="card-body gap-1 p-[18px]">
+              <Eyebrow>Pipeline</Eyebrow>
+              <strong className="text-[17px] text-[#eef5ff]">{schedule?.activeRunId ? 'Running' : 'Ready'}</strong>
+            </div></Card>
+          </div>
+
+          <Card className="mt-6"><div className="card-body p-[22px]">
+            <h2 className="m-0 text-[19px] font-bold text-[#eef5ff]">Run a market update</h2>
+            <p className="m-0 text-[14px] text-[#8fa0b8]">Manual runs leave the recurring schedule unchanged.</p>
+            <form className="mt-4 grid gap-4" onSubmit={e => { e.preventDefault(); void start() }}>
+              <fieldset disabled={submitting || finding || !!schedule?.activeRunId}
+                className="grid gap-3 rounded-[12px] border border-white/[0.09] p-4">
+                <legend className="px-1 text-[13px] font-semibold text-[#c6d1df]">Sources</legend>
+                {sources.length === 0 && <p className="m-0 text-[14px] text-[#8fa0b8]">No sources have been registered.</p>}
+                {sources.map(source => (
+                  <label key={source.sourceId} className="flex items-start gap-3">
+                    <input type="checkbox" className="checkbox checkbox-sm mt-[2px]" disabled={!source.enabled}
+                      checked={selected.includes(source.sourceId)}
+                      onChange={e => setSelected(old => e.target.checked ? [...old, source.sourceId] : old.filter(id => id !== source.sourceId))} />
+                    <span className="flex flex-col gap-1">
+                      <span className="text-[14px] text-[#eef5ff]">
+                        {sourceLabel(source.sourceId)}{' '}
+                        {source.simulation && <Tag>Simulation</Tag>}{' '}
+                        {!source.enabled && <Tag>Disabled</Tag>}
+                      </span>
+                      {source.sourceId === SEARCHAPI_SOURCE && !source.enabled &&
+                        <small className="text-[12px] text-[#8fa0b8]">SearchAPI ingestion must be enabled on the server.</small>}
+                      {source.nextAllowedAt && new Date(source.nextAllowedAt) > new Date() &&
+                        <small className="text-[12px] text-[#8fa0b8]">Available after {when(source.nextAllowedAt)}</small>}
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+
+              {searchApiSelected && <div className="grid gap-3 rounded-[12px] border border-white/[0.09] p-4">
+                <Field label="Smartphone name">
+                  <Input id="ingestion-product-name" value={productName} maxLength={200} required
+                    disabled={submitting || finding || !!schedule?.activeRunId} aria-describedby="ingestion-product-help"
+                    onChange={e => { setProductName(e.target.value); setCandidates([]); setExternalProductId('') }}
+                    placeholder="For example, Apple iPhone 16 Pro" />
+                </Field>
+                <small id="ingestion-product-help" className="text-[12px] text-[#8fa0b8]">
+                  Enter the brand followed by the full model, already ingested via MobileAPI, then find and select
+                  the SearchAPI product whose reviews you want.
+                </small>
+                <Button type="button" variant="secondary" className="justify-self-start" loading={finding}
+                  disabled={submitting || finding || !!schedule?.activeRunId || !productName.trim()}
+                  onClick={() => void findProducts()}>
+                  Find matching products
+                </Button>
+                {candidates.length > 0 && (
+                  <fieldset className="grid gap-2 rounded-[12px] border border-white/[0.09] p-3">
+                    <legend className="px-1 text-[13px] font-semibold text-[#c6d1df]">Select a SearchAPI product</legend>
+                    {candidates.map(candidate => (
+                      <label key={candidate.externalProductId} className="flex items-start gap-3">
+                        <input type="radio" name="searchapi-product" className="radio radio-sm mt-[2px]"
+                          value={candidate.externalProductId} checked={externalProductId === candidate.externalProductId}
+                          onChange={() => setExternalProductId(candidate.externalProductId)} />
+                        <span className="flex flex-col gap-1">
+                          <span className="text-[14px] text-[#eef5ff]">{candidate.title}</span>
+                          <small className="text-[12px] text-[#8fa0b8]">Product ID: {candidate.externalProductId}</small>
+                        </span>
+                      </label>
+                    ))}
+                  </fieldset>
+                )}
+              </div>}
+
+              <Field label="Reason (optional)">
+                <Input value={reason} maxLength={500} onChange={e => setReason(e.target.value)}
+                  placeholder="For example, a major mid-cycle phone release" />
+              </Field>
+              <Button type="submit" variant="primary" loading={submitting} className="justify-self-start"
+                disabled={submitting || finding || !!schedule?.activeRunId || selected.length === 0
+                  || (searchApiSelected && (!productName.trim() || !externalProductId))}>
+                {schedule?.activeRunId ? 'Run in progress' : 'Run now'}
+              </Button>
+            </form>
+          </div></Card>
+
+          <Card className="mt-6" aria-live="polite"><div className="card-body p-[22px]">
+            <h2 className="m-0 text-[19px] font-bold text-[#eef5ff]">Recent runs</h2>
+            {runs.length === 0 ? (
+              <Callout className="mt-3">No runs yet. Select a source above to start your first update.</Callout>
+            ) : (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead className="text-[#8fa0b8]">
+                    <tr>
+                      <th className="border-b border-white/[0.09] px-2 py-3 text-left">Requested</th>
+                      <th className="border-b border-white/[0.09] px-2 py-3 text-left">Trigger</th>
+                      <th className="border-b border-white/[0.09] px-2 py-3 text-left">Product</th>
+                      <th className="border-b border-white/[0.09] px-2 py-3 text-left">Status</th>
+                      <th className="border-b border-white/[0.09] px-2 py-3 text-left">Processed</th>
+                      <th className="border-b border-white/[0.09] px-2 py-3 text-left">Error stacks</th>
+                      <th className="border-b border-white/[0.09] px-2 py-3 text-left">Source results</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {runs.map(run => (
+                      <tr key={run.runId}>
+                        <td className="border-b border-white/[0.06] px-2 py-3 align-top" title={run.runId}>{when(run.requestedAt)}</td>
+                        <td className="border-b border-white/[0.06] px-2 py-3 align-top">{run.triggerType}</td>
+                        <td className="border-b border-white/[0.06] px-2 py-3 align-top">{run.product?.productName ?? 'Source defaults'}</td>
+                        <td className="border-b border-white/[0.06] px-2 py-3 align-top">
+                          {run.status}
+                          <small className="block text-[12px] text-[#8fa0b8]">
+                            {run.finishedAt ? `Finished ${when(run.finishedAt)}` : 'Awaiting completion'}</small>
+                        </td>
+                        <td className="border-b border-white/[0.06] px-2 py-3 align-top">{run.processedPayloadCount}</td>
+                        <td className="border-b border-white/[0.06] px-2 py-3 align-top">{run.errorStackCount}</td>
+                        <td className="border-b border-white/[0.06] px-2 py-3 align-top">
+                          {run.sources.map(source => (
+                            <small key={source.sourceId} className="block text-[12px] text-[#8fa0b8]">
+                              {sourceLabel(source.sourceId)}: {source.status} ({source.processedPayloadCount} processed)</small>
+                          ))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div></Card>
+        </>}
+      </div>
+    </ThemeRoot>
+  )
 }
