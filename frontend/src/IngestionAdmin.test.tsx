@@ -1,14 +1,22 @@
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import type { ReactElement } from 'react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import IngestionAdmin from './IngestionAdmin'
-import { clearSession, setSession } from './api/session'
+import { clearSession, getSession, setSession } from './api/session'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); clearSession() })
 
 const withRouter = (element: ReactElement) => render(<MemoryRouter>{element}</MemoryRouter>)
+const withAppRoutes = () => render(
+  <MemoryRouter initialEntries={['/admin/ingestion']}>
+    <Routes>
+      <Route path="/admin/ingestion" element={<IngestionAdmin />} />
+      <Route path="/login" element={<p>login route</p>} />
+    </Routes>
+  </MemoryRouter>
+)
 
 describe('Ingestion admin', () => {
   it('prompts to sign in rather than showing run controls when signed out', () => {
@@ -25,11 +33,24 @@ describe('Ingestion admin', () => {
     expect(screen.queryByRole('button', { name: 'Run now' })).not.toBeInTheDocument()
   })
 
-  it('signs out and re-shows the sign-in prompt when the backend rejects the admin session', async () => {
+  it('clears the session and returns to login when the backend rejects the admin session', async () => {
     setSession({ token: 'stale-token', email: 'admin@example.com', role: 'ADMIN' })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401 }))
-    withRouter(<IngestionAdmin />)
-    expect(await screen.findByText('Sign in required')).toBeInTheDocument()
+    withAppRoutes()
+    expect(await screen.findByText('login route')).toBeInTheDocument()
+    expect(getSession()).toBeNull()
+  })
+
+  it('signs out through the normal session abstraction and returns to login', async () => {
+    setSession({ token: 'admin-token', email: 'admin@example.com', role: 'ADMIN' })
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => {})))
+    const user = userEvent.setup()
+
+    withAppRoutes()
+    await user.click(screen.getByRole('button', { name: 'Sign out' }))
+
+    expect(await screen.findByText('login route')).toBeInTheDocument()
+    expect(getSession()).toBeNull()
   })
 
   it('sends the real bearer token and idempotency key, with no CSRF header', async () => {

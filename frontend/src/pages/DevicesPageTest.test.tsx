@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DevicesPageTest from "./DevicesPageTest";
 import { ApiError } from "../api/client";
@@ -30,7 +30,10 @@ vi.mock("../api/devices", () => ({
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={["/devices"]}>
-      <DevicesPageTest />
+      <Routes>
+        <Route path="/devices" element={<DevicesPageTest />} />
+        <Route path="/login" element={<p>login route</p>} />
+      </Routes>
     </MemoryRouter>
   );
 }
@@ -106,16 +109,14 @@ describe("DevicesPageTest", () => {
     expect(mocks.signOut).toHaveBeenCalled();
   });
 
-  it("loads an existing session and handles a 401 by returning to demo mode", async () => {
+  it("loads an existing session and handles a 401 by returning to login", async () => {
     mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockRejectedValue(new ApiError(401, "expired"));
 
     renderPage();
 
     expect(screen.getByText("Loading your devices…")).toBeInTheDocument();
-    expect(await screen.findByText(/Demo mode/)).toBeInTheDocument();
-    expect(await screen.findByText("Couldn't load your devices")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /Apple iPhone 13 Pro Max/ })).toBeInTheDocument();
+    expect(await screen.findByText("login route")).toBeInTheDocument();
   });
 
   it("adds a signed-in device and moves to upgrade preferences", async () => {

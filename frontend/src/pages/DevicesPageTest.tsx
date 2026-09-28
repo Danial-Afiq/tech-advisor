@@ -57,7 +57,8 @@ export default function DevicesPageTest() {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) {
           setAccount(null);
-          setDevices(DEMO_DEVICES);
+          navigate("/login", { replace: true });
+          return;
         }
         pushToast("Couldn't load your devices", err.message, "!");
       })
@@ -67,7 +68,7 @@ export default function DevicesPageTest() {
     return () => {
       cancelled = true;
     };
-  }, [account, pushToast]);
+  }, [account, navigate, pushToast]);
 
   const handleSignIn = async (email: string, password: string) => {
     const session = await signIn(email, password);
@@ -80,7 +81,7 @@ export default function DevicesPageTest() {
 
   const handleSignOut = () => {
     signOut();
-    navigate("/login");
+    navigate("/login", { replace: true });
   };
 
   /** Throws on API failure so `DeviceFormModal` stays open and shows it. */

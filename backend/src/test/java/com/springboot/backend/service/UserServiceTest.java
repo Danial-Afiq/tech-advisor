@@ -202,7 +202,7 @@ class UserServiceTest {
     }
 
     @Test
-    void loginShouldRejectAdminAccount() {
+    void loginShouldAuthenticateAdminAccountAndReturnActualRole() {
 
         LoginRequest request = new LoginRequest();
         request.setEmail("admin@techadvisor.com");
@@ -218,15 +218,21 @@ class UserServiceTest {
                 "admin@techadvisor.com"
         )).thenReturn(Optional.of(admin));
 
-        assertThrows(
-                BadCredentialsException.class,
-                () -> userService.login(request)
-        );
+        when(passwordEncoder.matches(
+                "admin-password",
+                "stored-admin-password-hash"
+        )).thenReturn(true);
 
-        verify(passwordEncoder, never())
-                .matches(anyString(), anyString());
+        when(jwtService.generateToken(admin))
+                .thenReturn("admin-jwt-token");
 
-        verify(jwtService, never())
-                .generateToken(any(User.class));
+        when(jwtService.getExpirationSeconds())
+                .thenReturn(3600L);
+
+        LoginResponse response = userService.login(request);
+
+        assertEquals("admin-jwt-token", response.getToken());
+        assertEquals("ADMIN", response.getRole());
+        verify(jwtService).generateToken(admin);
     }
 }

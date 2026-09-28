@@ -1,26 +1,101 @@
 import { render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { clearSession, setSession } from './api/session'
 import App from './App'
 
+vi.mock('./pages/Login', () => ({
+  default: () => <h1>Login route</h1>,
+}))
+
+vi.mock('./pages/DevicesPageTest', () => ({
+  default: () => <h1>Devices route</h1>,
+}))
+
+vi.mock('./IngestionAdmin', () => ({
+  default: () => <h1>Admin ingestion route</h1>,
+}))
+
 function renderAt(path: string) {
-  window.history.pushState({}, '', path)
-  render(<App />)
+  window.history.replaceState({}, '', path)
+  return render(<App />)
+}
+
+async function expectRoute(heading: string, path: string) {
+  expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument()
+  expect(window.location.pathname).toBe(path)
 }
 
 afterEach(() => {
-  window.history.pushState({}, '', '/')
+  clearSession()
+  window.history.replaceState({}, '', '/')
 })
 
-describe('App routes', () => {
-  it('renders the login page at /login', () => {
-    renderAt('/login')
-
-    expect(screen.getByLabelText('Email')).toBeInTheDocument()
+describe('authenticated App routes', () => {
+  it('redirects signed-out visitors from / to /login', async () => {
+    renderAt('/')
+    await expectRoute('Login route', '/login')
   })
 
-  it('renders nothing for an unknown path', () => {
-    renderAt('/no-such-page')
+  it('redirects USER visitors from / to /devices', async () => {
+    setSession({ token: 'user-token', email: 'user@example.com', role: 'USER' })
+    renderAt('/')
+    await expectRoute('Devices route', '/devices')
+  })
 
+  it('redirects ADMIN visitors from / to /admin/ingestion', async () => {
+    setSession({ token: 'admin-token', email: 'admin@example.com', role: 'ADMIN' })
+    renderAt('/')
+    await expectRoute('Admin ingestion route', '/admin/ingestion')
+  })
+
+  it('redirects an authenticated USER away from /login', async () => {
+    setSession({ token: 'user-token', email: 'user@example.com', role: 'USER' })
+    renderAt('/login')
+    await expectRoute('Devices route', '/devices')
+  })
+
+  it('redirects an authenticated ADMIN away from /login', async () => {
+    setSession({ token: 'admin-token', email: 'admin@example.com', role: 'ADMIN' })
+    renderAt('/login')
+    await expectRoute('Admin ingestion route', '/admin/ingestion')
+  })
+
+  it('redirects signed-out access to /devices to /login', async () => {
+    renderAt('/devices')
+    await expectRoute('Login route', '/login')
+  })
+
+  it('redirects signed-out access to /admin/ingestion to /login', async () => {
+    renderAt('/admin/ingestion')
+    await expectRoute('Login route', '/login')
+  })
+
+  it('redirects a USER away from /admin/ingestion', async () => {
+    setSession({ token: 'user-token', email: 'user@example.com', role: 'USER' })
+    renderAt('/admin/ingestion')
+    await expectRoute('Devices route', '/devices')
+  })
+
+  it('redirects an ADMIN away from /devices', async () => {
+    setSession({ token: 'admin-token', email: 'admin@example.com', role: 'ADMIN' })
+    renderAt('/devices')
+    await expectRoute('Admin ingestion route', '/admin/ingestion')
+  })
+
+  it('redirects the old /DevicesPageTest URL to /devices', async () => {
+    setSession({ token: 'user-token', email: 'user@example.com', role: 'USER' })
+    renderAt('/DevicesPageTest')
+    await expectRoute('Devices route', '/devices')
+  })
+
+  it('redirects the old /IngestionAdmin URL to /admin/ingestion', async () => {
+    setSession({ token: 'admin-token', email: 'admin@example.com', role: 'ADMIN' })
+    renderAt('/IngestionAdmin')
+    await expectRoute('Admin ingestion route', '/admin/ingestion')
+  })
+
+  it('still leaves unrelated unknown paths untouched', () => {
+    renderAt('/no-such-page')
     expect(screen.queryByRole('heading')).not.toBeInTheDocument()
   })
 })

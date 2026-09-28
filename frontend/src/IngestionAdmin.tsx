@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { signOut } from './api/auth'
 import { apiFetch, ApiError } from './api/client'
 import { getSession, clearSession } from './api/session'
 import type { Session } from './api/session'
@@ -61,14 +62,23 @@ export default function IngestionAdmin() {
       try { await refresh(); setError('') }
       catch (e) {
         if (stopped) return
-        if (e instanceof ApiError && (e.status === 401 || e.status === 403)) { clearSession(); setAccount(null) }
+        if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+          clearSession()
+          setAccount(null)
+          navigate('/login', { replace: true })
+        }
         else setError((e as Error).message)
       }
       finally { if (!stopped) { setReady(true); timer = setTimeout(poll, 2000) } }
     }
     void poll()
     return () => { stopped = true; clearTimeout(timer) }
-  }, [account, refresh])
+  }, [account, navigate, refresh])
+
+  const handleSignOut = () => {
+    signOut()
+    navigate('/login', { replace: true })
+  }
 
   async function start() {
     if (!account) return
@@ -80,7 +90,16 @@ export default function IngestionAdmin() {
       await request('/runs', { method: 'POST', headers: { 'Idempotency-Key': pending.current.key }, body: payload })
       pending.current = null
       await refresh()
-    } catch (e) { setError((e as Error).message); await refresh().catch(() => {}) }
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        clearSession()
+        setAccount(null)
+        navigate('/login', { replace: true })
+        return
+      }
+      setError((e as Error).message)
+      await refresh().catch(() => {})
+    }
     finally { setSubmitting(false) }
   }
 
@@ -106,7 +125,8 @@ export default function IngestionAdmin() {
     <ThemeRoot>
       <div className="mx-auto max-w-[1100px] p-7 max-[620px]:p-4">
         <PageHeader eyebrow="Tech Advisor · Admin" title="Market data ingestion"
-          description="Keep the catalogue current, on schedule or when a major release arrives." />
+          description="Keep the catalogue current, on schedule or when a major release arrives."
+          action={<Button size="sm" variant="ghost" onClick={handleSignOut}>Sign out</Button>} />
         <FormError message={error} />
         {!ready ? <LoadingBlock label="Loading ingestion status…" /> : <>
           <div className="grid grid-cols-3 gap-4 max-[700px]:grid-cols-1">
