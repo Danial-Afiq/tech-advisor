@@ -10,7 +10,8 @@ import { Callout } from "../components/ui/Callout";
 import { Eyebrow } from "../components/ui/Eyebrow";
 
 /** Where users land after signing up or logging in. */
-const AFTER_AUTH_PATH = "/DevicesPageTest";
+const USER_AFTER_AUTH_PATH = "/DevicesPageTest";
+const ADMIN_AFTER_AUTH_PATH = "/IngestionAdmin";
 
 const HIGHLIGHTS = [
   {
@@ -40,14 +41,21 @@ export default function Login() {
   );
 
   const submit = async (next: AuthMode, email: string, password: string) => {
-    if (next === "signup") await signUp(email, password);
-    else await signIn(email, password);
-    navigate(AFTER_AUTH_PATH);
+    const session =
+      next === "signup"
+        ? await signUp(email, password)
+        : await signIn(email, password);
+
+    navigate(
+      session.role === "ADMIN"
+        ? ADMIN_AFTER_AUTH_PATH
+        : USER_AFTER_AUTH_PATH
+    );
   };
 
   const openDemo = () => {
     signOut(); // the devices page shows demo data when signed out
-    navigate(AFTER_AUTH_PATH);
+    navigate(USER_AFTER_AUTH_PATH);
   };
 
   return (

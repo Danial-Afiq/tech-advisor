@@ -53,6 +53,8 @@ jobs:
             SPRING_DATASOURCE_URL
             SPRING_DATASOURCE_USERNAME
             SPRING_DATASOURCE_PASSWORD
+            ADMIN_EMAIL
+            ADMIN_PASSWORD
           )
           secret_metadata="$(flyctl secrets list --json)"
 

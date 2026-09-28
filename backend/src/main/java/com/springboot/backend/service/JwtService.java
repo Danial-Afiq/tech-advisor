@@ -53,21 +53,23 @@ public class JwtService {
     }
 
     public String generateToken(User user) {
+        return generateToken(user.getEmail(), user.getRole());
+    }
+
+    public String generateToken(String subject, String role) {
 
         Instant now = Instant.now();
         Instant expiry = now.plusSeconds(expirationSeconds);
 
-        return Jwts.builder()
-                .subject(user.getEmail())
-                .claim("role", user.getRole())
-                .issuedAt(Date.from(now))
-                .expiration(Date.from(expiry))
-                .signWith(signingKey)
-                .compact();
+        return Jwts.builder().subject(subject).claim("role", role).issuedAt(Date.from(now)).expiration(Date.from(expiry)).signWith(signingKey).compact();
     }
 
     public String extractEmail(String token) {
         return extractClaims(token).getSubject();
+    }
+
+    public String extractRole(String token) {
+        return extractClaims(token).get("role", String.class);
     }
 
     public boolean isTokenValid(String token, String email) {

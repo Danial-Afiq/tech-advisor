@@ -1,15 +1,17 @@
 package com.springboot.backend.service;
 
+import java.util.Locale;
+
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+
 import com.springboot.backend.dto.LoginRequest;
 import com.springboot.backend.dto.LoginResponse;
 import com.springboot.backend.dto.RegisterRequest;
 import com.springboot.backend.dto.UserResponse;
 import com.springboot.backend.model.User;
 import com.springboot.backend.repository.UserRepository;
-import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.stereotype.Service;
-import java.util.Locale;
 
 @Service
 public class UserService {
@@ -50,6 +52,12 @@ public class UserService {
                 .orElseThrow(() ->
                         new BadCredentialsException("Invalid email or password"));
 
+        if (!"USER".equals(user.getRole())) {
+                throw new BadCredentialsException(
+                        "Invalid email or password"
+                );
+        }
+
         if (!passwordEncoder.matches(
                 request.getPassword(),
                 user.getPasswordHash())) {
@@ -60,7 +68,8 @@ public class UserService {
 
         return new LoginResponse(
                 token,
-                jwtService.getExpirationSeconds()
+                jwtService.getExpirationSeconds(),
+                user.getRole()
         );
     }
 

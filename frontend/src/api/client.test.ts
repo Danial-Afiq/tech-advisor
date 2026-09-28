@@ -15,7 +15,7 @@ afterEach(() => {
 
 describe("apiFetch", () => {
   it("sends the bearer token and JSON body", async () => {
-    setSession({ token: "abc", email: "a@b.com" });
+    setSession({ token: "abc", email: "a@b.com", role: "USER", });
     const fetchMock = vi.fn().mockResolvedValue(json(201, { id: 1 }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -45,7 +45,7 @@ describe("apiFetch", () => {
   });
 
   it("clears the session on 401", async () => {
-    setSession({ token: "expired", email: "a@b.com" });
+    setSession({ token: "expired", email: "a@b.com", role: "USER", });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
 
     await expect(apiFetch("/api/devices")).rejects.toMatchObject({ status: 401 });
