@@ -2,6 +2,9 @@ package com.springboot.backend.ingestion;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.springboot.backend.ingestion.core.IngestionSource;
+import com.springboot.backend.ingestion.core.Payload;
+import com.springboot.backend.ingestion.core.SourceContext;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -58,6 +61,18 @@ public class MobileApiSmartphoneSource implements IngestionSource {
     @Override
     public String sourceId() {
         return "mobileapi-smartphone";
+    }
+
+    /**
+     * Runs before the default priority(). Deliberate, not incidental: this is
+     * the sole source of truth for products/phone rows (AGENTS.md 17.1.1),
+     * so anything that reads the catalogue in the same run - SearchAPI's
+     * untargeted product pick, for one - must see this source's writes
+     * first, not depend on alphabetical sourceId ordering happening to agree.
+     */
+    @Override
+    public int priority() {
+        return 10;
     }
 
     @Override

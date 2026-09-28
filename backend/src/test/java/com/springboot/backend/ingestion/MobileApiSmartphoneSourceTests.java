@@ -2,6 +2,8 @@ package com.springboot.backend.ingestion;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.springboot.backend.ingestion.core.Payload;
+import com.springboot.backend.ingestion.core.SourceContext;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;

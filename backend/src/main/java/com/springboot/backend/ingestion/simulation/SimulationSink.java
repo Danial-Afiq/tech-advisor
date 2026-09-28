@@ -1,5 +1,8 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.simulation;
 
+import com.springboot.backend.ingestion.core.IngestionSink;
+import com.springboot.backend.ingestion.core.IngestionSource;
+import com.springboot.backend.ingestion.core.Payload;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;

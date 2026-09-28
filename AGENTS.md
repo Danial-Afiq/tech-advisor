@@ -155,6 +155,13 @@ The current product and recommendation implementation remains **smartphone-first
 
 Do not treat the presence of the `gpu` table as evidence that GPU ingestion, recommendation logic, or UI is implemented.
 
+Under the current simplified catalogue design, one `products` row represents a
+specific purchasable hardware configuration. Legitimate storage configurations,
+and RAM configurations when RAM distinguishes the offering, may therefore have
+separate product IDs. Colours, carriers, sellers, cosmetic finishes and bundles
+do not create separate products. `price_history` and review evidence attach
+directly to that exact `product_id`; there is no `product_variants` layer.
+
 ## 1.2 Core product behaviour
 
 A user records:
@@ -395,12 +402,14 @@ changing any page.
 - local: Docker Compose
 - hosted: Neon
 - `pgvector` extension enabled by Flyway V4
-- `review_documents` / `review_chunks` created by Flyway **V5**; retrieval over them is implemented (see §5.4)
+- `review_documents` / `review_chunks` created by Flyway **V6**; V7 adds external-review identity/provenance and product-token mappings
 
 ## 5.4 AI service
-Implemented on branch `feat/3.4-llm_layer` (see §18.7 for the snapshot):
+Implemented on `main` (originally branch `feat/3.4-llm_layer`; see §18.7):
 - Python 3.13 + FastAPI, containerised by `ai/Dockerfile`
 - `POST /assess`, guarded by a shared `AI_SERVICE_TOKEN` bearer secret
+- SearchAPI branch: `POST /internal/embed`, using the same token and configured
+  embedder for 1–100 texts of up to 8000 characters. No LLM initialization or DB writes.
 - multi-provider LLM seam: `LLM_PROVIDER=anthropic` uses the Claude SDK natively;
   `openrouter` / `openai` / `custom` share one OpenAI-compatible adapter, so adding a
   vendor is a base URL rather than code
@@ -562,9 +571,24 @@ being reproducible.
 This step performs **no** embeddings, retrieval or model calls, and must stay
 that way - bounding the candidate set is what bounds every downstream AI cost.
 
-**Nothing populates these tables yet.** Ingestion still writes only to
-`system_log`, so the filter is exercised by tests and seeded data. Wiring a
-real source into the catalogue is separate work (Epic 01), not part of this.
+**Broad scheduled catalogue discovery remains separate work.** The filter is exercised
+by tests and seeded data. A named admin SearchAPI run can create a VERIFIED smartphone
+only after the admin selects a validated provider identity and the worker revalidates
+that choice; it does not create price observations.
+
+**Initial catalogue population and subsequent refreshes come from MobileAPI.dev
+ingestion** (ticket 1.2, `MobileApiSmartphoneSource`/`SmartphoneCatalogSink`,
+§17.1.1) — not from a static file. An earlier one-time backfill
+(`data/catalogue_backfill.json` + `scripts/backfill_catalogue.py`, 453 staged
+configurations with price and benchmark observations) was used before MobileAPI
+ingestion existed; both files were removed 28 Sep 2026 once it did. They are
+not a fallback or bootstrap path to fall back on — MobileAPI is the sole
+source of truth for `products`/`phone` rows (§17.4). Any benchmark or price
+rows that backfill run already wrote to a given environment's database are
+unaffected by the file deletion; MobileAPI ingestion does not currently write
+benchmark data at all (§17.1.1's implemented-adapter notes), so benchmark
+coverage remains whatever was seeded historically until a real benchmark
+source is chosen (§17.1's "not fully confirmed" sources list).
 
 ## 7.2 Channel B — owner evidence grade
 
@@ -1251,7 +1275,7 @@ database is needed.
 
 The canonical schema keeps a generic product identity and category-specific `phone` / `gpu` subtype tables. Current application behaviour is still smartphone-first.
 
-The schema is implemented by V1-V6 on the schema-reconciliation branch. See §18 for the migration inventory.
+The foundation is implemented by V1-V6 on `main`; the SearchAPI feature branch adds V7. See §18 for the migration inventory.
 
 ## 14.1 `users`
 
@@ -1437,6 +1461,12 @@ Fields:
 - `published_at`
 - `ingested_at`
 
+V7 adds nullable `provider` / `external_fingerprint` and default-empty JSONB
+`metadata`, with uniqueness on `(product_id, provider, external_fingerprint)`.
+SearchAPI maps one customer review to one document and one index-0 chunk. Metadata
+contains only source domain, rating, raw date and exact retrieval time. Reviewer
+profile fields are discarded. Relative dates leave `published_at = NULL`.
+
 Important distinction:
 - `published_at` = age of external evidence
 - `ingested_at` = when Tech Advisor imported it
@@ -1611,6 +1641,19 @@ recommendations
 
 A significant ingestion framework already exists on `main`.
 
+The backend ingestion code is grouped by responsibility:
+
+```text
+ingestion/
+├─ api/          # admin HTTP endpoints
+├─ config/       # Spring settings and security
+├─ core/         # orchestration, source/sink contracts, payloads and HTTP limits
+├─ run/          # persisted run state and scheduling
+├─ searchapi/    # SearchAPI matching, HTTP, mapping cache and workflow
+├─ reviews/      # review embeddings and transactional corpus persistence
+└─ simulation/   # demo sources and receipts
+```
+
 ## 16.1 Current normalized ingestion contract
 
 The runner supports typed payload bodies:
@@ -1619,6 +1662,7 @@ The runner supports typed payload bodies:
 - `Specifications`
 - `Price`
 - `Benchmark`
+- `ReviewBatch` — at most 100 normalized reviews for one canonical product
 
 Each payload has:
 - source ID,
@@ -1653,6 +1697,12 @@ It must:
 
 Do not install a production sink that silently discards data.
 
+`ReviewBatchSink` batches embeddings over FastAPI before opening a short database
+transaction for documents/chunks. Existing fingerprints are skipped before embedding;
+database uniqueness resolves races. The runner counts product batches, not reviews.
+The context-aware sink overload checks cancellation/ownership before and after
+embedding and before commit. Existing sinks retain their original contract.
+
 ## 16.4 Current load/failure policy
 Current ingestion docs specify safeguards including:
 - one global pipeline claim,
@@ -1661,7 +1711,7 @@ Current ingestion docs specify safeguards including:
 - emitted-item limit,
 - bounded HTTP attempts,
 - pacing between requests,
-- connect/request timeouts,
+- a 5-second connect timeout and 20-second request timeout,
 - response-size cap,
 - limited retry behaviour for 429/503,
 - cooldown state,
@@ -1728,9 +1778,26 @@ an existing session to its role-appropriate page. `/DevicesPageTest` and
 signs out by clearing the shared frontend session and replacing the route with
 `/login`.
 
+The SearchAPI source is labelled **SearchAPI customer reviews** in the source list.
+Selecting it shows a required **Smartphone name** field. `POST
+/api/admin/ingestion/searchapi/candidates` returns up to 20 validated product titles
+and external IDs; provider product tokens never reach the browser. The admin selects
+one candidate before starting the run. The backend accepts `productName` plus that
+`externalProductId` on `POST /api/admin/ingestion/runs`. **MobileAPI is the sole
+source of truth for `products`/`phone` rows (§17.4, revised 28 Sep 2026) - an
+existing exact case-insensitive, whitespace-normalized brand/model or unique
+model-only name resolves to a VERIFIED SMARTPHONE via `ProductMatcher.matchCatalogue`;
+an unknown brand/full-model name is rejected before admission rather than creating
+one.** The target persists in `RunLog.product`, participates in idempotency, survives
+restarts and appears in history. API clients omitting both fields and scheduled runs
+retain default selection. No migration is needed.
+
 `ingestion-demo` remains a real Spring profile, but only for enabling the
 simulated data sources (`SimulatedSources`/`SimulationSink`) for local/demo
-use - it no longer changes who can authenticate.
+use - it no longer changes who can authenticate. There is no ingestion-specific
+credential or CSRF token (chore/ingestion-admin-auth, 28 Sep 2026): the SearchAPI
+picker above authenticates with the same `ROLE_ADMIN` JWT session as everything
+else under `/api/admin/**`.
 
 ---
 
@@ -1754,28 +1821,39 @@ NOT a decision: the JWT is kept in `sessionStorage`, isolated in
 
 # 17. External data sources — current status
 
-## 17.1 Important: final production sources are NOT fully confirmed
+## 17.1 Source strategy by data type — team decision 27 Sep 2026
 
-Do not hardcode business logic around one source as if the team permanently selected it.
+- **Smartphone specifications and prices:** MobileAPI.dev is the intended
+  authoritative ongoing external provider. Its integration is planned and is
+  not implemented in the current checkout. One-time and periodic ingestion
+  should write normalized data to `products`, `phone`, and `price_history`;
+  normal application requests then read PostgreSQL and do not call MobileAPI.dev.
+- **Owner reviews:** SearchAPI Google Product Reviews (§17.4).
+- **Benchmarks:** separate device-level benchmark sources and the existing
+  benchmark enrichment/provenance. MobileAPI.dev is not currently established
+  as a benchmark source.
+- **Launch/change feeds and sources for future product categories:** still open.
 
-Historical/proposed candidates discussed include:
-- Open Icecat
-- Best Buy API
-- eBay API
-- NVIDIA/AMD RSS feeds
-- public technology launch RSS/Atom feeds
-- manufacturer specification pages
-- PCPartPicker
-- RTINGS
-- TechPowerUp
-- simulated feed/history for testing/demo
+Keep source adapters replaceable, normalize data through the shared ingestion
+contract, and keep the AI/recommendation layers source-agnostic.
 
-Different old docs mention different combinations.
+## 17.1.1 Current and planned real adapters
 
 The safe architectural decision is:
 - keep source adapters replaceable,
 - normalize into the shared ingestion contract,
 - keep AI/recommendation layers source-agnostic.
+
+- **The one-time catalogue backfill is retired, not reconciled against.**
+  `data/catalogue_backfill.json` and `scripts/backfill_catalogue.py` were
+  removed 28 Sep 2026 — MobileAPI.dev ingestion (§17.1.1 below) is now the
+  sole source of catalogue population and refresh (§17.4), so there is no
+  competing dataset left to reconcile `SmartphoneCatalogSink` against.
+  Any rows a past backfill run already wrote to a given environment's
+  database are unaffected and untouched by this — this is a documentation
+  and file cleanup, not a data migration. `scripts/searchapi-smoke.ps1`
+  (exercises the real SearchAPI review-ingestion flow) is unrelated and
+  still current.
 
 ## 17.1.1 Implemented real adapter + sink — smartphones (ticket 1.2)
 
@@ -1803,7 +1881,13 @@ never being provisioned, not a missing sink anymore.
   that decision) — added here for traceability, not because §17.1's "not
   fully confirmed" status has changed.
 
-## 17.1.2 Implemented real adapter — smartphone/GPU reviews (ticket 1.4, revised scope)
+## 17.1.2 Commented-out adapter — smartphone/GPU reviews (ticket 1.4, revised scope, superseded)
+
+**Commented out 28 Sep 2026** (every line prefixed `//`, not deleted) —
+ticket 1.4 moved to the SearchAPI approach on `feat/searchapi-review-ingestion`
+(§17.4). Kept in `HardwareZoneReviewSource.java`/`HardwareZoneReviewParser.java`
+and their tests in case it's wanted again as a reference or fallback; not
+wired into any build output while commented.
 
 `HardwareZoneReviewSource` — smartphone and GPU **review** text
 (owner-evidence/sentiment pipeline, §7.2), not the launch/change feed the
@@ -1845,7 +1929,6 @@ permissive `robots.txt` alone is not sufficient clearance (this is exactly
 how TechRadar was nearly built against before its ToS prohibition was
 found).
 
-
 ## 17.2 Compliance requirement
 Before scraping any real site:
 - inspect `robots.txt`,
@@ -1868,6 +1951,45 @@ Review evidence should preserve:
 - product association.
 
 No ingestion-time LLM stance classification under the current plan.
+
+## 17.4 SearchAPI owner reviews — implemented on `feat/searchapi-review-ingestion`
+
+The owner-review source is `searchapi-google-product-reviews`. It uses the documented
+SearchAPI endpoints with Bearer authentication and Singapore localisation; it does not
+scrape. It is opt-in, and enabling it without `SEARCHAPI_API_KEY` fails startup.
+
+**MobileAPI.dev (ticket 1.2) is the sole source of truth for `products`/`phone`
+rows — SearchAPI never creates one** (revised 28 Sep 2026; it originally could, via
+an admin-named run — that path is removed). Manual discovery exposes validated
+titles and external IDs only. The worker revalidates the admin-selected ID before
+caching its server-only token, and an admin-typed name is matched against the
+existing catalogue via `ProductMatcher.matchCatalogue` (fuzzy, brand+model or a
+bare model name alone — same suffix tolerance already proven against Google
+Shopping titles, not exact-string equality) rather than promoted into a new row.
+No catalogue match fails closed: ingest the device via MobileAPI first. Matching
+rejects accessories, used/refurbished products, conflicting models, and unknown
+wording. V7's `external_product_mapping` scopes cache entries by
+product/provider/locale/canonical name. A clearly invalid cached token gets one
+rediscovery; there is no TTL, pagination, or extra refresh request.
+
+Each product uses two review searches plus one discovery when uncached (3 HTTP
+requests); the admin picker adds one preview search. `SourceContext` caps every
+source at 10 requests per run, so `SEARCHAPI_MAX_PRODUCTS_PER_RUN`
+tops out at `floor(10/3) = 3` (validated 1-3) — raising it further requires raising that shared
+per-source ceiling first, not just the setting. SearchAPI's application cooldown
+is zero, while a provider `Retry-After` remains authoritative. An untargeted run
+excludes products already attempted for this provider/locale (VALID or INVALID
+via `markNoMatch`) so it advances through the catalogue instead of retrying the
+same unmatchable product forever. Reviews are normalized and fingerprinted, then
+batch-embedded through FastAPI and transactionally stored as one document and one
+index-0 chunk per review. No raw profile data or provider response is persisted, and
+no ingestion-time LLM call occurs. Full configuration, limits, and verification steps
+belong in `docs/searchapi-review-ingestion.md`.
+
+Sources run in `IngestionSource.priority()` order (lower first), not alphabetical
+`sourceId` order — `MobileApiSmartphoneSource` overrides it to 10 so its catalogue
+writes are visible to SearchAPI's untargeted product pick within the same run,
+regardless of source naming.
 
 ---
 
@@ -1902,6 +2024,7 @@ V3__anchor_daily_ingestion_schedule.sql
 V4__enable_pgvector.sql
 V5__add_password_hash_to_users.sql
 V6__create_sprint_1_schema.sql
+V7__add_external_review_ingestion.sql  # SearchAPI feature branch
 ```
 
 `V5` makes `users.password_hash` **NOT NULL**, so every seed, fixture, or test
@@ -1935,7 +2058,8 @@ Therefore:
 - the full 13-table foundation is represented exactly once,
 - feature branches must remove their competing V6/V7 schema migrations when rebased onto this migration.
 
-This V6 is currently on the schema-reconciliation branch and is not on `main` until its PR is reviewed and merged.
+V6 is now on `main`. V7 on the SearchAPI branch is additive and preserves existing
+manual/demo documents, the ingestion script and the 512-dimensional vector schema.
 
 ## 18.3 Frontend currently contains
 Known files include:
@@ -2022,8 +2146,8 @@ Treat exact historical test counts as evidence from that verification point, not
 
 ## 18.7 AI service snapshot — 19 Sep 2026, branch `feat/3.4-llm_layer`
 
-**Not yet merged to `main`.** Everything in §5.4, §8, §10, §12 and §13.5 describes
-this branch. Do not assume it is on `main` until the PR for SCRUM-37 lands.
+**Now present on `main`.** This historical snapshot describes the original SCRUM-37
+branch; SearchAPI ingestion extends its existing embedder and review store.
 
 Implemented under `ai/app/`:
 
@@ -2448,6 +2572,13 @@ VITE_API_BASE_URL
 INGESTION_SCHEDULING_ENABLED
 INGESTION_ANCHOR
 INGESTION_ENABLED_SOURCES
+SEARCHAPI_API_KEY          # backend only; required only when source enabled
+SEARCHAPI_GL               # sg
+SEARCHAPI_HL               # en
+SEARCHAPI_LOCATION         # Singapore
+SEARCHAPI_MAX_PRODUCTS_PER_RUN # 1 (allowed 1-3; SourceContext's 10-request/run cap and
+                                # 3 requests/uncached product make 3 the real ceiling)
+AI_INGESTION_EMBEDDER       # minishlab/potion-retrieval-32M
 JWT_SECRET
 JWT_EXPIRATION_SECONDS    # optional; defaults to 3600 and must be positive
 ADMIN_EMAIL               # required bootstrap administrator email
@@ -2482,6 +2613,10 @@ the file, so CI (which exports `DB_HOST`/`DB_PORT`/`POSTGRES_DB` and has no `.en
 and the Fly.io image are unaffected — `optional:` simply skips the missing file.
 `backend/pom.xml` pins `POSTGRES_DB=techadvisor_test` for the test phase only, so
 `mvnw test` can never run against the development database.
+Tests also clear live source selection/SearchAPI credentials and disable scheduling;
+fixture tests supply their own source configuration. AI pgvector tests now require
+`TEST_DATABASE_URL` pointing to an actual database ending `_test` and optionally
+`TEST_EMBEDDING_MODEL_PATH` for baked weights.
 
 ## 20.2 Frontend
 
@@ -2841,15 +2976,17 @@ Exact recommendation-expiry/decay policy remains a product decision unless a cur
 
 Keep these explicit so an assistant does not accidentally “decide” them.
 
-## 27.1 Final live data sources
-Not fully confirmed.
+## 27.1 Remaining live-source implementation decisions
 
-Need final selection for:
-- smartphone specs,
-- price,
-- benchmark data,
-- launch/change feeds,
-- owner reviews.
+The team direction for smartphone specifications and pricing is resolved:
+MobileAPI.dev is the intended authoritative ongoing external provider, with
+periodic ingestion into PostgreSQL. The integration is still to be implemented.
+
+Owner reviews use SearchAPI Google Product Reviews (§17.4). Benchmarks remain a
+separate device-level evidence stream using the existing enrichment/provenance;
+MobileAPI.dev is not assumed to provide them. The exact ongoing benchmark-source
+mix, launch/change feeds, and sources for future product categories remain open.
+Adapters remain replaceable.
 
 ## 27.2 LLM provider/model — mechanism resolved, choice still open
 Hosted API, SMU-X budget available.
@@ -3462,7 +3599,7 @@ Recommended doc cleanup:
 
 If only reading one section, read this:
 
-> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203, backed by a generic product catalogue with `phone` and `gpu` subtype tables for schema evolution. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. Final live ingestion sources are still not fully confirmed, so source adapters must remain replaceable.
+> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203, backed by a generic product catalogue with `phone` and `gpu` subtype tables for schema evolution. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. MobileAPI.dev is the planned authoritative ongoing source for smartphone specifications and prices, ingested periodically into PostgreSQL rather than called per user request. SearchAPI supplies owner reviews, while benchmarks use separate device-level sources. Other live-source choices remain open and adapters remain replaceable.
 
 ---
 

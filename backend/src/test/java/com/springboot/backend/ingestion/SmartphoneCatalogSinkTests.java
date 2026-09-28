@@ -1,5 +1,9 @@
 package com.springboot.backend.ingestion;
 
+import com.springboot.backend.ingestion.core.IngestionSink;
+import com.springboot.backend.ingestion.core.IngestionSource;
+import com.springboot.backend.ingestion.core.Payload;
+import com.springboot.backend.ingestion.core.SourceContext;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Map;

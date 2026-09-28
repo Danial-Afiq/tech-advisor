@@ -40,8 +40,10 @@ public final class MobileApiFieldExtractor {
             "€\\s?(\\d+(?:\\.\\d{1,2})?)", Pattern.UNICODE_CHARACTER_CLASS);
     private static final Pattern PRICE_GBP = Pattern.compile(
             "£\\s?(\\d+(?:\\.\\d{1,2})?)", Pattern.UNICODE_CHARACTER_CLASS);
+    // Possessive quantifiers keep long malformed price strings linear-time: once the
+    // numeric and whitespace portions are consumed, there is no useful fallback split.
     private static final Pattern PRICE_CODE = Pattern.compile(
-            "(\\d+(?:\\.\\d{1,2})?)\\s*(USD|EUR|GBP)", Pattern.CASE_INSENSITIVE);
+            "(\\d++(?:\\.\\d{1,2})?)\\s*+(USD|EUR|GBP)", Pattern.CASE_INSENSITIVE);
     private static final Pattern CPU_GHZ = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*GHz", Pattern.CASE_INSENSITIVE);
     private static final Pattern DISPLAY_INCHES = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*inches?", Pattern.CASE_INSENSITIVE);
     private static final Pattern WEIGHT_G = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*g\\b", Pattern.CASE_INSENSITIVE);

@@ -1,6 +1,6 @@
 # Ingestion runner: operation and source integration
 
-The runner provides a scheduled cadence (currently **2 days**, a temporary override for live data-gathering while the smartphone schema is still moving — see `AGENTS.md` §16.5 for why and when to revert; the real target is 14 days), asynchronous admin requests, source isolation and persistent run history. This ticket includes simulated adapters and receipts, not live market sources or catalogue/RAG processors.
+The runner provides a scheduled cadence (currently **2 days**, a temporary override for live data-gathering while the smartphone schema is still moving — see `AGENTS.md` §16.5 for why and when to revert; the real target is 14 days), asynchronous admin requests, source isolation and persistent run history. It includes simulated adapters and the opt-in SearchAPI owner-review source and RAG sink. See [SearchAPI review ingestion](searchapi-review-ingestion.md) for configuration and a complete local live test.
 
 ## Shared contract, different payloads
 
@@ -24,8 +24,14 @@ Every `IngestionSource` identifies itself and implements `ingest(context, output
 | `Specifications` | Product reference, numeric measurements and explicit units | Typed catalogue updates and domain-specific range validation |
 | `Price` | Product reference, amount, ISO-style currency code | Price history and change detection |
 | `Benchmark` | Product reference, benchmark name, score, unit | Benchmark storage/comparison |
+| `ReviewBatch` | Canonical product ID and up to 100 normalized reviews | Batch embeddings through FastAPI, then atomic review document/chunk persistence |
 
 An RSS article is not forced into specification fields. Sources offering the same type translate to the same body. A source can emit several types. Review collection preserves evidence; sentiment inference belongs downstream. Product resolution and type-specific domain validation remain the sink's responsibility.
+
+The Java packages follow the same responsibilities: `api` owns HTTP endpoints,
+`core` owns source/sink execution contracts, `run` owns persisted runs and scheduling,
+`config` owns Spring configuration, `searchapi` owns provider workflow, `reviews` owns
+review embedding/persistence, and `simulation` owns demo fixtures.
 
 ## Adding an RSS source
 
@@ -34,7 +40,11 @@ For a feed such as Hackfeed, implement an adapter to fetch the configured feed a
 This compilable adapter skeleton shows the integration boundary. Supply a secure RSS parser and an article sink as separate Spring beans:
 
 ```java
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.rss;
+
+import com.springboot.backend.ingestion.core.IngestionSource;
+import com.springboot.backend.ingestion.core.Payload;
+import com.springboot.backend.ingestion.core.SourceContext;
 
 import java.net.URI;
 import java.time.Instant;
@@ -73,13 +83,17 @@ Then add `hackfeed-rss` to `INGESTION_ENABLED_SOURCES`, configure its feed URL, 
 ## Load and failure policy
 
 - One global pipeline claim; sources run sequentially. Admin/scheduled requests share cooldowns.
-- Each source has a 60-second execution budget, 1,000 emitted-item limit, at most 10 HTTP attempts, at least one second between requests, a five-second connect timeout and ten-second request timeout. HTTP response bodies are capped at 1 MiB.
-- HTTP 429/503 receive at most two retries. Long Retry-After values defer the source in persistent coordinator state instead of sleeping indefinitely. The source's default cooldown is 15 minutes; demo sources alone use zero cooldown.
+- Each source has a 60-second execution budget, 1,000 emitted-item limit, at most 10 HTTP attempts, at least one second between requests, a five-second connect timeout and 20-second request timeout. HTTP response bodies are capped at 1 MiB.
+- HTTP 429/503 receive at most two retries. Long Retry-After values defer the source in persistent coordinator state instead of sleeping indefinitely. A completed source uses its configured cooldown (15 minutes by default); transport/timeouts use one minute; validation/no-match failures use none. Other failures retain the configured cooldown. Demo sources use zero cooldown.
+- A source may override its local cooldown. Provider-directed `Retry-After` still applies.
 - Adapters must use `SourceContext.get` and call `check()` while processing. On cancellation or ownership loss, stop. The HTTP helper closes responses and cancels its client when the source budget expires. The source executor has no backlog and only one thread, limiting damage from an adapter ignoring interruption.
 - Validation failures increment rejected/error counters and allow later items to proceed. Source exceptions produce bounded sanitized application stack frames; messages, raw response bodies and credentials are excluded. Later sources still execute.
 - Duplicate detection in the runner covers repeated IDs of the same type within one source run. Cross-run deduplication belongs in the durable typed sink. Demo receipts intentionally persist again on each new demo run.
 
 Limits currently live in `SourceContext` and `IngestionOrchestrator`; adapt them deliberately with tests when a real source needs a different policy. A Java process cannot forcibly stop arbitrary code that ignores interruption, and it cannot promise exactly-once external effects during a crash. Do not implement adapters with independent executors or irreversible external actions.
+
+Context-aware sinks check ownership around slow work and before commit. Authenticated
+GETs retain all limits and validate the exact trusted credential destination host.
 
 ## Scheduling and recovery
 
@@ -99,7 +113,7 @@ Accepted work is durable before dispatch. If dispatch never occurs, the next swe
 
 ## Database and metadata
 
-Flyway V2 creates `system_log`. The reserved `INGESTION_COORDINATOR` row stores scheduling, active ownership and source cooldowns. `INGESTION_RUN` rows store execution history. `INGESTION_DEMO_PAYLOAD` rows are simulation receipts only. No extra domain tables or product schema are created.
+Flyway V2 creates `system_log`. The reserved `INGESTION_COORDINATOR` row stores scheduling, active ownership and source cooldowns. `INGESTION_RUN` rows store execution history. `INGESTION_DEMO_PAYLOAD` rows are simulation receipts only. V6 owns the review corpus; V7 adds external product mappings and review identity/provenance for SearchAPI.
 
 ```sql
 SELECT id, status, created_at,
@@ -118,11 +132,15 @@ ORDER BY created_at DESC;
 
 ## Admin access and UI
 
-The panel is at `/admin/ingestion`. It displays source choices, optional reason, next scheduled time and recent results. Requests are asynchronous (`202` plus a Location header). The browser polls results, handles conflicts and retains an idempotency key for retrying a failed submission with the same body. Server admission also blocks overlapping requests, including from different browser tabs.
+The panel supports the named SearchAPI product picker without changing the generic run
+contract. See [SearchAPI review ingestion](searchapi-review-ingestion.md) for catalogue
+matching, candidate selection, provider calls, and troubleshooting.
+
+The panel is at `/admin/ingestion`. It displays source choices, the SearchAPI product picker, an optional reason, the next scheduled time and recent results. Requests are asynchronous (`202` plus a Location header). The browser polls results, handles conflicts and retains an idempotency key for retrying a failed submission with the same body. Server admission also blocks overlapping requests, including from different browser tabs.
 
 Admin access uses the app's normal `POST /api/auth/login` flow (the configured administrator is bootstrapped from `ADMIN_EMAIL`/`ADMIN_PASSWORD`) and the same session used for every other `/api/admin/**` route, with no ingestion-specific credential and no CSRF token (the whole app is a stateless bearer-token API; CSRF protects ambient cookie auth, which this isn't). Sign in on `/login`; the returned ADMIN role routes to `/admin/ingestion`. Route guards send signed-out visitors to `/login` and USER accounts to `/devices`. `ingestion-demo` is still a real Spring profile, but only for enabling the `simulated-release`/`simulated-failure` test sources locally - it has no effect on who can authenticate. `VITE_INGESTION_DEMO` no longer exists on the frontend.
 
-API contracts are in `docs/ingestion-openapi.yaml`. The endpoint group supports run submission, run detail/history, source availability, schedule state and an authenticated identity read. Idempotency keys are scoped to the actor, with differing payloads rejected. History is paginated using `page`/`size` and optional `status`/`trigger` filters.
+API contracts are in `docs/ingestion-openapi.yaml`. The endpoint group supports SearchAPI candidate discovery, run submission, run detail/history, source availability, schedule state and an authenticated identity read. Idempotency keys are scoped to the actor, with differing payloads rejected. History is paginated using `page`/`size` and optional `status`/`trigger` filters.
 
 ## Local demo and verification
 
@@ -138,7 +156,7 @@ cd ..
 .\scripts\ingestion-demo.ps1
 ```
 
-Tests intentionally require a database name ending `_test`; they delete ingestion records only in that isolated test database. CI uses `techadvisor_test`. Set `JAVA_HOME` to your Java 21 JDK directory before running the demo script. It requires a database ending `_demo`, starts a backend on localhost:18087, runs success and partial-failure cases, verifies shutdown, restarts the backend, retrieves both persisted results, and writes `docs/examples/ingestion-demo-results.json`. It restores its environment and stops only its own backend process. It generates an ephemeral password when none is supplied. Re-running adds new demo history.
+Tests intentionally require a database name ending `_test`; they delete ingestion records only in that isolated test database. CI uses `techadvisor_test`. Set `JAVA_HOME` to your Java 21 JDK directory before running the demo script. It requires a database ending `_demo`, prompts for bootstrap administrator credentials, starts a backend on localhost:18087, logs in for a bearer JWT, runs success and partial-failure cases, verifies shutdown, restarts the backend, retrieves both persisted results, and writes `docs/examples/ingestion-demo-results.json`. It restores its environment and stops only its own backend process. Re-running adds new demo history.
 
 Verification on 2026-09-16: 14 backend tests passed, backend packaging passed, 3 frontend tests passed, and frontend build/lint passed. The recorded manual success run accepted 3 payloads in 240 ms with 0 exception stacks; the partial-failure run accepted 3 in 125 ms with 1 exception stack. Both were retrieved after an actual backend shutdown/restart and checked directly in PostgreSQL. Browser visual verification could not run because the installed browser runtime rejected its bootstrap dependency; the admin flow was covered by component tests and the backend API demo.
 

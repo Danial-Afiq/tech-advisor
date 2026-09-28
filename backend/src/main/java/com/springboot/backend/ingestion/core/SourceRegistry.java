@@ -1,5 +1,6 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.core;
 
+import com.springboot.backend.ingestion.config.IngestionSettings;
 import java.util.*;
 import org.springframework.stereotype.Component;
 
@@ -22,7 +23,11 @@ public class SourceRegistry {
         List<String> ids = requested == null || requested.isEmpty() ? settings.enabledSources() : requested;
         if (ids.isEmpty() || ids.stream().anyMatch(id -> !settings.enabledSources().contains(id)))
             throw new IllegalArgumentException("Select at least one enabled source");
-        return ids.stream().distinct().sorted().toList();
+        // Ordered by each source's own declared priority() - not alphabetically. sourceId is only
+        // a tiebreaker for determinism between two sources at the same priority.
+        return ids.stream().distinct()
+                .sorted(Comparator.comparingInt((String id) -> sources.get(id).priority()).thenComparing(Comparator.naturalOrder()))
+                .toList();
     }
     public IngestionSource get(String id) { return Objects.requireNonNull(sources.get(id)); }
     public Collection<IngestionSource> all() { return sources.values(); }

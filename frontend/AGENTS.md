@@ -269,8 +269,11 @@ as one deliberate change across all components, not piecemeal.
   role. The backend stores only email + password, so there is no name field.
 - `IngestionAdmin.tsx` uses the shared UI components and the application's ADMIN
   session only. It has no ingestion-specific password gate and signs out through
-  `api/auth.ts`. It still uses `ThemeRoot` rather than the full signed-in
-  `AppShell`. `pages/ThingieMagiggie.tsx` is not yet migrated.
+  `api/auth.ts`. SearchAPI review ingestion adds a validated product picker to
+  the same authenticated page. It still uses `ThemeRoot` rather than the full
+  signed-in `AppShell`.
+- **Not yet migrated:** `pages/ThingieMagiggie.tsx`. When you touch it, move it
+  onto the shared components.
 - `DeviceResponse` does not yet include the product category, the `phone`
   specs or the device preferences, and there is no endpoint for them. Until
   the backend adds them, pass them to `deviceFromApi` via `extras`. When the

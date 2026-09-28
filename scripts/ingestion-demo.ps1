@@ -1,26 +1,39 @@
 param(
     [string]$Database = 'techadvisor_ingestion_demo',
-    [int]$Port = 18087
+    [int]$Port = 18087,
+    [System.Management.Automation.PSCredential]$AdminCredential
 )
 $ErrorActionPreference = 'Stop'
 if (-not $Database.EndsWith('_demo')) { throw 'Use a dedicated database ending in _demo.' }
+if (-not $AdminCredential) {
+    $AdminCredential = Get-Credential -Message 'Administrator credentials for the isolated ingestion demo'
+}
+$adminEmail = $AdminCredential.UserName.Trim()
+$adminPassword = $AdminCredential.GetNetworkCredential().Password
+if (-not $adminEmail) { throw 'Administrator email must not be blank.' }
+if ($adminPassword.Length -lt 12) { throw 'Administrator password must contain at least 12 characters.' }
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $javaPath = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin\java.exe' } else { '' }
 if (-not $javaPath -or -not (Test-Path -LiteralPath $javaPath)) { throw 'Set JAVA_HOME to the Java 21 JDK directory (the Oracle PATH shim spawns a separate process).' }
 $jarPath = Join-Path $projectRoot 'backend\target\backend-0.0.1-SNAPSHOT.jar'
 if (-not (Test-Path -LiteralPath $jarPath)) { throw 'Build backend with mvnw package first.' }
-$names = @('POSTGRES_DB','SPRING_PROFILES_ACTIVE','INGESTION_DEMO_PASSWORD','INGESTION_SCHEDULING_ENABLED','INGESTION_ANCHOR')
+$names = @('POSTGRES_DB','SPRING_PROFILES_ACTIVE','ADMIN_EMAIL','ADMIN_PASSWORD','INGESTION_SCHEDULING_ENABLED','INGESTION_ANCHOR')
 $saved = @{}
 foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 $env:POSTGRES_DB = $Database
 $env:SPRING_PROFILES_ACTIVE = 'ingestion-demo'
-if (-not $env:INGESTION_DEMO_PASSWORD) { $env:INGESTION_DEMO_PASSWORD = [guid]::NewGuid().ToString('N') }
+$env:ADMIN_EMAIL = $adminEmail
+$env:ADMIN_PASSWORD = $adminPassword
 $env:INGESTION_SCHEDULING_ENABLED = 'false'
 $env:INGESTION_ANCHOR = '2026-09-17T05:00:00Z'
-$basic = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('demo-admin:' + $env:INGESTION_DEMO_PASSWORD))
-$headers = @{ Authorization = 'Basic ' + $basic }
 $base = "http://127.0.0.1:$Port"
 $backendProcess = $null
+
+function Get-AdminHeaders {
+    $loginBody = @{ email = $adminEmail; password = $adminPassword } | ConvertTo-Json
+    $login = Invoke-RestMethod "$base/api/auth/admin/login" -Method Post -ContentType 'application/json' -Body $loginBody
+    return @{ Authorization = "$($login.tokenType) $($login.token)" }
+}
 
 function Start-DemoBackend {
     $process = Start-Process -FilePath $javaPath -ArgumentList @('-jar', ('"{0}"' -f $jarPath), "--server.port=$Port", '--logging.level.root=WARN', '--debug=false') `
@@ -47,16 +60,16 @@ try {
     catch [Net.Sockets.SocketException] { }
     finally { $probe.Dispose() }
     $backendProcess = Start-DemoBackend
-    $identity = Invoke-RestMethod "$base/api/admin/ingestion/session" -Headers $headers -SessionVariable session
-    $headers[$identity.csrfHeader] = $identity.csrfToken
-    $before = Invoke-RestMethod "$base/api/admin/ingestion/schedule" -Headers $headers -WebSession $session
+    $headers = Get-AdminHeaders
+    $null = Invoke-RestMethod "$base/api/admin/ingestion/session" -Headers $headers
+    $before = Invoke-RestMethod "$base/api/admin/ingestion/schedule" -Headers $headers
     $results = @()
     foreach ($sourceSet in @(@('simulated-release'), @('simulated-release','simulated-failure'))) {
         $headers['Idempotency-Key'] = [guid]::NewGuid().ToString()
         $body = @{ sources = @($sourceSet); reason = 'Mid-cycle release demonstration' } | ConvertTo-Json
-        $run = Invoke-RestMethod "$base/api/admin/ingestion/runs" -Method Post -Headers $headers -WebSession $session -ContentType 'application/json' -Body $body
+        $run = Invoke-RestMethod "$base/api/admin/ingestion/runs" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
         for ($attempt = 0; $attempt -lt 120; $attempt++) {
-            $run = Invoke-RestMethod "$base/api/admin/ingestion/runs/$($run.runId)" -Headers $headers -WebSession $session
+            $run = Invoke-RestMethod "$base/api/admin/ingestion/runs/$($run.runId)" -Headers $headers
             if ($run.finishedAt) { break }
             Start-Sleep -Milliseconds 250
         }
@@ -65,7 +78,7 @@ try {
     }
     if ($results[0].status -ne 'SUCCESS' -or $results[0].processedPayloadCount -ne 3) { throw 'Success demo failed.' }
     if ($results[1].status -ne 'PARTIAL_FAILURE' -or $results[1].errorStackCount -ne 1) { throw 'Failure demo failed.' }
-    $after = Invoke-RestMethod "$base/api/admin/ingestion/schedule" -Headers $headers -WebSession $session
+    $after = Invoke-RestMethod "$base/api/admin/ingestion/schedule" -Headers $headers
     if ($before.nextScheduledAt -ne $after.nextScheduledAt) { throw 'Manual run changed the schedule.' }
     Stop-Process -Id $backendProcess.Id -Force
     $backendProcess.WaitForExit()
@@ -77,6 +90,7 @@ try {
     }
     if ($stillRunning) { throw 'Old backend still answers after stop; restart verification cannot continue.' }
     $backendProcess = Start-DemoBackend
+    $headers = Get-AdminHeaders
     foreach ($run in $results) {
         $persisted = Invoke-RestMethod "$base/api/admin/ingestion/runs/$($run.runId)" -Headers $headers
         if ($persisted.status -ne $run.status -or $persisted.processedPayloadCount -ne $run.processedPayloadCount) {
@@ -93,4 +107,5 @@ try {
 } finally {
     if ($backendProcess -and -not $backendProcess.HasExited) { Stop-Process -Id $backendProcess.Id -Force }
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+    $adminPassword = $null
 }

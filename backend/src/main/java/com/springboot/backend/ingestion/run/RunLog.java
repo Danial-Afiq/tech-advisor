@@ -1,4 +1,4 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.run;
 
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -23,6 +23,11 @@ public class RunLog {
     public int processedPayloadCount, duplicatePayloadCount, rejectedPayloadCount, errorCount, errorStackCount;
     public int skippedSourceCount;
     public boolean simulation;
+    public ProductTarget product;
+    /** Canonical identity plus the admin-selected provider identity. Provider tokens remain server-only. */
+    public record ProductTarget(Long productId, String productName, String externalProductId) {
+        public ProductTarget(Long productId, String productName) { this(productId, productName, null); }
+    }
     public List<String> sourceIds = new ArrayList<>();
     public List<SourceResult> sources = new ArrayList<>();
 

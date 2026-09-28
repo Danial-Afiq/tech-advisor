@@ -1,5 +1,8 @@
-package com.springboot.backend.ingestion;
+package com.springboot.backend.ingestion.simulation;
 
+import com.springboot.backend.ingestion.core.IngestionSource;
+import com.springboot.backend.ingestion.core.Payload;
+import com.springboot.backend.ingestion.core.SourceContext;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Duration;
