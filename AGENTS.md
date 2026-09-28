@@ -560,29 +560,19 @@ by tests and seeded data. A named admin SearchAPI run can create a VERIFIED smar
 only after the admin selects a validated provider identity and the worker revalidates
 that choice; it does not create price observations.
 
-The branch-local one-time catalogue backfill uses
-`data/catalogue_backfill.json` plus `scripts/backfill_catalogue.py`. It is
-bootstrap/supporting data for local development, tests, demos, historical and
-older-device coverage, benchmark provenance, and fallback while the planned
-MobileAPI.dev integration is not yet implemented. It is not the intended
-long-term authority for smartphone specifications or prices. It now stages
-453 exact smartphone configurations: the original 352 owned-device-oriented
-records plus a 101-product 2025-2026 candidate batch. Every product in the newer
-batch has an exact current new-device price (69 direct SGD and 32 converted to
-SGD), bringing the staging snapshot to 137 price observations overall. Foreign
-prices use deterministic European Central Bank daily reference rates. Staging
-provenance preserves the exact configuration, original amount/currency,
-conversion rate and timestamp, listing URL and observation time. No benchmark
-is inferred from a generic chipset score. A benchmark-only enrichment now brings
-the snapshot to 332 observations across 147 of 453 configurations: Geekbench 6,
-Geekbench 7 and explicitly named 3DMark tests remain separate. The pinned TechAPI
-records contained specifications but no benchmark fields. New results therefore
-come from cited device-level technical reviews; exact tested configurations are
-marked `DIRECT_DEVICE_RESULT`, while reuse across storage-only configurations is
-marked `SHARED_BASE_MODEL_RESULT` only when base model, chipset, RAM and regional
-processor match. Unsupported configurations intentionally remain without results.
-The script writes only to the fixed local Docker PostgreSQL container and is not
-a runtime ingestion source.
+**Initial catalogue population and subsequent refreshes come from MobileAPI.dev
+ingestion** (ticket 1.2, `MobileApiSmartphoneSource`/`SmartphoneCatalogSink`,
+§17.1.1) — not from a static file. An earlier one-time backfill
+(`data/catalogue_backfill.json` + `scripts/backfill_catalogue.py`, 453 staged
+configurations with price and benchmark observations) was used before MobileAPI
+ingestion existed; both files were removed 28 Sep 2026 once it did. They are
+not a fallback or bootstrap path to fall back on — MobileAPI is the sole
+source of truth for `products`/`phone` rows (§17.4). Any benchmark or price
+rows that backfill run already wrote to a given environment's database are
+unaffected by the file deletion; MobileAPI ingestion does not currently write
+benchmark data at all (§17.1.1's implemented-adapter notes), so benchmark
+coverage remains whatever was seeded historically until a real benchmark
+source is chosen (§17.1's "not fully confirmed" sources list).
 
 ## 7.2 Channel B — owner evidence grade
 
@@ -1825,18 +1815,16 @@ The safe architectural decision is:
 - normalize into the shared ingestion contract,
 - keep AI/recommendation layers source-agnostic.
 
-- **MobileAPI.dev/`data/catalogue_backfill.json` reconciliation is still
-  open.** MobileAPI ingestion now exists for real (§17.1.1 below), but
-  nothing in `SmartphoneCatalogSink` reconciles against the existing
-  bootstrap backfill data yet — it must, eventually, match incoming
-  records against existing `(brand, model_name)` identities rather than
-  blindly duplicate catalogue rows, and if an incoming identity represents
-  the same exact hardware configuration, preserve or remap its existing
-  benchmark observations rather than lose them. `data/catalogue_backfill.json`
-  and `scripts/backfill_catalogue.py` remain useful for bootstrap/local
-  development, tests/demos, historical and older-device coverage, benchmark
-  provenance, and fallback until that reconciliation exists; they are not a
-  competing long-term authority for specifications or prices once it does.
+- **The one-time catalogue backfill is retired, not reconciled against.**
+  `data/catalogue_backfill.json` and `scripts/backfill_catalogue.py` were
+  removed 28 Sep 2026 — MobileAPI.dev ingestion (§17.1.1 below) is now the
+  sole source of catalogue population and refresh (§17.4), so there is no
+  competing dataset left to reconcile `SmartphoneCatalogSink` against.
+  Any rows a past backfill run already wrote to a given environment's
+  database are unaffected and untouched by this — this is a documentation
+  and file cleanup, not a data migration. `scripts/searchapi-smoke.ps1`
+  (exercises the real SearchAPI review-ingestion flow) is unrelated and
+  still current.
 
 ## 17.1.1 Implemented real adapter + sink — smartphones (ticket 1.2)
 
