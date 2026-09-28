@@ -76,7 +76,7 @@ class ReviewPersistenceTests {
         var repository = mock(SearchApiRepository.class);
         var client = mock(SearchApiClient.class);
         var canonical = new SearchApiRepository.Product(product, "Apple", "iPhone 16 Pro");
-        when(repository.products(1)).thenReturn(List.of(canonical));
+        when(repository.products(new SearchApiSettings("fixture", "sg", "en", "Singapore", 1))).thenReturn(List.of(canonical));
         when(repository.token(any(), any())).thenReturn(Optional.empty());
         var json = JsonMapper.builder().build();
         when(client.shopping(any(), any())).thenReturn(json.readTree("""
@@ -145,11 +145,37 @@ class ReviewPersistenceTests {
         assertTrue(mappings.token(new SearchApiRepository.Product(product, "SearchApiTest", "changed"), s).isEmpty());
         assertTrue(mappings.token(p, new SearchApiSettings("", "us", "en", "USA", 1)).isEmpty());
         mappings.invalidate(p, s); assertTrue(mappings.token(p, s).isEmpty());
-        var ids = mappings.products(2).stream().map(SearchApiRepository.Product::id).toList();
+        // A different locale has no cache()/invalidate() row yet for this product, so the
+        // "already attempted" exclusion in products() doesn't hide it here - isolates the
+        // status/category filtering this section actually tests from that exclusion.
+        var untried = new SearchApiSettings("", "us", "en", "USA", 2);
+        var ids = mappings.products(untried).stream().map(SearchApiRepository.Product::id).toList();
         assertEquals(ids.stream().sorted().toList(), ids);
         db.update("UPDATE products SET status='UNVERIFIED' WHERE id=?", product);
-        assertFalse(mappings.products(10000).stream().anyMatch(row -> row.id() == product));
+        assertFalse(mappings.products(untried).stream().anyMatch(row -> row.id() == product));
         db.update("UPDATE products SET status='VERIFIED',category='GPU' WHERE id=?", product);
-        assertFalse(mappings.products(10000).stream().anyMatch(row -> row.id() == product));
+        assertFalse(mappings.products(untried).stream().anyMatch(row -> row.id() == product));
+    }
+    // products() caps at 2 results (a real SearchAPI constraint, not a test artifact) and this
+    // shared _test database accumulates other tests' eligible products - a LIMIT-bounded,
+    // ORDER-BY-id result can't reliably prove inclusion/exclusion of one specific row. Checks the
+    // same NOT-EXISTS predicate products() uses, scoped to this one product id instead.
+    boolean eligibleForUntargetedPick(long productId, SearchApiSettings s) {
+        return db.queryForObject("""
+                SELECT EXISTS (SELECT 1 FROM products p WHERE p.id=? AND status='VERIFIED' AND category='SMARTPHONE'
+                    AND NOT EXISTS (SELECT 1 FROM external_product_mapping m
+                                    WHERE m.product_id=p.id AND m.provider=? AND m.gl=? AND m.hl=? AND m.location=?))
+                """, Boolean.class, productId, SearchApiSource.PROVIDER, s.gl(), s.hl(), s.location());
+    }
+    @Test void markNoMatchExcludesTheProductFromFutureUntargetedRunsButNotOtherLocales() {
+        db.update("UPDATE products SET status='VERIFIED', category='SMARTPHONE' WHERE id=?", product);
+        var p = new SearchApiRepository.Product(product, "SearchApiTest", "model");
+        var sg = new SearchApiSettings("", "sg", "en", "Singapore", 2);
+        assertTrue(eligibleForUntargetedPick(product, sg));
+        mappings.markNoMatch(p, sg, now);
+        assertFalse(eligibleForUntargetedPick(product, sg));
+        // A different locale never attempted this product - not excluded there.
+        var us = new SearchApiSettings("", "us", "en", "USA", 2);
+        assertTrue(eligibleForUntargetedPick(product, us));
     }
 }

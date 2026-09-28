@@ -40,7 +40,11 @@ public class SearchApiSource implements IngestionSource {
         // means the controller couldn't resolve an existing catalogue match, and this never creates
         // one itself (see ProductMatcher.matchCatalogue / SearchApiRepository.namedProducts). Falls
         // through to the same NO_ELIGIBLE_PRODUCT failure as any other unmatched target.
-        var products = context.product() == null ? repository.products(settings.maxProductsPerRun())
+        boolean untargeted = context.product() == null;
+        // Untargeted mode excludes products already attempted for this provider/locale (VALID
+        // or INVALID) - otherwise it re-picks the same oldest-by-id product forever once one
+        // exists, and never advances through the rest of the catalogue.
+        var products = untargeted ? repository.products(settings)
                 : context.product().productId() == null ? List.<SearchApiRepository.Product>of()
                 : repository.eligibleProduct(context.product().productId()).stream()
                     .filter(p -> p.name().equals(context.product().productName())).toList();
@@ -50,7 +54,22 @@ public class SearchApiSource implements IngestionSource {
             String selectedExternalId = context.product() == null ? null : context.product().externalProductId();
             var cached = selectedExternalId == null ? repository.token(product, settings)
                     : java.util.Optional.<String>empty();
-            String token = cached.isPresent() ? cached.get() : discover(context, product, selectedExternalId);
+            String token;
+            if (cached.isPresent()) token = cached.get();
+            else {
+                try { token = discover(context, product, selectedExternalId); }
+                catch (IngestionFailure noMatch) {
+                    // A targeted (admin-named) run should fail loudly - the admin asked for this
+                    // exact product. Untargeted mode records the attempt (so the next automatic
+                    // run picks a different product instead of retrying this one forever) and
+                    // just moves on - no real Google listing for a product is a legitimate
+                    // outcome, not an error.
+                    if (!untargeted || (noMatch.code() != SEARCHAPI_NO_MATCH && noMatch.code() != SEARCHAPI_AMBIGUOUS_MATCH))
+                        throw noMatch;
+                    repository.markNoMatch(product, settings, context.now());
+                    continue;
+                }
+            }
             JsonNode[] pages;
             try { pages = fetch(context, token); }
             catch (IngestionFailure failure) {

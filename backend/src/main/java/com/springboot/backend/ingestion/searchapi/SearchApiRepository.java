@@ -14,10 +14,22 @@ public class SearchApiRepository {
     public record Product(long id, String brand, String model) {
         public String name() { return brand + " " + model; }
     }
-    public List<Product> products(int limit) {
-        return db.query("SELECT id, brand, model_name FROM products WHERE status='VERIFIED' "
-                + "AND category='SMARTPHONE' ORDER BY id LIMIT ?",
-                (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)), limit);
+    /**
+     * Excludes products already attempted for this provider/locale (VALID or
+     * INVALID row in external_product_mapping) - otherwise the untargeted
+     * picker re-selects the same oldest-by-id product forever once one
+     * mapping row exists, and never advances through the rest of the
+     * catalogue. See SearchApiSource.ingest()/markNoMatch().
+     */
+    public List<Product> products(SearchApiSettings s) {
+        return db.query("""
+                SELECT id, brand, model_name FROM products p
+                WHERE status='VERIFIED' AND category='SMARTPHONE'
+                  AND NOT EXISTS (SELECT 1 FROM external_product_mapping m
+                                  WHERE m.product_id=p.id AND m.provider=? AND m.gl=? AND m.hl=? AND m.location=?)
+                ORDER BY id LIMIT ?
+                """, (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)),
+                SearchApiSource.PROVIDER, s.gl(), s.hl(), s.location(), s.maxProductsPerRun());
     }
     public Optional<Product> eligibleProduct(long productId) {
         return db.query("SELECT id, brand, model_name FROM products WHERE id=? "
@@ -73,6 +85,29 @@ public class SearchApiRepository {
                 m.externalId(), m.token(), m.title(),
                 p.name(), Timestamp.from(now), Timestamp.from(now));
     }
+    /**
+     * Records "we looked, there is no valid Google listing for this
+     * product" so the untargeted picker in products() doesn't retry it
+     * every run forever. external_product_id/matched_title are NOT NULL
+     * with nothing real to put there for a no-match outcome - uses the
+     * same sentinel as a documented placeholder, exactly like an INVALID
+     * row from invalidate() already means "don't trust the detail columns,
+     * only the status/timestamps are meaningful."
+     */
+    private static final String NO_MATCH_SENTINEL = "NO_MATCH_FOUND";
+
+    public void markNoMatch(Product p, SearchApiSettings s, Instant now) {
+        db.update("""
+                INSERT INTO external_product_mapping
+                  (product_id,provider,gl,hl,location,external_product_id,product_token,matched_title,
+                   canonical_name,matched_at,last_verified_at,status)
+                VALUES (?,?,?,?,?,?,NULL,?,?,?,?,'INVALID')
+                ON CONFLICT (product_id,provider,gl,hl,location) DO UPDATE SET
+                  last_verified_at=EXCLUDED.last_verified_at, status='INVALID'
+                """, p.id(), SearchApiSource.PROVIDER, s.gl(), s.hl(), s.location(),
+                NO_MATCH_SENTINEL, NO_MATCH_SENTINEL, p.name(), Timestamp.from(now), Timestamp.from(now));
+    }
+
     public void invalidate(Product p, SearchApiSettings s) {
         db.update("""
                 UPDATE external_product_mapping SET status='INVALID', product_token=NULL

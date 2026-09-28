@@ -135,7 +135,7 @@ class SearchApiTests {
     @Test void discoveryCachedTokenAndSingleInvalidationRetry() throws Exception {
         var repository = mock(SearchApiRepository.class);
         var client = mock(SearchApiClient.class);
-        when(repository.products(1)).thenReturn(List.of(product));
+        when(repository.products(settings)).thenReturn(List.of(product));
         when(repository.token(product, settings)).thenReturn(Optional.empty());
         when(client.shopping(any(), eq(product.name()))).thenReturn(shopping());
         when(client.reviews(any(), anyString(), anyString())).thenReturn(reviews("5 months ago"));
@@ -160,6 +160,40 @@ class SearchApiTests {
             when(client.reviews(context, "token", "most_relevant")).thenThrow(new IngestionFailure(SEARCHAPI_INVALID_TOKEN));
             assertThrows(IngestionFailure.class, () -> source.ingest(context, output::add));
             verify(client).shopping(context, product.name());
+        }
+    }
+
+    @Test void untargetedNoMatchRecordsAttemptAndMovesOnRatherThanFailingTheRun() throws Exception {
+        // Without this, an untargeted run re-picks the same product forever once no real Google
+        // listing exists for it - never advances through the rest of the catalogue.
+        var repository = mock(SearchApiRepository.class);
+        var client = mock(SearchApiClient.class);
+        when(repository.products(settings)).thenReturn(List.of(product));
+        when(repository.token(product, settings)).thenReturn(Optional.empty());
+        when(client.shopping(any(), eq(product.name()))).thenReturn(json.createArrayNode());
+        var source = new SearchApiSource(settings, repository, client, new IngestionSettings(false, null, List.of()));
+        try (var context = new SourceContext(Clock.fixed(now, ZoneOffset.UTC), () -> {})) {
+            var output = new ArrayList<Payload>();
+            assertDoesNotThrow(() -> source.ingest(context, output::add));
+            assertTrue(output.isEmpty());
+            verify(repository).markNoMatch(product, settings, now);
+            verify(repository, never()).cache(any(), any(), any(), any());
+        }
+    }
+
+    @Test void targetedNoMatchStillFailsLoudlyRatherThanSilentlySkipping() throws Exception {
+        // An admin explicitly asked for this exact product - a silent skip would be misleading.
+        var repository = mock(SearchApiRepository.class);
+        var client = mock(SearchApiClient.class);
+        when(repository.eligibleProduct(product.id())).thenReturn(Optional.of(product));
+        when(repository.token(product, settings)).thenReturn(Optional.empty());
+        when(client.shopping(any(), eq(product.name()))).thenReturn(json.createArrayNode());
+        var source = new SearchApiSource(settings, repository, client, new IngestionSettings(false, null, List.of()));
+        var target = new com.springboot.backend.ingestion.run.RunLog.ProductTarget(product.id(), product.name());
+        try (var context = new SourceContext(Clock.fixed(now, ZoneOffset.UTC), () -> {}, target)) {
+            var failure = assertThrows(IngestionFailure.class, () -> source.ingest(context, p -> fail("no payload expected")));
+            assertEquals(SEARCHAPI_NO_MATCH, failure.code());
+            verify(repository, never()).markNoMatch(any(), any(), any());
         }
     }
 
