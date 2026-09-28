@@ -1,5 +1,6 @@
 package com.springboot.backend.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -12,28 +13,34 @@ import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+@Schema(description = "Owned-device fields. Supply at least one of productId or customName.")
 public class DeviceRequest {
 
+    @Schema(description = "Verified catalogue product identifier, when the device is known.", example = "812")
     @Positive(message = "Product ID must be positive")
     private Long productId;
 
+    @Schema(description = "User-provided device name, required when productId is omitted.", example = "My Galaxy S22", maxLength = 100)
     @Size(
             max = 100,
             message = "Custom name must not exceed 100 characters"
     )
     private String customName;
 
+    @Schema(description = "Purchase date; future dates are rejected.", example = "2024-02-15")
     @PastOrPresent(
             message = "Purchase date cannot be in the future"
     )
     private LocalDate purchaseDate;
 
+    @Schema(description = "User-described physical condition.", example = "FAIR", maxLength = 50)
     @Size(
             max = 50,
             message = "Condition must not exceed 50 characters"
     )
     private String condition;
 
+    @Schema(description = "Current satisfaction from 0 to 100.", example = "45", minimum = "0", maximum = "100")
     @Min(
             value = 0,
             message = "Satisfaction score must be at least 0"
@@ -44,8 +51,16 @@ public class DeviceRequest {
     )
     private Integer satisfactionScore;
 
+    @Schema(
+            description = "JSON-encoded array of use cases.",
+            example = "[\"photography\",\"gaming\"]",
+            defaultValue = "[]")
     private String useCases = "[]";
 
+    @Schema(
+            description = "JSON-encoded object containing user-supplied specification overrides.",
+            example = "{\"storage_gb\":256}",
+            defaultValue = "{}")
     private String specOverrides = "{}";
 
     /**
@@ -53,6 +68,10 @@ public class DeviceRequest {
      * for recommendations until it has one (AGENTS.md §27.10). Null leaves any
      * existing preferences untouched.
      */
+    @Schema(
+            description = "Device-specific upgrade budget; recommendations require a budget.",
+            example = "1200.00",
+            minimum = "0")
     @PositiveOrZero(message = "Budget must not be negative")
     @Digits(
             integer = 10,
@@ -62,6 +81,10 @@ public class DeviceRequest {
     private BigDecimal budget;
 
     /** ISO 4217 code for the budget. Defaults to SGD when a budget is given without one. */
+    @Schema(
+            description = "Three-letter ISO 4217 budget currency; defaults to SGD when a budget is supplied.",
+            example = "SGD",
+            pattern = "[A-Z]{3}")
     @Pattern(
             regexp = "[A-Z]{3}",
             message = "Currency must be a 3-letter ISO code"

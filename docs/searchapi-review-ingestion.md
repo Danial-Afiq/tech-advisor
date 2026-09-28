@@ -111,23 +111,26 @@ SEARCHAPI_MAX_PRODUCTS_PER_RUN=1
 INGESTION_ENABLED_SOURCES=searchapi-google-product-reviews
 INGESTION_SCHEDULING_ENABLED=false
 
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=replace-with-a-private-password
+JWT_SECRET=replace-with-at-least-32-bytes-of-random-secret
+
 AI_SERVICE_URL=http://localhost:8000
 AI_SERVICE_TOKEN=shared-private-token
 AI_INGESTION_EMBEDDER=minishlab/potion-retrieval-32M
 VECTOR_STORE=pgvector
 EMBEDDER=model2vec
 
-VITE_INGESTION_DEMO=true
 VITE_API_BASE_URL=http://localhost:18087
 ```
 
 `SEARCHAPI_MAX_PRODUCTS_PER_RUN` defaults to 1 and accepts at most 3 — the real
 ceiling under `SourceContext`'s 10-request-per-run budget, since each uncached
 product costs 3 requests (1 discovery + 2 review searches). Enabling the
-source without `SEARCHAPI_API_KEY` fails startup. The demo password must be at least
-12 characters, `AI_SERVICE_TOKEN` must match between Spring and FastAPI, and the JWT
-secret must meet the normal backend requirements. Restart services after `.env`
-changes.
+source without `SEARCHAPI_API_KEY` fails startup. `ADMIN_PASSWORD` must be at
+least 12 characters, `AI_SERVICE_TOKEN` must match between Spring and FastAPI,
+and the JWT secret must meet the normal backend requirements. Restart services
+after `.env` changes.
 
 ## Local run
 
@@ -159,15 +162,16 @@ $env:SERVER_PORT = '18087'
 .\mvnw.cmd spring-boot:run
 ```
 
-Then start the frontend with `npm run dev`, open
-`http://localhost:5173/admin/ingestion`, and follow this unchanged workflow:
+Then start the frontend with `npm run dev`. On this branch the legacy frontend
+URL is `http://localhost:5173/IngestionAdmin`; the routing/auth-flow branch will
+make `/admin/ingestion` canonical. With an ADMIN session already stored through
+the shared session abstraction, follow this workflow:
 
-1. Sign in as the demo admin.
-2. Check **SearchAPI customer reviews**.
-3. Enter the brand and full model name.
-4. Select **Find matching products**.
-5. Choose one exact SearchAPI product.
-6. Select **Run now** and inspect the result/history.
+1. Check **SearchAPI customer reviews**.
+2. Enter the brand and full model name.
+3. Select **Find matching products**.
+4. Choose one exact SearchAPI product.
+5. Select **Run now** and inspect the result/history.
 
 The helper below instead starts an untargeted run against an existing eligible
 catalogue phone and polls it to completion:
@@ -176,10 +180,12 @@ catalogue phone and polls it to completion:
 .\scripts\searchapi-smoke.ps1 -BaseUrl http://localhost:18087
 ```
 
-It handles Basic auth, CSRF, cookies, and a fresh idempotency key. It never reads or
-sends the SearchAPI key directly. A successful nonempty batch reports one processed
-runner payload even when the batch contains many reviews; query the review tables for
-the review count. An unchanged rerun reports a duplicate batch and writes no rows.
+The helper prompts for the configured administrator credentials, obtains a JWT
+from `POST /api/auth/admin/login`, and sends that bearer token with a fresh
+idempotency key. It never reads or sends the SearchAPI key directly. A successful
+nonempty batch reports one processed runner payload even when the batch contains
+many reviews; query the review tables for the review count. An unchanged rerun
+reports a duplicate batch and writes no rows.
 
 ## Verify stored reviews and vectors
 

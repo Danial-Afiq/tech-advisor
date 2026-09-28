@@ -2,6 +2,7 @@ package com.springboot.backend.ingestion.searchapi;
 
 import com.springboot.backend.ingestion.core.IngestionFailure;
 import static com.springboot.backend.ingestion.core.IngestionFailure.Code.*;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.text.Normalizer;
 import java.util.*;
 import tools.jackson.databind.JsonNode;
@@ -22,7 +23,10 @@ public final class ProductMatcher {
         public String canonicalName() { return brand + " " + model; }
     }
     public record Match(String externalId, String token, String title) {}
-    public record Candidate(String externalProductId, String title) {}
+    @Schema(name = "SearchApiCandidateResponse", description = "Validated SearchAPI product identity safe to return to an administrator.")
+    public record Candidate(
+            @Schema(example = "searchapi-product-id") String externalProductId,
+            @Schema(example = "Samsung Galaxy S25 256GB") String title) {}
     private static final Set<String> REJECT = Set.of("case", "cover", "protector", "screen", "charger",
             "cable", "replacement", "refurbished", "renewed", "used", "preowned", "pre", "bundle", "replica");
     private static final Set<String> SUFFIX = Set.of("unlocked", "locked", "new", "smartphone", "phone",

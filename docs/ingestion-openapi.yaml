@@ -3,37 +3,30 @@ info:
   title: Tech Advisor Ingestion API
   version: 1.0.0
   description: >-
-    ADMIN-only ingestion operations. Production routes are denied pending account-auth integration.
-    The localhost ingestion-demo profile supports Basic authentication and session CSRF tokens.
+    ADMIN-only ingestion operations authenticated with the application's normal bearer JWT.
+    The ingestion-demo profile only enables simulated sources; it does not change authentication.
 servers:
   - url: http://localhost:8080
 security:
-  - demoBasic: []
+  - bearerAuth: []
 paths:
   /api/admin/ingestion/session:
     get:
-      summary: Read authenticated identity and CSRF token
+      summary: Read the authenticated administrator identity
       responses:
         '200':
-          description: Save the session cookie; use csrfHeader and csrfToken on POST requests.
+          description: Authenticated administrator
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   username: { type: string }
-                  csrfHeader: { type: string }
-                  csrfToken: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /api/admin/ingestion/searchapi/candidates:
     post:
       summary: Find validated SearchAPI products for manual selection
-      parameters:
-        - in: header
-          name: X-CSRF-TOKEN
-          required: true
-          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -70,10 +63,6 @@ paths:
           name: Idempotency-Key
           required: true
           schema: { type: string, pattern: '^[A-Za-z0-9_-]{8,128}$' }
-        - in: header
-          name: X-CSRF-TOKEN
-          required: true
-          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -94,9 +83,8 @@ paths:
                   description: >-
                     Optional for SearchAPI manual runs. Brand followed by the full model, ignoring repeated
                     whitespace. When present, externalProductId is required. Existing eligible smartphones
-                    resolve before admission. An unknown name is admitted for asynchronous validation and
-                    created only after the selected identity is revalidated. Omission/null retains
-                    source-default product selection.
+                    resolve before admission. An unknown name is rejected because MobileAPI is the sole
+                    source of catalogue products. Omission/null retains source-default product selection.
                 externalProductId:
                   type: string
                   nullable: true
@@ -195,8 +183,8 @@ paths:
                 type: object
                 properties:
                   enabled: { type: boolean }
-                  intervalDays: { type: integer, enum: [14] }
-                  intervalHours: { type: integer, enum: [336] }
+                  intervalDays: { type: integer, enum: [2] }
+                  intervalHours: { type: integer, enum: [48] }
                   anchor: { type: string, format: date-time, nullable: true }
                   nextScheduledAt: { type: string, format: date-time, nullable: true }
                   activeRunId: { type: string, nullable: true }
@@ -205,13 +193,14 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
 components:
   securitySchemes:
-    demoBasic:
+    bearerAuth:
       type: http
-      scheme: basic
-      description: Local demo only. Replace with account authentication before production activation.
+      scheme: bearer
+      bearerFormat: JWT
+      description: Signed account JWT whose role claim and current database account both resolve to ADMIN.
   responses:
     Unauthorized: { description: Authentication required }
-    Forbidden: { description: Non-admin, invalid CSRF token, or production access not yet enabled }
+    Forbidden: { description: Authenticated account does not have the ADMIN role }
     Invalid: { description: Invalid source selection, request, or pagination }
     Unavailable: { description: Run storage unavailable }
   schemas:
@@ -241,7 +230,7 @@ components:
         product:
           type: object
           nullable: true
-          description: Existing canonical product or durable new-product discovery target; included in idempotency comparison and preserved across dispatch/restarts.
+          description: Existing canonical product plus an optional admin-selected provider identity; included in idempotency comparison and preserved across dispatch/restarts.
           properties:
             productId: { type: integer, format: int64, nullable: true }
             productName: { type: string }

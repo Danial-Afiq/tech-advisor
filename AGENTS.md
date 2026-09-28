@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 27 September 2026
+> **Last consolidated:** 28 September 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -393,6 +393,7 @@ changing any page.
 - Spring Data JPA
 - Spring Security
 - Spring Boot Actuator
+- springdoc-openapi 3.1.1
 - Flyway
 - PostgreSQL driver
 
@@ -428,9 +429,22 @@ still open (see §27.9).
 - Docker Compose locally
 - Flyway migrations
 
-## 5.6 Required API docs
-- Swagger / OpenAPI for Spring Boot routes
-- Swagger UI must be demoable for Week 7
+## 5.6 API documentation — IMPLEMENTED
+
+- Springdoc OpenAPI 3.1.1 generates the Spring Boot contract.
+- Swagger UI is served at `/swagger-ui.html`; JSON is served at `/v3/api-docs`.
+- Both documentation endpoints are intentionally unauthenticated so the Week 7
+  demo and deployed API contract are reachable. Documented operations retain
+  their runtime security.
+- Authentication, profile, owned-device, and admin-ingestion routes include
+  their HTTP methods, request/response schemas, expected status codes, and
+  security requirements.
+- Swagger UI defines `bearerAuth` for account JWTs. Profile and owned-device
+  operations require a USER JWT; admin-ingestion operations require an ADMIN
+  JWT obtained from `POST /api/auth/admin/login`. There is no separate Basic
+  authentication or CSRF flow for ingestion.
+- `OpenApiDocumentationTests` protects the UI/API-doc availability and the
+  generated route, schema, security, and response-status contract in CI.
 
 ---
 
@@ -1735,8 +1749,12 @@ Current frontend contains an ingestion admin panel.
 Known route:
 
 ```text
-/admin/ingestion
+/IngestionAdmin
 ```
+
+The canonical `/admin/ingestion` route and shared ADMIN login flow are being
+implemented separately on `fix/frontend-routing-auth-flow`; until that work is
+merged, the source tree still exposes the legacy route above.
 
 Production admin authentication uses JWTs issued by
 `POST /api/auth/admin/login`. The configured administrator is bootstrapped into

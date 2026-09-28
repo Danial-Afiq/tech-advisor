@@ -262,9 +262,12 @@ as one deliberate change across all components, not piecemeal.
   Sign up calls `POST /api/auth/register`, then logs in. Log in calls
   `POST /api/auth/login`. Both then go to `/DevicesPageTest`. The backend
   stores only email + password, so there is no name field.
-- **Not yet migrated:** `IngestionAdmin.tsx` (uses its own
-  `IngestionAdmin.css`), `pages/ThingieMagiggie.tsx`. When
-  you touch one of these, move it onto the shared components.
+- `IngestionAdmin.tsx` now uses `ThemeRoot` and the shared UI components. It
+  reads the normal ADMIN JWT through `api/session.ts`; there is no separate
+  demo password or ingestion-specific login. Its route remains the legacy
+  `/IngestionAdmin` until the separate routing/auth-flow work lands.
+- **Not yet migrated:** `pages/ThingieMagiggie.tsx`. When you touch it, move it
+  onto the shared components.
 - `DeviceResponse` does not yet include the product category, the `phone`
   specs or the device preferences, and there is no endpoint for them. Until
   the backend adds them, pass them to `deviceFromApi` via `extras`. When the
