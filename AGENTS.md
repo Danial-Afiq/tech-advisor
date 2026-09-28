@@ -1650,11 +1650,17 @@ Known route:
 /admin/ingestion
 ```
 
-Current local/demo auth is intentionally temporary.
+Production admin authentication uses JWTs issued by
+`POST /api/auth/admin/login`. The configured administrator is bootstrapped into
+the `users` table with the `ADMIN` role when the application starts, and the
+stored password is hashed.
 
-Production routes should remain protected until the real account/auth ticket supplies a trusted `ADMIN` identity.
+The JWT authentication filter verifies the token signature, subject and role,
+then confirms that the corresponding database account still exists with the
+same role. Routes under `/api/admin/**` require `ROLE_ADMIN`.
 
-Do not ship the demo Basic Auth mechanism as the final production auth system.
+The ingestion demo profile may still use its separate demo-only protection.
+Do not treat that mechanism as the production administrator login.
 
 ---
 
@@ -1921,8 +1927,9 @@ Behaviour:
 - triggered only after CI on `main`,
 - deploy runs only if CI succeeded,
 - checks out the exact SHA that passed CI,
-- fails before deployment unless `JWT_SECRET` and the three
-  `SPRING_DATASOURCE_*` secret names are present in Fly,
+- fails before deployment unless `JWT_SECRET`, `ADMIN_EMAIL`,
+  `ADMIN_PASSWORD`, and the three `SPRING_DATASOURCE_*` secret names are
+  present in Fly,
 - uses `flyctl deploy --remote-only`,
 - deploys backend from `backend/`,
 - uses GitHub secret `FLY_API_TOKEN`,
@@ -2150,6 +2157,8 @@ INGESTION_ANCHOR
 INGESTION_ENABLED_SOURCES
 JWT_SECRET
 JWT_EXPIRATION_SECONDS    # optional; defaults to 3600 and must be positive
+ADMIN_EMAIL               # required bootstrap administrator email
+ADMIN_PASSWORD            # required; minimum 12 characters
 ```
 
 `AI_API_KEY` and `INGESTION_DEMO_PASSWORD` appeared in an earlier version of this
@@ -2209,6 +2218,8 @@ SPRING_DATASOURCE_PASSWORD
 CORS_ALLOWED_ORIGINS
 JWT_SECRET
 JWT_EXPIRATION_SECONDS  # optional; defaults to 3600 and must be positive
+ADMIN_EMAIL             # required bootstrap administrator email
+ADMIN_PASSWORD          # required; minimum 12 characters
 AI_SERVICE_TOKEN        # Spring's half of the shared secret for POST /assess
 ```
 
