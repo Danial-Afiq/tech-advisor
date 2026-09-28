@@ -2275,7 +2275,8 @@ SEARCHAPI_API_KEY          # backend only; required only when source enabled
 SEARCHAPI_GL               # sg
 SEARCHAPI_HL               # en
 SEARCHAPI_LOCATION         # Singapore
-SEARCHAPI_MAX_PRODUCTS_PER_RUN # 1 (allowed 1–2)
+SEARCHAPI_MAX_PRODUCTS_PER_RUN # 1 (allowed 1-3; SourceContext's 10-request/run cap and
+                                # 3 requests/uncached product make 3 the real ceiling)
 AI_INGESTION_EMBEDDER       # minishlab/potion-retrieval-32M
 JWT_SECRET
 JWT_EXPIRATION_SECONDS    # optional; defaults to 3600 and must be positive
