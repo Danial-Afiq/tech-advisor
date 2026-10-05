@@ -163,12 +163,6 @@
 							the AI step mock AiAssessmentClient and set this back to true.
 						-->
 						<recommendation.triggers.ai-assessment-enabled>false</recommendation.triggers.ai-assessment-enabled>
-						<!--
-							Spring caches every distinct test context, each with its own Hikari
-							pool (10 connections by default). With a dozen contexts the suite
-							exceeds PostgreSQL's default max_connections (100), locally and in CI.
-						-->
-						<spring.datasource.hikari.maximum-pool-size>4</spring.datasource.hikari.maximum-pool-size>
 					</systemPropertyVariables>
 				</configuration>
 			</plugin>

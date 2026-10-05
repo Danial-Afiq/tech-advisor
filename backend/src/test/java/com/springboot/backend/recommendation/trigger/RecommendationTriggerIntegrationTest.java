@@ -31,6 +31,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -51,6 +52,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
     // Off for the test phase by default (pom.xml); safe here because the client is mocked.
     "recommendation.triggers.ai-assessment-enabled=true"
 })
+// This class's mocks give it a context no other class shares. Closing it afterwards
+// releases its connection pool instead of holding it for the rest of the suite.
+@DirtiesContext
 class RecommendationTriggerIntegrationTest {
 
     private static final OffsetDateTime OBSERVED = OffsetDateTime.of(2026, 9, 1, 0, 0, 0, 0, ZoneOffset.UTC);

@@ -2693,10 +2693,15 @@ Tests also clear live source selection/SearchAPI credentials and disable schedul
 fixture tests supply their own source configuration. The test phase also sets
 `recommendation.triggers.ai-assessment-enabled=false`, because the root `.env` carries
 a live `AI_SERVICE_TOKEN` and a trigger with a complete request would make a billed
-call; tests that cover the AI step mock `AiAssessmentClient` and turn it back on. It
-caps `spring.datasource.hikari.maximum-pool-size` at 4, since every cached test context
-holds its own pool and a dozen contexts otherwise exceed PostgreSQL's default
-`max_connections` (100). AI pgvector tests now require
+call; tests that cover the AI step mock `AiAssessmentClient` and turn it back on.
+
+Every distinct Spring test context is cached for the rest of the run with its own
+Hikari pool (10 connections), and the suite is close to PostgreSQL's default
+`max_connections` (100). A test class whose `@MockitoBean`s, properties or
+`@DynamicPropertySource` give it a context nobody else shares should carry
+`@DirtiesContext`, so its pool is released when the class finishes, rather than the
+pool size being reduced for everyone. Prefer reusing an existing property set where
+the test allows it. AI pgvector tests now require
 `TEST_DATABASE_URL` pointing to an actual database ending `_test` and optionally
 `TEST_EMBEDDING_MODEL_PATH` for baked weights.
 

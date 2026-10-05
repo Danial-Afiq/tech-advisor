@@ -21,6 +21,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -40,6 +41,9 @@ import org.springframework.web.context.WebApplicationContext;
         "admin.email=test-admin@example.com",
         "admin.password=test-admin-password"
 })
+// This class's mocks give it a context no other class shares. Closing it afterwards
+// releases its connection pool instead of holding it for the rest of the suite.
+@DirtiesContext
 class TriggerAdminEndpointsTest {
 
     @Autowired WebApplicationContext web;
