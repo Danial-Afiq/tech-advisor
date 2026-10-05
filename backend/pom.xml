@@ -156,6 +156,19 @@
 						<ingestion.enabled-sources></ingestion.enabled-sources>
 						<ingestion.scheduling-enabled>false</ingestion.scheduling-enabled>
 						<searchapi.api-key></searchapi.api-key>
+						<!--
+							Recommendation triggers must never reach a real AI service from a
+							test: the repo-root .env carries a live AI_SERVICE_TOKEN, so a
+							complete request would be a billed model call. Tests that exercise
+							the AI step mock AiAssessmentClient and set this back to true.
+						-->
+						<recommendation.triggers.ai-assessment-enabled>false</recommendation.triggers.ai-assessment-enabled>
+						<!--
+							Spring caches every distinct test context, each with its own Hikari
+							pool (10 connections by default). With a dozen contexts the suite
+							exceeds PostgreSQL's default max_connections (100), locally and in CI.
+						-->
+						<spring.datasource.hikari.maximum-pool-size>4</spring.datasource.hikari.maximum-pool-size>
 					</systemPropertyVariables>
 				</configuration>
 			</plugin>

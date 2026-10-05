@@ -36,6 +36,7 @@ class SmartphoneCatalogSinkTests {
     @BeforeEach void reset() {
         assertTrue(db.queryForObject("SELECT current_database()", String.class).endsWith("_test"),
                 "Integration tests require a dedicated database whose name ends in _test");
+        db.update("DELETE FROM market_events");
         db.update("DELETE FROM phone");
         db.update("DELETE FROM products");
     }
@@ -113,5 +114,19 @@ class SmartphoneCatalogSinkTests {
         var phone = db.queryForMap("SELECT * FROM phone p JOIN products pr ON pr.id = p.product_id "
                 + "WHERE pr.brand = 'BLU' AND pr.model_name = 'G5'");
         assertEquals("Snapdragon", phone.get("chipset"));
+    }
+
+    @Test void aNewProductRecordsOneLaunchEventAndReingestingRecordsNone() {
+        var payload = specPayload("1", "BLU", "G5", "Snapdragon",
+                Map.of("ram", new BigDecimal("4")), Map.of("ram", "GB"));
+        sink.accept("run-1", payload);
+        sink.accept("run-2", payload);
+
+        Long productId = db.queryForObject(
+                "SELECT id FROM products WHERE brand = 'BLU' AND model_name = 'G5'", Long.class);
+        var events = db.queryForList("SELECT event_type, source FROM market_events WHERE product_id = ?", productId);
+        assertEquals(1, events.size(), "only the first sighting is a launch");
+        assertEquals("PRODUCT_LAUNCH", events.getFirst().get("event_type"));
+        assertEquals("mobileapi-smartphone", events.getFirst().get("source"));
     }
 }

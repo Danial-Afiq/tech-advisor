@@ -74,7 +74,7 @@ public class DeviceService {
         applyBudget(savedDevice.getId(), request);
 
         eventPublisher.publishEvent(
-                new DeviceInventoryChanged(savedDevice.getId())
+                new DeviceInventoryChanged(savedDevice.getId(), DeviceInventoryChanged.Change.ADDED)
         );
 
         return new DeviceResponse(savedDevice);
@@ -142,7 +142,7 @@ public class DeviceService {
         applyBudget(savedDevice.getId(), request);
 
         eventPublisher.publishEvent(
-                new DeviceInventoryChanged(savedDevice.getId())
+                new DeviceInventoryChanged(savedDevice.getId(), DeviceInventoryChanged.Change.UPDATED)
         );
 
         return new DeviceResponse(savedDevice);
