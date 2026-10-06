@@ -1780,7 +1780,9 @@ USER sessions, `/admin/ingestion` and `/admin/catalogue` accept ADMIN sessions,
 and `/login` redirects an existing session to its role-appropriate page. `/DevicesPageTest` and
 `/IngestionAdmin` are compatibility redirects only. The admin ingestion page
 signs out by clearing the shared frontend session and replacing the route with
-`/login`.
+`/login`. The two ADMIN pages share the responsive `AdminShell` sidebar, with
+navigation between manual ingestion and catalogue management and a sign-out
+control in the profile card.
 
 Ticket 1.7 implements authenticated smartphone catalogue reads at
 `/api/catalogue/smartphones` and `/api/catalogue/smartphones/{id}` for USER and

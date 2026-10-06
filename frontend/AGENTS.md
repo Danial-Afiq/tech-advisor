@@ -82,7 +82,7 @@ Reach for these first. All are named exports.
 
 ### `components/layout/` — app frame
 
-`AppShell`, `ThemeRoot`, `Sidebar`, `Topbar`, `NotificationButton`,
+`AppShell`, `AdminShell`, `ThemeRoot`, `Sidebar`, `Topbar`, `NotificationButton`,
 `ProfileCard`, `BrandMark`, and `theme.ts` (the daisyUI theme variables).
 
 ### `components/auth/` — accounts
@@ -268,15 +268,16 @@ as one deliberate change across all components, not piecemeal.
   `POST /api/auth/login` for USER and ADMIN accounts, then routes by the returned
   role. The backend stores only email + password, so there is no name field.
 - `IngestionAdmin.tsx` uses the shared UI components and the application's ADMIN
-  session only. It has no ingestion-specific password gate and signs out through
-  `api/auth.ts`. SearchAPI review ingestion adds a validated product picker to
-  the same authenticated page. It still uses `ThemeRoot` rather than the full
-  signed-in `AppShell`.
+  session only. It has no ingestion-specific password gate. SearchAPI review
+  ingestion adds a validated product picker to the same authenticated page.
 - `pages/AdminCatalogue.tsx` is the separate ADMIN-only `/admin/catalogue` page.
   Ticket 1.7 intentionally provides only a protected page shell; it does not yet
   call the catalogue API or render the full management form. Catalogue GET routes
   are available to authenticated USER and ADMIN accounts, while mutations remain
   ADMIN-only.
+- Both admin pages use `AdminShell`, which supplies the same responsive sidebar
+  treatment as user pages, navigation between manual ingestion and catalogue,
+  and the profile-card sign-out control.
 - **Not yet migrated:** `pages/ThingieMagiggie.tsx`. When you touch it, move it
   onto the shared components.
 - `DeviceResponse` does not yet include the product category, the `phone`
