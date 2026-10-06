@@ -274,7 +274,9 @@ as one deliberate change across all components, not piecemeal.
   signed-in `AppShell`.
 - `pages/AdminCatalogue.tsx` is the separate ADMIN-only `/admin/catalogue` page.
   Ticket 1.7 intentionally provides only a protected page shell; it does not yet
-  call the catalogue CRUD API or render the full management form.
+  call the catalogue API or render the full management form. Catalogue GET routes
+  are available to authenticated USER and ADMIN accounts, while mutations remain
+  ADMIN-only.
 - **Not yet migrated:** `pages/ThingieMagiggie.tsx`. When you touch it, move it
   onto the shared components.
 - `DeviceResponse` does not yet include the product category, the `phone`

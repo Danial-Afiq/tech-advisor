@@ -436,12 +436,13 @@ still open (see §27.9).
 - Both documentation endpoints are intentionally unauthenticated so the Week 7
   demo and deployed API contract are reachable. Documented operations retain
   their runtime security.
-- Authentication, profile, owned-device, admin-ingestion, and admin-catalogue routes include
+- Authentication, profile, owned-device, catalogue, and admin routes include
   their HTTP methods, request/response schemas, expected status codes, and
   security requirements.
-- Swagger UI defines `bearerAuth` for account JWTs. Profile and owned-device
-  operations require a USER JWT; admin-ingestion and admin-catalogue operations require an ADMIN
-  JWT. `POST /api/auth/login` authenticates both USER and ADMIN accounts and
+- Swagger UI defines `bearerAuth` for account JWTs. Smartphone catalogue reads
+  require any authenticated USER or ADMIN JWT; catalogue mutations, ingestion,
+  and all other `/api/admin/**` operations require an ADMIN JWT.
+  `POST /api/auth/login` authenticates both USER and ADMIN accounts and
   returns the actual role; `POST /api/auth/admin/login` remains as a compatible
   admin-only endpoint. There is no separate Basic authentication or CSRF flow
   for ingestion.
@@ -1781,7 +1782,9 @@ and `/login` redirects an existing session to its role-appropriate page. `/Devic
 signs out by clearing the shared frontend session and replacing the route with
 `/login`.
 
-Ticket 1.7 implements smartphone catalogue CRUD at
+Ticket 1.7 implements authenticated smartphone catalogue reads at
+`/api/catalogue/smartphones` and `/api/catalogue/smartphones/{id}` for USER and
+ADMIN accounts. ADMIN-only create, update, and delete operations use
 `/api/admin/catalogue/smartphones` and `/api/admin/catalogue/smartphones/{id}`.
 The service writes the existing `products` and `phone` rows in one transaction,
 keeps `category` fixed to `SMARTPHONE`, and explicitly deletes both rows together.

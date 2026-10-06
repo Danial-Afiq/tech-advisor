@@ -32,7 +32,7 @@ export default function AdminCatalogue() {
         <EmptyState
           icon="▣"
           title="Catalogue management is ready"
-          description="The protected catalogue route and admin CRUD API are available. The interactive form is intentionally out of scope for Ticket 1.7."
+          description="The protected catalogue route and admin management API are available. The interactive form is intentionally out of scope for Ticket 1.7."
           action={
             <Button variant="secondary" onClick={() => navigate(ADMIN_HOME_PATH)}>
               Go to data ingestion

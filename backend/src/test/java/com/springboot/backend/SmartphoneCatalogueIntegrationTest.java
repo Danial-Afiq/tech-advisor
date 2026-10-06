@@ -75,13 +75,13 @@ class SmartphoneCatalogueIntegrationTest {
         assertEquals(Product.CATEGORY_SMARTPHONE, product.getCategory());
         assertTrue(phones.findById(product.getId()).isPresent());
 
-        mvc.perform(MockMvcRequestBuilders.get("/api/admin/catalogue/smartphones/{id}", product.getId())
+        mvc.perform(MockMvcRequestBuilders.get("/api/catalogue/smartphones/{id}", product.getId())
                         .header("Authorization", bearer(adminToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(product.getId()))
                 .andExpect(jsonPath("$.modelName").value(model));
 
-        mvc.perform(MockMvcRequestBuilders.get("/api/admin/catalogue/smartphones")
+        mvc.perform(MockMvcRequestBuilders.get("/api/catalogue/smartphones")
                         .header("Authorization", bearer(adminToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[?(@.id == %s)]", product.getId()).exists());
@@ -125,7 +125,45 @@ class SmartphoneCatalogueIntegrationTest {
     }
 
     @Test
-    void catalogueEndpointsRequireAdminRole() throws Exception {
+    void readEndpointsAllowUsersAndAdminsButRejectAnonymousRequests() throws Exception {
+        User user = users.save(new User(
+                "catalogue-user-" + UUID.randomUUID() + "@example.test",
+                "{noop}unused",
+                "USER"
+        ));
+        String userToken = jwtService.generateToken(user);
+        String model = "Readable Phone " + UUID.randomUUID();
+
+        mvc.perform(MockMvcRequestBuilders.post("/api/admin/catalogue/smartphones")
+                        .header("Authorization", bearer(adminToken))
+                        .contentType("application/json")
+                        .content(phoneJson("Test Brand", model, "Test Chip", 8, 256)))
+                .andExpect(status().isCreated());
+
+        Product product = products.findByBrandAndModelName("Test Brand", model).orElseThrow();
+
+        for (String token : new String[] {adminToken, userToken}) {
+            mvc.perform(MockMvcRequestBuilders.get("/api/catalogue/smartphones")
+                            .header("Authorization", bearer(token)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$[?(@.id == %s)]", product.getId()).exists());
+
+            mvc.perform(MockMvcRequestBuilders.get("/api/catalogue/smartphones/{id}", product.getId())
+                            .header("Authorization", bearer(token)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value(product.getId()))
+                    .andExpect(jsonPath("$.brand").value("Test Brand"))
+                    .andExpect(jsonPath("$.chipset").value("Test Chip"));
+        }
+
+        mvc.perform(MockMvcRequestBuilders.get("/api/catalogue/smartphones"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(MockMvcRequestBuilders.get("/api/catalogue/smartphones/{id}", product.getId()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void writeEndpointsRequireAdminRole() throws Exception {
         User user = users.save(new User(
                 "catalogue-user-" + UUID.randomUUID() + "@example.test",
                 "{noop}unused",
@@ -133,11 +171,11 @@ class SmartphoneCatalogueIntegrationTest {
         ));
         String userToken = jwtService.generateToken(user);
 
-        for (MockHttpServletRequestBuilder request : catalogueRequests()) {
+        for (MockHttpServletRequestBuilder request : writeRequests()) {
             mvc.perform(request).andExpect(status().isUnauthorized());
         }
 
-        for (MockHttpServletRequestBuilder request : catalogueRequests()) {
+        for (MockHttpServletRequestBuilder request : writeRequests()) {
             mvc.perform(request.header("Authorization", bearer(userToken)))
                     .andExpect(status().isForbidden());
         }
@@ -162,13 +200,11 @@ class SmartphoneCatalogueIntegrationTest {
         return "Bearer " + token;
     }
 
-    private MockHttpServletRequestBuilder[] catalogueRequests() {
+    private MockHttpServletRequestBuilder[] writeRequests() {
         String body = phoneJson("Test Brand", "Protected Phone", "Test Chip", 8, 256);
         return new MockHttpServletRequestBuilder[] {
                 MockMvcRequestBuilders.post("/api/admin/catalogue/smartphones")
                         .contentType("application/json").content(body),
-                MockMvcRequestBuilders.get("/api/admin/catalogue/smartphones"),
-                MockMvcRequestBuilders.get("/api/admin/catalogue/smartphones/1"),
                 MockMvcRequestBuilders.put("/api/admin/catalogue/smartphones/1")
                         .contentType("application/json").content(body),
                 MockMvcRequestBuilders.delete("/api/admin/catalogue/smartphones/1")
