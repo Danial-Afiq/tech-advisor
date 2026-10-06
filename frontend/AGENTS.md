@@ -278,6 +278,8 @@ as one deliberate change across all components, not piecemeal.
 - Both admin pages use `AdminShell`, which supplies the same responsive sidebar
   treatment as user pages, navigation between manual ingestion and catalogue,
   and the profile-card sign-out control.
+- Signed-in USER pages also sign out from the shared profile-card icon; do not
+  add a second page-level sign-out button.
 - **Not yet migrated:** `pages/ThingieMagiggie.tsx`. When you touch it, move it
   onto the shared components.
 - `DeviceResponse` does not yet include the product category, the `phone`

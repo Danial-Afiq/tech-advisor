@@ -1782,7 +1782,8 @@ and `/login` redirects an existing session to its role-appropriate page. `/Devic
 signs out by clearing the shared frontend session and replacing the route with
 `/login`. The two ADMIN pages share the responsive `AdminShell` sidebar, with
 navigation between manual ingestion and catalogue management and a sign-out
-control in the profile card.
+control in the profile card. Signed-in USER pages use the same profile-card
+sign-out control rather than a duplicate page-level button.
 
 Ticket 1.7 implements authenticated smartphone catalogue reads at
 `/api/catalogue/smartphones` and `/api/catalogue/smartphones/{id}` for USER and
