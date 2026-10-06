@@ -57,7 +57,7 @@ export default function DevicesPageTest() {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) {
           setAccount(null);
-          navigate("/login", { replace: true });
+          void navigate("/login", { replace: true });
           return;
         }
         pushToast("Couldn't load your devices", err.message, "!");
@@ -81,7 +81,7 @@ export default function DevicesPageTest() {
 
   const handleSignOut = () => {
     signOut();
-    navigate("/login", { replace: true });
+    void navigate("/login", { replace: true });
   };
 
   /** Throws on API failure so `DeviceFormModal` stays open and shows it. */

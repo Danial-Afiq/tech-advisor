@@ -36,13 +36,13 @@ export function AdminShell({
 
   const handleNavigate = (key: NavKey) => {
     if (key === "ingestion" || key === "catalogue") {
-      navigate(ADMIN_PATHS[key]);
+      void navigate(ADMIN_PATHS[key]);
     }
   };
 
   const handleSignOut = () => {
     signOut();
-    navigate(LOGIN_PATH, { replace: true });
+    void navigate(LOGIN_PATH, { replace: true });
   };
 
   return (

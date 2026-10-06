@@ -79,7 +79,7 @@ export default function IngestionAdmin() {
         if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
           clearSession()
           setAccount(null)
-          navigate('/login', { replace: true })
+          void navigate('/login', { replace: true })
         }
         else setError((e as Error).message)
       }
@@ -110,7 +110,7 @@ export default function IngestionAdmin() {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
         clearSession()
         setAccount(null)
-        navigate('/login', { replace: true })
+        void navigate('/login', { replace: true })
         return
       }
       setError((e as Error).message)
@@ -132,7 +132,7 @@ export default function IngestionAdmin() {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
         clearSession()
         setAccount(null)
-        navigate('/login', { replace: true })
+        void navigate('/login', { replace: true })
         return
       }
       setError((e as Error).message)
