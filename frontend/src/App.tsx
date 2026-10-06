@@ -7,9 +7,15 @@ import {
   SignedOutOnlyRoute,
 } from './components/auth/SessionRoute';
 import DevicesPageTest from './pages/DevicesPageTest';
+import AdminCatalogue from './pages/AdminCatalogue';
 import ThingieMagiggie from './pages/ThingieMagiggie';
 import Login from './pages/Login';
-import { ADMIN_HOME_PATH, LOGIN_PATH, USER_HOME_PATH } from './routing/paths';
+import {
+  ADMIN_CATALOGUE_PATH,
+  ADMIN_HOME_PATH,
+  LOGIN_PATH,
+  USER_HOME_PATH,
+} from './routing/paths';
 
 
 function App() {
@@ -25,6 +31,7 @@ function App() {
         </Route>
         <Route element={<RequireRole role="ADMIN" />}>
           <Route path={ADMIN_HOME_PATH} element={<IngestionAdmin />} />
+          <Route path={ADMIN_CATALOGUE_PATH} element={<AdminCatalogue />} />
         </Route>
 
         <Route path="/DevicesPageTest" element={<Navigate to={USER_HOME_PATH} replace />} />

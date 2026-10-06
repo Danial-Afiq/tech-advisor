@@ -272,6 +272,9 @@ as one deliberate change across all components, not piecemeal.
   `api/auth.ts`. SearchAPI review ingestion adds a validated product picker to
   the same authenticated page. It still uses `ThemeRoot` rather than the full
   signed-in `AppShell`.
+- `pages/AdminCatalogue.tsx` is the separate ADMIN-only `/admin/catalogue` page.
+  Ticket 1.7 intentionally provides only a protected page shell; it does not yet
+  call the catalogue CRUD API or render the full management form.
 - **Not yet migrated:** `pages/ThingieMagiggie.tsx`. When you touch it, move it
   onto the shared components.
 - `DeviceResponse` does not yet include the product category, the `phone`

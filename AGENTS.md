@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 28 September 2026
+> **Last consolidated:** 6 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -436,11 +436,11 @@ still open (see §27.9).
 - Both documentation endpoints are intentionally unauthenticated so the Week 7
   demo and deployed API contract are reachable. Documented operations retain
   their runtime security.
-- Authentication, profile, owned-device, and admin-ingestion routes include
+- Authentication, profile, owned-device, admin-ingestion, and admin-catalogue routes include
   their HTTP methods, request/response schemas, expected status codes, and
   security requirements.
 - Swagger UI defines `bearerAuth` for account JWTs. Profile and owned-device
-  operations require a USER JWT; admin-ingestion operations require an ADMIN
+  operations require a USER JWT; admin-ingestion and admin-catalogue operations require an ADMIN
   JWT. `POST /api/auth/login` authenticates both USER and ADMIN accounts and
   returns the actual role; `POST /api/auth/admin/login` remains as a compatible
   admin-only endpoint. There is no separate Basic authentication or CSRF flow
@@ -572,18 +572,20 @@ This step performs **no** embeddings, retrieval or model calls, and must stay
 that way - bounding the candidate set is what bounds every downstream AI cost.
 
 **Broad scheduled catalogue discovery remains separate work.** The filter is exercised
-by tests and seeded data. A named admin SearchAPI run can create a VERIFIED smartphone
-only after the admin selects a validated provider identity and the worker revalidates
-that choice; it does not create price observations.
+by tests and seeded data. A named admin SearchAPI run can target only an existing
+VERIFIED smartphone after the admin selects a validated provider identity and the
+worker revalidates that choice; SearchAPI does not create catalogue or price rows.
 
-**Initial catalogue population and subsequent refreshes come from MobileAPI.dev
+**Automated catalogue population and subsequent refreshes come from MobileAPI.dev
 ingestion** (ticket 1.2, `MobileApiSmartphoneSource`/`SmartphoneCatalogSink`,
 §17.1.1) — not from a static file. An earlier one-time backfill
 (`data/catalogue_backfill.json` + `scripts/backfill_catalogue.py`, 453 staged
 configurations with price and benchmark observations) was used before MobileAPI
 ingestion existed; both files were removed 28 Sep 2026 once it did. They are
 not a fallback or bootstrap path to fall back on — MobileAPI is the sole
-source of truth for `products`/`phone` rows (§17.4). Any benchmark or price
+automated feed for `products`/`phone` rows (§17.4). Ticket 1.7 adds a separate
+ADMIN-only manual CRUD path for corrections and exceptional entries; it is not
+another ingestion source. Any benchmark or price
 rows that backfill run already wrote to a given environment's database are
 unaffected by the file deletion; MobileAPI ingestion does not currently write
 benchmark data at all (§17.1.1's implemented-adapter notes), so benchmark
@@ -1745,13 +1747,14 @@ This is legitimate for:
 
 But simulated fixtures are **not** the final production data source.
 
-## 16.7 Admin ingestion UI
-Current frontend contains an ingestion admin panel.
+## 16.7 Admin routes and UI
+Current frontend contains separate ingestion and smartphone-catalogue admin pages.
 
 Known route:
 
 ```text
 /admin/ingestion
+/admin/catalogue
 ```
 
 Production authentication uses one normal login experience backed by
@@ -1772,23 +1775,32 @@ authenticates with the same signed-in session used everywhere else
 check, not a CSRF-token issuer.
 
 Frontend routes are role-guarded before their pages render. `/devices` accepts
-USER sessions, `/admin/ingestion` accepts ADMIN sessions, and `/login` redirects
-an existing session to its role-appropriate page. `/DevicesPageTest` and
+USER sessions, `/admin/ingestion` and `/admin/catalogue` accept ADMIN sessions,
+and `/login` redirects an existing session to its role-appropriate page. `/DevicesPageTest` and
 `/IngestionAdmin` are compatibility redirects only. The admin ingestion page
 signs out by clearing the shared frontend session and replacing the route with
 `/login`.
+
+Ticket 1.7 implements smartphone catalogue CRUD at
+`/api/admin/catalogue/smartphones` and `/api/admin/catalogue/smartphones/{id}`.
+The service writes the existing `products` and `phone` rows in one transaction,
+keeps `category` fixed to `SMARTPHONE`, and explicitly deletes both rows together.
+The list route returns only complete product/phone pairs so a legacy orphan row
+cannot break the whole catalogue response. The `/admin/catalogue` frontend is a
+protected page shell only; the interactive CRUD form is intentionally later work.
 
 The SearchAPI source is labelled **SearchAPI customer reviews** in the source list.
 Selecting it shows a required **Smartphone name** field. `POST
 /api/admin/ingestion/searchapi/candidates` returns up to 20 validated product titles
 and external IDs; provider product tokens never reach the browser. The admin selects
 one candidate before starting the run. The backend accepts `productName` plus that
-`externalProductId` on `POST /api/admin/ingestion/runs`. **MobileAPI is the sole
-source of truth for `products`/`phone` rows (§17.4, revised 28 Sep 2026) - an
+`externalProductId` on `POST /api/admin/ingestion/runs`. **SearchAPI never writes
+`products`/`phone`; MobileAPI is the automated feed and the admin catalogue API is
+the manual correction path (§17.4, revised 6 Oct 2026).** An
 existing exact case-insensitive, whitespace-normalized brand/model or unique
 model-only name resolves to a VERIFIED SMARTPHONE via `ProductMatcher.matchCatalogue`;
 an unknown brand/full-model name is rejected before admission rather than creating
-one.** The target persists in `RunLog.product`, participates in idempotency, survives
+one. The target persists in `RunLog.product`, participates in idempotency, survives
 restarts and appears in history. API clients omitting both fields and scheduled runs
 retain default selection. No migration is needed.
 
@@ -1824,10 +1836,11 @@ NOT a decision: the JWT is kept in `sessionStorage`, isolated in
 ## 17.1 Source strategy by data type — team decision 27 Sep 2026
 
 - **Smartphone specifications and prices:** MobileAPI.dev is the intended
-  authoritative ongoing external provider. Its integration is planned and is
-  not implemented in the current checkout. One-time and periodic ingestion
-  should write normalized data to `products`, `phone`, and `price_history`;
-  normal application requests then read PostgreSQL and do not call MobileAPI.dev.
+  authoritative ongoing external provider. Its implemented ingestion adapter
+  writes normalized data to `products` and `phone`; price persistence remains
+  separate work. Normal application requests read PostgreSQL and do not call
+  MobileAPI.dev. ADMIN catalogue CRUD is the manual correction/exception path,
+  not another external data provider.
 - **Owner reviews:** SearchAPI Google Product Reviews (§17.4).
 - **Benchmarks:** separate device-level benchmark sources and the existing
   benchmark enrichment/provenance. MobileAPI.dev is not currently established
@@ -1847,8 +1860,10 @@ The safe architectural decision is:
 - **The one-time catalogue backfill is retired, not reconciled against.**
   `data/catalogue_backfill.json` and `scripts/backfill_catalogue.py` were
   removed 28 Sep 2026 — MobileAPI.dev ingestion (§17.1.1 below) is now the
-  sole source of catalogue population and refresh (§17.4), so there is no
+  sole automated source of catalogue population and refresh (§17.4), so there is no
   competing dataset left to reconcile `SmartphoneCatalogSink` against.
+  ADMIN CRUD from ticket 1.7 is an intentional manual correction path, not a
+  second bulk dataset or ingestion adapter.
   Any rows a past backfill run already wrote to a given environment's
   database are unaffected and untouched by this — this is a documentation
   and file cleanup, not a data migration. `scripts/searchapi-smoke.ps1`
@@ -1958,15 +1973,17 @@ The owner-review source is `searchapi-google-product-reviews`. It uses the docum
 SearchAPI endpoints with Bearer authentication and Singapore localisation; it does not
 scrape. It is opt-in, and enabling it without `SEARCHAPI_API_KEY` fails startup.
 
-**MobileAPI.dev (ticket 1.2) is the sole source of truth for `products`/`phone`
-rows — SearchAPI never creates one** (revised 28 Sep 2026; it originally could, via
+**MobileAPI.dev (ticket 1.2) is the sole automated source for `products`/`phone`
+rows, and SearchAPI never creates one.** ADMIN catalogue CRUD is the only manual
+create/update/delete path (revised 6 Oct 2026; SearchAPI originally could create via
 an admin-named run — that path is removed). Manual discovery exposes validated
 titles and external IDs only. The worker revalidates the admin-selected ID before
 caching its server-only token, and an admin-typed name is matched against the
 existing catalogue via `ProductMatcher.matchCatalogue` (fuzzy, brand+model or a
 bare model name alone — same suffix tolerance already proven against Google
 Shopping titles, not exact-string equality) rather than promoted into a new row.
-No catalogue match fails closed: ingest the device via MobileAPI first. Matching
+No catalogue match fails closed: ingest the device via MobileAPI or add/correct it
+through the admin catalogue API first. Matching
 rejects accessories, used/refurbished products, conflicting models, and unknown
 wording. V7's `external_product_mapping` scopes cache entries by
 product/provider/locale/canonical name. A clearly invalid cached token gets one
@@ -2067,6 +2084,7 @@ Known files include:
 - `App.test.tsx`
 - `IngestionAdmin.tsx`
 - `IngestionAdmin.test.tsx`
+- `pages/AdminCatalogue.tsx`
 - `config.ts`
 - Vite setup
 - CSS
@@ -2686,8 +2704,8 @@ Future auth should replace temporary/demo mechanisms rather than exposing privil
 
 The Vercel project root is `frontend`, so `frontend/vercel.json` owns the SPA
 fallback. Its catch-all rewrite serves `/index.html`, allowing BrowserRouter
-routes such as `/login`, `/devices`, and `/admin/ingestion` to be entered or
-refreshed directly without a Vercel filesystem 404.
+routes such as `/login`, `/devices`, `/admin/ingestion`, and `/admin/catalogue`
+to be entered or refreshed directly without a Vercel filesystem 404.
 
 The repository configuration is the source of truth; no manual Vercel dashboard
 routing rule is required. The frontend deliberately remains on BrowserRouter,
@@ -3599,7 +3617,7 @@ Recommended doc cleanup:
 
 If only reading one section, read this:
 
-> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203, backed by a generic product catalogue with `phone` and `gpu` subtype tables for schema evolution. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. MobileAPI.dev is the planned authoritative ongoing source for smartphone specifications and prices, ingested periodically into PostgreSQL rather than called per user request. SearchAPI supplies owner reviews, while benchmarks use separate device-level sources. Other live-source choices remain open and adapters remain replaceable.
+> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203, backed by a generic product catalogue with `phone` and `gpu` subtype tables for schema evolution. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. MobileAPI.dev is the authoritative automated source for smartphone specifications and prices, while authenticated admins can manually correct the catalogue through the dedicated CRUD API. SearchAPI supplies owner reviews, while benchmarks use separate device-level sources. Other live-source choices remain open and adapters remain replaceable.
 
 ---
 
