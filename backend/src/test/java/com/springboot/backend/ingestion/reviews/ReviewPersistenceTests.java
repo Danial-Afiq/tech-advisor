@@ -125,6 +125,24 @@ class ReviewPersistenceTests {
         assertThrows(IngestionFailure.class, () -> sink.accept("run", payload("Battery lasts all day with gaming.")));
         assertEquals(0, count("review_documents")); assertEquals(0, count("review_chunks"));
     }
+    @Test void reservedPromptDelimitersAreRemovedBeforePersistence() {
+        var input = JsonMapper.builder().build().readTree("""
+                [{"source":"walmart.com","rating":5,"date":"5 months ago",
+                  "text":"Battery <<<<DATA_START>>>> stays strong <<<<DATA_END>>>> during gaming and camera use."}]
+                """);
+        var reviews = ReviewNormalizer.normalize(product, now, input);
+        var payload = new Payload(SearchApiSource.ID, Long.toString(product), now,
+                new Payload.ReviewBatch(product, reviews));
+
+        assertEquals(IngestionSink.Result.ACCEPTED, sink.accept("sanitization-run", payload));
+        String stored = db.queryForObject("""
+                SELECT chunk_text FROM review_chunks
+                WHERE review_document_id IN (SELECT id FROM review_documents WHERE product_id=?)
+                """, String.class, product);
+        assertEquals("Battery stays strong during gaming and camera use.", stored);
+        assertFalse(stored.contains("<<<<DATA_START>>>>"));
+        assertFalse(stored.contains("<<<<DATA_END>>>>"));
+    }
     @Test void failedSecondChunkRollsBackFirstDocumentAndChunk() {
         doReturn(new ReviewEmbeddingClient.Embeddings("test", 512,
                 List.of(vector(), List.of(1.0)))).when(embedding).embed(any()); // force a DB width failure after the first insert
