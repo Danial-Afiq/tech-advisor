@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { signOut } from './api/auth'
 import { apiFetch, ApiError } from './api/client'
 import { getSession, clearSession } from './api/session'
 import type { Session } from './api/session'
+import { AdminShell } from './components/layout/AdminShell'
 import { ThemeRoot } from './components/layout/ThemeRoot'
 import { Button } from './components/ui/Button'
 import { Card } from './components/ui/Card'
@@ -79,7 +79,7 @@ export default function IngestionAdmin() {
         if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
           clearSession()
           setAccount(null)
-          navigate('/login', { replace: true })
+          void navigate('/login', { replace: true })
         }
         else setError((e as Error).message)
       }
@@ -88,11 +88,6 @@ export default function IngestionAdmin() {
     void poll()
     return () => { stopped = true; clearTimeout(timer) }
   }, [account, navigate, refresh])
-
-  const handleSignOut = () => {
-    signOut()
-    navigate('/login', { replace: true })
-  }
 
   async function start() {
     if (!account) return
@@ -115,7 +110,7 @@ export default function IngestionAdmin() {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
         clearSession()
         setAccount(null)
-        navigate('/login', { replace: true })
+        void navigate('/login', { replace: true })
         return
       }
       setError((e as Error).message)
@@ -137,7 +132,7 @@ export default function IngestionAdmin() {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
         clearSession()
         setAccount(null)
-        navigate('/login', { replace: true })
+        void navigate('/login', { replace: true })
         return
       }
       setError((e as Error).message)
@@ -164,11 +159,10 @@ export default function IngestionAdmin() {
   }
 
   return (
-    <ThemeRoot>
-      <div className="mx-auto max-w-[1100px] p-7 max-[620px]:p-4">
+    <AdminShell active="ingestion" title="Market data ingestion" email={account.email}>
+      <div className="mx-auto max-w-[1100px]">
         <PageHeader eyebrow="Tech Advisor · Admin" title="Market data ingestion"
-          description="Import market updates and customer reviews for your catalogue."
-          action={<Button size="sm" variant="ghost" onClick={handleSignOut}>Sign out</Button>} />
+          description="Import market updates and customer reviews for your catalogue." />
         <FormError message={error} />
         {!ready ? <LoadingBlock label="Loading ingestion status…" /> : <>
           <div className="grid grid-cols-3 gap-4 max-[700px]:grid-cols-1">
@@ -308,6 +302,6 @@ export default function IngestionAdmin() {
           </div></Card>
         </>}
       </div>
-    </ThemeRoot>
+    </AdminShell>
   )
 }

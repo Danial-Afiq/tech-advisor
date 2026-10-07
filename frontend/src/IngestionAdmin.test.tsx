@@ -13,6 +13,7 @@ const withAppRoutes = () => render(
   <MemoryRouter initialEntries={['/admin/ingestion']}>
     <Routes>
       <Route path="/admin/ingestion" element={<IngestionAdmin />} />
+      <Route path="/admin/catalogue" element={<p>catalogue route</p>} />
       <Route path="/login" element={<p>login route</p>} />
     </Routes>
   </MemoryRouter>
@@ -78,6 +79,16 @@ describe('Ingestion admin', () => {
 
     expect(await screen.findByText('login route')).toBeInTheDocument()
     expect(getSession()).toBeNull()
+  })
+
+  it('navigates to the catalogue from the shared admin sidebar', async () => {
+    signInAsAdmin()
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => {})))
+
+    withAppRoutes()
+    await userEvent.click(screen.getByRole('button', { name: 'Catalogue' }))
+
+    expect(await screen.findByText('catalogue route')).toBeInTheDocument()
   })
 
   it('clears the session when manual ingestion is forbidden', async () => {

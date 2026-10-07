@@ -57,7 +57,7 @@ export default function DevicesPageTest() {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) {
           setAccount(null);
-          navigate("/login", { replace: true });
+          void navigate("/login", { replace: true });
           return;
         }
         pushToast("Couldn't load your devices", err.message, "!");
@@ -81,7 +81,7 @@ export default function DevicesPageTest() {
 
   const handleSignOut = () => {
     signOut();
-    navigate("/login", { replace: true });
+    void navigate("/login", { replace: true });
   };
 
   /** Throws on API failure so `DeviceFormModal` stays open and shows it. */
@@ -130,6 +130,7 @@ export default function DevicesPageTest() {
           : DEMO_USER
       }
       topbarActions={<NotificationButton unread={1} />}
+      onSignOut={account ? handleSignOut : undefined}
     >
       <PageHeader
         eyebrow="Device-specific context"
@@ -153,11 +154,7 @@ export default function DevicesPageTest() {
             "Demo mode: these devices aren't saved. Sign in to add devices to your account."
           )}
         </span>
-        {account ? (
-          <Button size="sm" variant="ghost" onClick={handleSignOut}>
-            Sign out
-          </Button>
-        ) : (
+        {!account && (
           <Button size="sm" variant="primary" onClick={() => setSigningIn(true)}>
             Sign in
           </Button>

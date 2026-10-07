@@ -15,8 +15,8 @@ import java.math.BigDecimal;
  * and shrink its coverage denominator instead of reading the absence as a
  * regression.
  *
- * <p>Read-only by design. Ingestion writes this table; the recommendation path
- * only compares it.
+ * <p>Ingestion and admin catalogue management write this table; the
+ * recommendation path only compares it.
  */
 @Entity
 @Table(name = "phone")
@@ -126,4 +126,20 @@ public class Phone {
     public String getIpRating() { return ipRating; }
     public String getOs() { return os; }
     public BigDecimal getSoftwareSupportYears() { return softwareSupportYears; }
+
+    public void setChipset(String chipset) { this.chipset = chipset; }
+    public void setRamGb(Integer ramGb) { this.ramGb = ramGb; }
+    public void setCpuGhz(BigDecimal cpuGhz) { this.cpuGhz = cpuGhz; }
+    public void setStorageGb(Integer storageGb) { this.storageGb = storageGb; }
+    public void setBatteryMah(Integer batteryMah) { this.batteryMah = batteryMah; }
+    public void setWiredChargingWatts(Integer wiredChargingWatts) { this.wiredChargingWatts = wiredChargingWatts; }
+    public void setWirelessChargingWatts(Integer wirelessChargingWatts) { this.wirelessChargingWatts = wirelessChargingWatts; }
+    public void setDisplaySizeInches(BigDecimal displaySizeInches) { this.displaySizeInches = displaySizeInches; }
+    public void setRefreshRateHz(Integer refreshRateHz) { this.refreshRateHz = refreshRateHz; }
+    public void setWeightG(Integer weightG) { this.weightG = weightG; }
+    public void setCameraSpecs(String cameraSpecs) { this.cameraSpecs = cameraSpecs; }
+    public void setPixelDensity(Integer pixelDensity) { this.pixelDensity = pixelDensity; }
+    public void setIpRating(String ipRating) { this.ipRating = ipRating; }
+    public void setOs(String os) { this.os = os; }
+    public void setSoftwareSupportYears(BigDecimal softwareSupportYears) { this.softwareSupportYears = softwareSupportYears; }
 }
