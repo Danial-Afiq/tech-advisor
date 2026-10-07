@@ -7,9 +7,13 @@ export type NavKey =
   | "devices"
   | "recommendations"
   | "activity"
-  | "settings";
+  | "settings"
+  | "ingestion"
+  | "catalogue";
 
-const NAV_ITEMS: { key: NavKey; icon: string; label: string }[] = [
+export type NavItem = { key: NavKey; icon: string; label: string };
+
+const USER_NAV_ITEMS: NavItem[] = [
   { key: "dashboard", icon: "⌂", label: "Dashboard" },
   { key: "devices", icon: "▣", label: "My devices" },
   { key: "recommendations", icon: "✦", label: "Recommendations" },
@@ -21,11 +25,15 @@ const NAV_ITEMS: { key: NavKey; icon: string; label: string }[] = [
 export function Sidebar({
   active,
   user,
+  items = USER_NAV_ITEMS,
   onNavigate,
+  onSignOut,
 }: {
   active: NavKey;
   user: ShellUser;
+  items?: readonly NavItem[];
   onNavigate?: (key: NavKey) => void;
+  onSignOut?: () => void;
 }) {
   return (
     <aside className="sticky top-0 z-10 h-screen border-r border-white/[0.09] bg-[#08101f]/80 px-4 py-[22px] backdrop-blur-[16px] max-[860px]:px-[10px] max-[860px]:py-[18px]">
@@ -34,7 +42,7 @@ export function Sidebar({
       </div>
 
       <ul className="menu mt-[10px] w-full gap-[6px] p-0">
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const isActive = item.key === active;
           return (
             <li key={item.key}>
@@ -48,7 +56,7 @@ export function Sidebar({
                     : "border-transparent text-[#95a5bb] hover:bg-white/[0.035] hover:text-white"
                 }`}
               >
-                <span className="w-5 text-center">{item.icon}</span>
+                <span className="w-5 text-center" aria-hidden="true">{item.icon}</span>
                 <span className="max-[860px]:hidden">{item.label}</span>
               </button>
             </li>
@@ -57,7 +65,7 @@ export function Sidebar({
       </ul>
 
       <div className="absolute right-4 bottom-[18px] left-4 max-[860px]:right-[10px] max-[860px]:left-[10px]">
-        <ProfileCard user={user} />
+        <ProfileCard user={user} onSignOut={onSignOut} />
       </div>
     </aside>
   );
