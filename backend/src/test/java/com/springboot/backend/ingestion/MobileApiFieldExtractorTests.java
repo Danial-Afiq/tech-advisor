@@ -84,6 +84,46 @@ class MobileApiFieldExtractorTests {
         assertTrue(MobileApiFieldExtractor.priceText(null).isEmpty());
     }
 
+    // Real text pulled directly from a live GET /devices/43/ (Apple iPhone 17 Pro), ticket 1.8 -
+    // not invented. Thin space (U+2009) between symbol and amount, same as the iPhone SE case
+    // above; comma thousands separator is the new thing this string exercises.
+    @Test void priceTextParsesCommaGroupedThousandsRatherThanTruncatingAtTheComma() {
+        var price = MobileApiFieldExtractor.priceText(
+                "€ 1,299.00 / £ 1,099.00 / ₹ 134,900").get();
+        // Before the fix, the bare \d+ in PRICE_EUR stopped at the comma and this returned 1.
+        assertEquals(new BigDecimal("1299.00"), price.amount());
+        assertEquals("EUR", price.currency());
+    }
+
+    @Test void priceTextFallsBackToInrWhenNoOtherCurrencyMatches() {
+        var price = MobileApiFieldExtractor.priceText("₹ 134,900").get();
+        assertEquals(new BigDecimal("134900"), price.amount());
+        assertEquals("INR", price.currency());
+    }
+
+    // Real text pulled directly from live GET /devices/43/ and /devices/42/ (iPhone 17 Pro /
+    // Pro Max), ticket 1.8 - MobileAPI lists every storage tier a model ships in as one
+    // free-text field, not separate records.
+    @Test void storageOptionsGbParsesTheRealCommaSeparatedTierList() {
+        assertEquals(java.util.List.of(256, 512, 1024),
+                MobileApiFieldExtractor.storageOptionsGb("256GB, 512GB, 1TB"));
+        assertEquals(java.util.List.of(256, 512, 2048),
+                MobileApiFieldExtractor.storageOptionsGb("256GB, 512GB, 2TB"));
+    }
+
+    @Test void storageOptionsGbHandlesTheRealGarbageAndBlankCases() {
+        // Real captured values, both from mobileapi-response.json - the first has the unit
+        // glued to unrelated text with no separator, the second is simply empty.
+        assertEquals(java.util.List.of(4), MobileApiFieldExtractor.storageOptionsGb("4 GBBuy memory card"));
+        assertEquals(java.util.List.of(), MobileApiFieldExtractor.storageOptionsGb(""));
+        assertEquals(java.util.List.of(), MobileApiFieldExtractor.storageOptionsGb(null));
+    }
+
+    @Test void storageOptionsGbDeduplicatesWithoutReordering() {
+        assertEquals(java.util.List.of(128, 256),
+                MobileApiFieldExtractor.storageOptionsGb("128GB, 256GB, 128GB"));
+    }
+
     @Test void cpuGhzTakesFirstClockSpeedFromMulticoreText() {
         assertEquals(new BigDecimal("2.0"),
                 MobileApiFieldExtractor.cpuGhz("Quad-core 2.0 GHz Cortex-A53").get());
