@@ -153,8 +153,9 @@ public class SmartphoneCatalogSink implements IngestionSink {
             long id = ((Number) compatible.get(0).get("id")).longValue();
             db.update(
                     "UPDATE phone_variants SET chipset = COALESCE(?, chipset), ram_gb = COALESCE(?, ram_gb), "
+                            + "storage_gb = COALESCE(?, storage_gb), "
                             + "battery_mah = COALESCE(?, battery_mah), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    chipset, ram, battery, id);
+                    chipset, ram, storageGb, battery, id);
         } else if (compatible.isEmpty()) {
             db.update(
                     "INSERT INTO phone_variants (product_id, chipset, ram_gb, storage_gb, battery_mah) "
