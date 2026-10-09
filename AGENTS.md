@@ -1394,9 +1394,10 @@ These are deterministic facts. Spring Boot should calculate differences.
 
 **Still 1:1 with `products`** (`product_id` is its own primary key) — a model
 can only ever have one row here, which is the exact limitation ticket 1.8
-addresses. `SmartphoneCatalogSink`, the ticket 1.7 admin CRUD
-(`SmartphoneCatalogueService`/`Phone`/`PhoneRepository`), and this table
-itself are all deliberately untouched by that work; see §14.5a.
+addresses. Kept exactly as-is, writable in parallel with `phone_variants` -
+`SmartphoneCatalogSink` now writes both (see §14.5a); the ticket 1.7 admin
+CRUD (`SmartphoneCatalogueService`/`Phone`/`PhoneRepository`) still reads/
+writes only this table.
 
 ## 14.5a `phone_variants` (ticket 1.8)
 
@@ -1408,15 +1409,23 @@ model_number)` — all five variant-distinguishing attributes named by the
 ticket's AC — with `NULLS NOT DISTINCT`, since no source gives a stable
 per-SKU external id to key on instead.
 
-**Not wired into product creation.** `SmartphoneCatalogSink` (MobileAPI) and
-the ticket 1.7 admin CRUD still write/read only `phone`, so neither creates a
-`phone_variants` row for a product ingested or added after this migration —
-only products that existed at migration time have one (the V8 backfill, one
-row per existing `phone` row). A product MobileAPI ingests today has zero
-variants until something explicitly creates one. `SearchApiSource` (§17.4)
-can *attach* a price to an existing variant but never creates the variant
-row itself, consistent with MobileAPI being the sole source of truth for
-catalogue structure (§17.4).
+**`SmartphoneCatalogSink` (MobileAPI) creates `phone_variants` rows for real**
+(closed after this was initially shipped additive-only - a real gap, not a
+hypothetical one). `Payload.Specifications.storageOptionsGb` carries every
+tier `MobileApiFieldExtractor.storageOptionsGb` finds in the device's free-text
+`storage` field ("256GB, 512GB, 1TB"); the sink writes one `phone_variants` row
+per tier, same chipset/ram/battery on every row (MobileAPI gives one of each
+for the whole model, not per tier). Three fallback levels keep a product from
+ever ending up with zero variants, confirmed live, not just unit-tested: no
+tier list (common on older/budget devices) falls back to the single base-tier
+figure `phone.storage_gb` has always held; if even that's unparseable (a real
+device was found live where it is), one row still gets written with
+`storage_gb` left `NULL` rather than skipping the insert. `model_number`/
+`region` stay null from this source - MobileAPI doesn't break those out
+separately. The ticket 1.7 admin CRUD still writes/reads only `phone` and has
+no variant-creation path of its own. `SearchApiSource` (§17.4) can *attach* a
+price to an existing variant but never creates one itself, consistent with
+MobileAPI being the sole source of truth for catalogue structure (§17.4).
 
 ## 14.6 `gpu`
 
@@ -1976,12 +1985,14 @@ never being provisioned, not a missing sink anymore.
   known product records nothing — spec/price change detection is not implemented.
   The sink writes no `price_history`, so a new product cannot pass the shortlist
   until a price exists; its trigger run normally ends with every pair
-  `NOT_SHORTLISTED`. **Still true after ticket 1.8** — `PriceHistorySink` exists
-  now (§14.7) and `SearchApiSource` is a real emitter, but nothing connects a
-  MobileAPI launch to an immediate price lookup; a just-launched product's
-  `PRODUCT_LAUNCH` trigger still fires (and still finds no price) before
-  SearchAPI has ever run for that product, if it ever does. Also writes no
-  `phone_variants` row (§14.5a) for the same reason.
+  `NOT_SHORTLISTED`. **The price half is still true after ticket 1.8** —
+  `PriceHistorySink` exists now (§14.7) and `SearchApiSource` is a real
+  emitter, but nothing connects a MobileAPI launch to an immediate price
+  lookup; a just-launched product's `PRODUCT_LAUNCH` trigger still fires (and
+  still finds no price) before SearchAPI has ever run for that product, if it
+  ever does. **The `phone_variants` half is fixed** — the sink now writes one
+  on every ingest, so a just-launched product does have a variant by the time
+  its trigger fires; it just still has no price yet (§14.5a).
 
 ## 17.1.2 Commented-out adapter — smartphone/GPU reviews (ticket 1.4, revised scope, superseded)
 

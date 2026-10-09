@@ -64,6 +64,31 @@ class MobileApiSmartphoneSourceTests {
         assertEquals(new java.math.BigDecimal("256"), spec.values().get("storage"));
         assertEquals(new java.math.BigDecimal("5000"), spec.values().get("battery"));
         assertEquals(new java.math.BigDecimal("48"), spec.values().get("camera"));
+        assertEquals(List.of(256), spec.storageOptionsGb());
+    }
+
+    @Test void realMultiTierStorageListProducesEveryTier() throws Exception {
+        // Real iPhone 17 Pro shape (ticket 1.8, GET /devices/43/) - "256GB, 512GB, 1TB".
+        var device = device("""
+                {"id": "43", "name": "iPhone 17 Pro", "manufacturer_name": "Apple",
+                 "hardware": "12GB RAM, Apple A19 Pro", "storage": "256GB, 512GB, 1TB",
+                 "battery_capacity": "3998 mAh"}""");
+        var spec = (Payload.Specifications) MobileApiSmartphoneSource.toPayload(
+                "mobileapi-smartphone", Instant.now(), device).get().body();
+        assertEquals(List.of(256, 512, 1024), spec.storageOptionsGb());
+        // values().get("storage") stays the single base-tier figure phone.storage_gb has
+        // always held - storageOptionsGb is additive, not a replacement for it.
+        assertEquals(new java.math.BigDecimal("256"), spec.values().get("storage"));
+    }
+
+    @Test void noStorageTextProducesAnEmptyTierListNotAnError() throws Exception {
+        // Real BLU/Alcatel budget-device shape (mobileapi-response.json) - storage is blank.
+        var device = device("""
+                {"id": "2", "name": "1B (2022)", "manufacturer_name": "Alcatel",
+                 "hardware": "1GB RAM", "storage": ""}""");
+        var spec = (Payload.Specifications) MobileApiSmartphoneSource.toPayload(
+                "mobileapi-smartphone", Instant.now(), device).get().body();
+        assertEquals(List.of(), spec.storageOptionsGb());
     }
 
     @Test void missingDeviceIdIsSkippedEntirely() throws Exception {

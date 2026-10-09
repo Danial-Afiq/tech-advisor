@@ -6,6 +6,7 @@ import com.springboot.backend.ingestion.core.Payload;
 import com.springboot.backend.ingestion.core.SourceContext;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,19 +38,25 @@ class SmartphoneCatalogSinkTests {
         assertTrue(db.queryForObject("SELECT current_database()", String.class).endsWith("_test"),
                 "Integration tests require a dedicated database whose name ends in _test");
         db.update("DELETE FROM market_events");
+        db.update("DELETE FROM phone_variants");
         db.update("DELETE FROM phone");
         db.update("DELETE FROM products");
     }
 
     private Payload specPayload(String extId, String brand, String model, String chipset,
             Map<String, BigDecimal> values, Map<String, String> units) {
+        return specPayload(extId, brand, model, chipset, values, units, List.of());
+    }
+
+    private Payload specPayload(String extId, String brand, String model, String chipset,
+            Map<String, BigDecimal> values, Map<String, String> units, List<Integer> storageOptionsGb) {
         return new Payload("mobileapi-smartphone", extId, Instant.now(),
-                new Payload.Specifications(extId, brand, model, chipset, values, units));
+                new Payload.Specifications(extId, brand, model, chipset, values, units, storageOptionsGb));
     }
 
     @Test void suppportsOnlyMobileApiSpecifications() {
         var spec = new Payload.Specifications("1", "B", "M", "C",
-                Map.of("ram", BigDecimal.ONE), Map.of("ram", "GB"));
+                Map.of("ram", BigDecimal.ONE), Map.of("ram", "GB"), List.of());
         assertTrue(sink.supports(MOBILEAPI, spec));
         assertFalse(sink.supports(OTHER, spec));
         assertFalse(sink.supports(MOBILEAPI, new Payload.Price("1", null, BigDecimal.ONE, "SGD")));
@@ -70,6 +77,72 @@ class SmartphoneCatalogSinkTests {
         assertEquals(8, phone.get("ram_gb"));
         assertEquals(256, phone.get("storage_gb"));
         assertEquals(5000, phone.get("battery_mah"));
+    }
+
+    @Test void noStorageTierListFallsBackToOneVariantFromTheBaseFigure() {
+        // Ticket 1.8: older/budget devices commonly have no tier breakdown at all (confirmed
+        // against real captured devices) - must still get one variant, not zero.
+        var payload = specPayload("31333", "BLU", "G5", "Snapdragon 8 Gen 3",
+                Map.of("ram", new BigDecimal("8"), "storage", new BigDecimal("256"), "battery", new BigDecimal("5000")),
+                Map.of("ram", "GB", "storage", "GB", "battery", "mAh"));
+        sink.accept("run-1", payload);
+
+        var product = db.queryForMap("SELECT id FROM products WHERE brand = 'BLU' AND model_name = 'G5'");
+        var variants = db.queryForList("SELECT * FROM phone_variants WHERE product_id = ?", product.get("id"));
+        assertEquals(1, variants.size());
+        assertEquals("Snapdragon 8 Gen 3", variants.getFirst().get("chipset"));
+        assertEquals(8, variants.getFirst().get("ram_gb"));
+        assertEquals(256, variants.getFirst().get("storage_gb"));
+        assertEquals(5000, variants.getFirst().get("battery_mah"));
+    }
+
+    @Test void bothStorageTierListAndBaseFigureUnknownStillGetsOneVariantRow() {
+        // Real finding (ticket 1.8, live run): a device whose storage text is entirely
+        // unparseable yields neither a tier list nor a base figure - without this case, that
+        // product's phone row got written but phone_variants stayed completely empty for it,
+        // the exact gap this whole change exists to close. Confirmed live against a real
+        // Keneksi Glass pull before this was handled, not hypothesized.
+        var payload = specPayload("148", "Keneksi", "Keneksi Glass", null,
+                Map.of("ram", new BigDecimal("1")), Map.of("ram", "GB"));
+        sink.accept("run-1", payload);
+
+        var product = db.queryForMap("SELECT id FROM products WHERE brand = 'Keneksi' AND model_name = 'Keneksi Glass'");
+        var variants = db.queryForList("SELECT * FROM phone_variants WHERE product_id = ?", product.get("id"));
+        assertEquals(1, variants.size());
+        assertNull(variants.getFirst().get("storage_gb"));
+        assertEquals(1, variants.getFirst().get("ram_gb"));
+    }
+
+    @Test void realStorageTierListCreatesOneVariantPerTier() {
+        // Real iPhone 17 Pro shape: "256GB, 512GB, 1TB" (ticket 1.8, GET /devices/43/).
+        var payload = specPayload("43", "Apple", "iPhone 17 Pro", "Apple A19 Pro",
+                Map.of("ram", new BigDecimal("12"), "battery", new BigDecimal("3998")),
+                Map.of("ram", "GB", "battery", "mAh"), List.of(256, 512, 1024));
+        sink.accept("run-1", payload);
+
+        var product = db.queryForMap("SELECT id FROM products WHERE brand = 'Apple' AND model_name = 'iPhone 17 Pro'");
+        var tiers = db.queryForList(
+                "SELECT storage_gb FROM phone_variants WHERE product_id = ? ORDER BY storage_gb",
+                Integer.class, product.get("id"));
+        assertEquals(List.of(256, 512, 1024), tiers);
+        // Same chipset/ram on every tier - MobileAPI gives one of each for the whole model.
+        var chipsets = db.queryForList(
+                "SELECT DISTINCT chipset, ram_gb FROM phone_variants WHERE product_id = ?", product.get("id"));
+        assertEquals(1, chipsets.size());
+        assertEquals("Apple A19 Pro", chipsets.getFirst().get("chipset"));
+        assertEquals(12, chipsets.getFirst().get("ram_gb"));
+    }
+
+    @Test void reingestingTheSameTiersUpsertsRatherThanDuplicatingVariants() {
+        var payload = specPayload("43", "Apple", "iPhone 17 Pro", "Apple A19 Pro",
+                Map.of("ram", new BigDecimal("12"), "battery", new BigDecimal("3998")),
+                Map.of("ram", "GB", "battery", "mAh"), List.of(256, 512));
+        sink.accept("run-1", payload);
+        sink.accept("run-2", payload);
+
+        var product = db.queryForMap("SELECT id FROM products WHERE brand = 'Apple' AND model_name = 'iPhone 17 Pro'");
+        assertEquals(2, db.queryForObject(
+                "SELECT count(*) FROM phone_variants WHERE product_id = ?", Integer.class, product.get("id")));
     }
 
     @Test void missingOptionalFieldsPersistAsNullNotAsBlockingTheRecord() {

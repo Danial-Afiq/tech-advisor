@@ -6,6 +6,7 @@ import com.springboot.backend.ingestion.core.Payload;
 import com.springboot.backend.marketevent.MarketEventService;
 import com.springboot.backend.marketevent.MarketEventType;
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -15,6 +16,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Ticket 1.2 — persists smartphone Specifications payloads into the real
  * catalogue schema (V6__create_sprint_1_schema.sql: products + phone).
+ * Ticket 1.8 adds phone_variants (V8__add_phone_variants.sql) alongside it -
+ * phone itself is untouched, kept for whatever still reads it.
  *
  * Scoped to mobileapi-smartphone specifically, not Specifications generally:
  * "exactly one sink must match" (IngestionOrchestrator) means a future GPU
@@ -80,6 +83,8 @@ public class SmartphoneCatalogSink implements IngestionSink {
         long productId = ((Number) product.get("id")).longValue();
 
         Map<String, BigDecimal> v = spec.values();
+        Integer ram = intOrNull(v.get("ram")), baseStorage = intOrNull(v.get("storage")),
+                battery = intOrNull(v.get("battery"));
         db.update(
                 "INSERT INTO phone (product_id, chipset, ram_gb, storage_gb, battery_mah) "
                         + "VALUES (?, ?, ?, ?, ?) "
@@ -88,8 +93,27 @@ public class SmartphoneCatalogSink implements IngestionSink {
                         + "ram_gb = COALESCE(EXCLUDED.ram_gb, phone.ram_gb), "
                         + "storage_gb = COALESCE(EXCLUDED.storage_gb, phone.storage_gb), "
                         + "battery_mah = COALESCE(EXCLUDED.battery_mah, phone.battery_mah)",
-                productId, spec.chipset(),
-                intOrNull(v.get("ram")), intOrNull(v.get("storage")), intOrNull(v.get("battery")));
+                productId, spec.chipset(), ram, baseStorage, battery);
+
+        // Ticket 1.8: one phone_variants row per known storage tier, same chipset/ram/battery
+        // across all of them - MobileAPI gives exactly one of each for the whole model, not per
+        // tier (AGENTS.md 14.5a/17.4). No tier list at all (common on older/budget devices) still
+        // gets one row from the single base-tier figure above - and even when THAT is also
+        // unparseable (storage text empty/garbage on both counts, confirmed live against a real
+        // device), still one row with storage_gb null rather than zero. A product is never left
+        // with zero variants - the gap this closes. Collections.singletonList, not List.of:
+        // List.of rejects a null element, and baseStorage legitimately can be null here.
+        List<Integer> tiers = spec.storageOptionsGb().isEmpty()
+                ? java.util.Collections.singletonList(baseStorage) : spec.storageOptionsGb();
+        for (Integer storageGb : tiers) {
+            db.update(
+                    "INSERT INTO phone_variants (product_id, chipset, ram_gb, storage_gb, battery_mah) "
+                            + "VALUES (?, ?, ?, ?, ?) "
+                            + "ON CONFLICT (product_id, storage_gb, ram_gb, region, chipset, model_number) DO UPDATE SET "
+                            + "battery_mah = COALESCE(EXCLUDED.battery_mah, phone_variants.battery_mah), "
+                            + "updated_at = CURRENT_TIMESTAMP",
+                    productId, spec.chipset(), ram, storageGb, battery);
+        }
 
         if (Boolean.TRUE.equals(product.get("inserted"))) {
             marketEvents.record(new MarketEventService.NewMarketEvent(
