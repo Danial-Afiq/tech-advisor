@@ -114,6 +114,20 @@ public class SearchApiRepository {
                 WHERE product_id=? AND provider=? AND gl=? AND hl=? AND location=?
                 """, p.id(), SearchApiSource.PROVIDER, s.gl(), s.hl(), s.location());
     }
+    /**
+     * Resolves a storage-GB figure parsed from a Google Shopping listing title to one exact
+     * phone_variants row, when unambiguous. Storage alone can collide (a region or chipset
+     * split within the same storage tier) - an ambiguous match returns empty rather than
+     * guessing which row the listing's price actually belongs to; the caller records the
+     * price at the model level instead of attaching it to the wrong SKU.
+     */
+    public Optional<Long> variantIdFor(long productId, int storageGb) {
+        var ids = db.queryForList(
+                "SELECT id FROM phone_variants WHERE product_id=? AND storage_gb=?",
+                Long.class, productId, storageGb);
+        return ids.size() == 1 ? Optional.of(ids.getFirst()) : Optional.empty();
+    }
+
     public void verified(Product p, SearchApiSettings s, Instant now) {
         db.update("""
                 UPDATE external_product_mapping SET last_verified_at=?

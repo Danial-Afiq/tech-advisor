@@ -28,6 +28,6 @@ class PayloadTests {
     }
     @Test void sourceCannotEmitUnderAnotherSourcesIdentity() {
         assertThrows(IllegalArgumentException.class, () -> new Payload("other", "1", Instant.now(),
-                new Payload.Price("phone", BigDecimal.ONE, "SGD")).validate("expected"));
+                new Payload.Price("phone", null, BigDecimal.ONE, "SGD")).validate("expected"));
     }
 }

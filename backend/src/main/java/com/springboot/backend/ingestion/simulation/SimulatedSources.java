@@ -26,7 +26,7 @@ public class SimulatedSources {
                         "demo-phone", "DemoBrand", "Demo Phone", "Demo Chipset",
                         Map.of("battery", new BigDecimal("5000")), Map.of("battery", "mAh"))));
                 output.accept(new Payload(sourceId(), "price-1", context.now(), new Payload.Price(
-                        "demo-phone", new BigDecimal("999.00"), "SGD")));
+                        "demo-phone", null, new BigDecimal("999.00"), "SGD")));
             }
         };
     }

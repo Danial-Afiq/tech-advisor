@@ -56,6 +56,32 @@ class SearchApiTests {
         assertEquals("correct", ProductMatcher.choose("Apple", "iPhone 16 Pro", shopping()).externalId());
     }
 
+    @Test void choosePicksUpPriceAndCurrencyWhenTheListingHasThem() {
+        // Real shape confirmed live (ticket 1.8): extracted_price is a bare JSON number; price
+        // is the display string whose leading symbol is the only currency marker available.
+        var priced = json.readTree("""
+                [{"title":"Apple iPhone 16 Pro 256GB","product_id":"correct","product_token":"token",
+                  "price":"$1,299.00","extracted_price":1299.0}]
+                """);
+        var match = ProductMatcher.choose("Apple", "iPhone 16 Pro", priced);
+        assertEquals(0, new java.math.BigDecimal("1299.0").compareTo(match.price()));
+        assertEquals("USD", match.currency());
+    }
+
+    @Test void chooseLeavesPriceAndCurrencyNullWhenTheListingHasNeither() {
+        var match = ProductMatcher.choose("Apple", "iPhone 16 Pro", shopping());
+        assertNull(match.price()); assertNull(match.currency());
+    }
+
+    @Test void storageGbMentionsInTitleFindsTheFigureEmbeddedMidSentence() {
+        // Unlike MobileApiFieldExtractor.storageOptionsGb() (anchored for a bare comma list),
+        // this must find a figure buried inside an ordinary title.
+        assertEquals(List.of(256), ProductMatcher.storageGbMentionsInTitle("Apple iPhone 16 Pro 256GB"));
+        assertEquals(List.of(), ProductMatcher.storageGbMentionsInTitle("Apple iPhone 16 Pro"));
+        assertEquals(List.of(1024), ProductMatcher.storageGbMentionsInTitle("Apple iPhone 16 Pro 1TB Cosmic Orange"));
+        assertEquals(List.of(256, 512), ProductMatcher.storageGbMentionsInTitle("Model A3523.a19. 256gb/512gb Silver"));
+    }
+
     @Test void prefersTheLeastVariantSpecificValidIdentity() {
         var variants = json.readTree("""
                 [{"title":"Apple iPhone 16 Pro Natural Titanium","product_id":"variant","product_token":"a"},
@@ -160,6 +186,83 @@ class SearchApiTests {
             when(client.reviews(context, "token", "most_relevant")).thenThrow(new IngestionFailure(SEARCHAPI_INVALID_TOKEN));
             assertThrows(IngestionFailure.class, () -> source.ingest(context, output::add));
             verify(client).shopping(context, product.name());
+        }
+    }
+
+    @Test void discoveryEmitsAVariantScopedPriceWhenTheListingNamesOneUnambiguousTier() throws Exception {
+        var repository = mock(SearchApiRepository.class);
+        var client = mock(SearchApiClient.class);
+        when(repository.products(settings)).thenReturn(List.of(product));
+        when(repository.token(product, settings)).thenReturn(Optional.empty());
+        when(client.shopping(any(), eq(product.name()))).thenReturn(json.readTree("""
+                [{"title":"Apple iPhone 16 Pro 256GB","product_id":"correct","product_token":"token",
+                  "price":"$1,299.00","extracted_price":1299.0}]
+                """));
+        when(client.reviews(any(), anyString(), anyString())).thenReturn(json.createArrayNode());
+        when(repository.variantIdFor(product.id(), 256)).thenReturn(Optional.of(99L));
+        var source = new SearchApiSource(settings, repository, client, new IngestionSettings(false, null, List.of()));
+        try (var context = new SourceContext(Clock.fixed(now, ZoneOffset.UTC), () -> {})) {
+            var output = new ArrayList<Payload>(); source.ingest(context, output::add);
+            var price = output.stream().map(Payload::body).filter(Payload.Price.class::isInstance)
+                    .map(Payload.Price.class::cast).findFirst().orElseThrow();
+            assertEquals(String.valueOf(product.id()), price.productReference());
+            assertEquals("99", price.variantReference());
+            // compareTo, not equals: BigDecimal scale differs between the literal here and
+            // whatever text form JSON's number-to-string conversion of 1299.0 produces.
+            assertEquals(0, new java.math.BigDecimal("1299.00").compareTo(price.amount()));
+            assertEquals("USD", price.currency());
+        }
+    }
+
+    @Test void discoveryStillRecordsPriceAtTheModelLevelWhenTheTierIsAmbiguous() throws Exception {
+        // No storage mentioned in the title at all - can't attribute the price to one exact
+        // row, so it's recorded at product level (variantReference null) rather than guessed.
+        var repository = mock(SearchApiRepository.class);
+        var client = mock(SearchApiClient.class);
+        when(repository.products(settings)).thenReturn(List.of(product));
+        when(repository.token(product, settings)).thenReturn(Optional.empty());
+        when(client.shopping(any(), eq(product.name()))).thenReturn(json.readTree("""
+                [{"title":"Apple iPhone 16 Pro","product_id":"correct","product_token":"token",
+                  "price":"$999.00","extracted_price":999.0}]
+                """));
+        when(client.reviews(any(), anyString(), anyString())).thenReturn(json.createArrayNode());
+        var source = new SearchApiSource(settings, repository, client, new IngestionSettings(false, null, List.of()));
+        try (var context = new SourceContext(Clock.fixed(now, ZoneOffset.UTC), () -> {})) {
+            var output = new ArrayList<Payload>(); source.ingest(context, output::add);
+            var price = output.stream().map(Payload::body).filter(Payload.Price.class::isInstance)
+                    .map(Payload.Price.class::cast).findFirst().orElseThrow();
+            assertNull(price.variantReference());
+            verify(repository, never()).variantIdFor(anyLong(), anyInt());
+        }
+    }
+
+    @Test void noPriceOnTheListingEmitsNoPricePayloadAtAll() throws Exception {
+        var repository = mock(SearchApiRepository.class);
+        var client = mock(SearchApiClient.class);
+        when(repository.products(settings)).thenReturn(List.of(product));
+        when(repository.token(product, settings)).thenReturn(Optional.empty());
+        when(client.shopping(any(), eq(product.name()))).thenReturn(shopping());
+        when(client.reviews(any(), anyString(), anyString())).thenReturn(json.createArrayNode());
+        var source = new SearchApiSource(settings, repository, client, new IngestionSettings(false, null, List.of()));
+        try (var context = new SourceContext(Clock.fixed(now, ZoneOffset.UTC), () -> {})) {
+            var output = new ArrayList<Payload>(); source.ingest(context, output::add);
+            assertTrue(output.stream().map(Payload::body).noneMatch(Payload.Price.class::isInstance));
+        }
+    }
+
+    @Test void cachedTokenRunsNeverCallShoppingSoNeverEmitAFreshPrice() throws Exception {
+        // Documents the deliberate tradeoff: price only refreshes on a real discover() call,
+        // never on a cache hit, to stay inside the existing per-source request budget.
+        var repository = mock(SearchApiRepository.class);
+        var client = mock(SearchApiClient.class);
+        when(repository.products(settings)).thenReturn(List.of(product));
+        when(repository.token(product, settings)).thenReturn(Optional.of("cached"));
+        when(client.reviews(any(), anyString(), anyString())).thenReturn(json.createArrayNode());
+        var source = new SearchApiSource(settings, repository, client, new IngestionSettings(false, null, List.of()));
+        try (var context = new SourceContext(Clock.fixed(now, ZoneOffset.UTC), () -> {})) {
+            var output = new ArrayList<Payload>(); source.ingest(context, output::add);
+            verify(client, never()).shopping(any(), any());
+            assertTrue(output.stream().map(Payload::body).noneMatch(Payload.Price.class::isInstance));
         }
     }
 

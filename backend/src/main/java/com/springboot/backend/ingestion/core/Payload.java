@@ -25,7 +25,14 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
      */
     public record Specifications(String productReference, String brand, String modelName, String chipset,
                                  Map<String, BigDecimal> values, Map<String, String> units) implements Body {}
-    public record Price(String productReference, BigDecimal amount, String currency) implements Body {}
+    /**
+     * variantReference is nullable: a source that can't attribute this price to one exact
+     * SKU (e.g. a free-text field with no per-variant breakdown) still records a model-level
+     * observation rather than losing the price entirely - the sink leaves phone_variant_id
+     * null in that case. Resolving which internal row these string references point to is the
+     * sink's job, same division of responsibility as productReference always had.
+     */
+    public record Price(String productReference, String variantReference, BigDecimal amount, String currency) implements Body {}
     public record Benchmark(String productReference, String name, BigDecimal score, String unit)
             implements Body {}
 
@@ -64,7 +71,8 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
                 // matching the "accept null for fields the source doesn't provide" ticket rule.
             }
             case Price p -> {
-                if (blank(p.productReference()) || p.amount() == null || p.amount().signum() < 0
+                if (blank(p.productReference()) || (p.variantReference() != null && p.variantReference().isBlank())
+                        || p.amount() == null || p.amount().signum() < 0
                         || p.currency() == null || !p.currency().matches("[A-Z]{3}"))
                     throw new IllegalArgumentException("Invalid price");
             }

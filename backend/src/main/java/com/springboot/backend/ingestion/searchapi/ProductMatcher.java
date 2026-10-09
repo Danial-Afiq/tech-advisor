@@ -22,7 +22,18 @@ public final class ProductMatcher {
 
         public String canonicalName() { return brand + " " + model; }
     }
-    public record Match(String externalId, String token, String title) {}
+    /**
+     * price/currency are nullable - a listing with no parseable price still matches on
+     * identity, it just can't also seed a price observation. currency is read from the
+     * leading symbol of the "price" display string (extracted_price itself is bare, no
+     * currency marker) - confirmed live: every result observed here showed "$" regardless of
+     * gl=sg/location=Singapore, not a documented API guarantee, so this is read per-listing
+     * rather than assumed fixed.
+     */
+    public record Match(String externalId, String token, String title,
+                        java.math.BigDecimal price, String currency) {}
+    private static final Map<Character, String> CURRENCY_SYMBOLS =
+            Map.of('$', "USD", '€', "EUR", '£', "GBP", '₹', "INR");
     @Schema(name = "SearchApiCandidateResponse", description = "Validated SearchAPI product identity safe to return to an administrator.")
     public record Candidate(
             @Schema(example = "searchapi-product-id") String externalProductId,
@@ -87,11 +98,44 @@ public final class ProductMatcher {
             if (!id.isBlank() && id.length() <= 1000 && !token.isBlank()
                     && title.length() <= 1000 && token.length() <= 16000
                     && accepts(brand, model, title)) {
-                Match match = new Match(id, token, title);
+                Match match = new Match(id, token, title, extractedPrice(row), currencyOf(row));
                 matches.merge(id, match, (a, z) -> specificity.compare(a, z) <= 0 ? a : z);
             }
         }
         return matches;
+    }
+
+    private static final java.util.regex.Pattern STORAGE_MENTION =
+            java.util.regex.Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(GB|TB)", java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Every storage figure mentioned anywhere in a shopping listing title (e.g. "Apple
+     * iPhone 16 Pro 256GB" -> [256]), not just at the start of the string - unlike
+     * MobileApiFieldExtractor.storageOptionsGb(), which is anchored for parsing MobileAPI's
+     * own bare comma-separated "storage" field and matches nothing against a sentence with
+     * the figure embedded mid-string (confirmed: it silently returned empty against a real
+     * title here, caught by this method's own test).
+     */
+    static List<Integer> storageGbMentionsInTitle(String title) {
+        if (title == null) return List.of();
+        var found = new LinkedHashSet<Integer>();
+        var m = STORAGE_MENTION.matcher(title);
+        while (m.find()) {
+            double value = Double.parseDouble(m.group(1));
+            found.add((int) Math.round(m.group(2).equalsIgnoreCase("TB") ? value * 1024 : value));
+        }
+        return List.copyOf(found);
+    }
+
+    private static java.math.BigDecimal extractedPrice(JsonNode row) {
+        JsonNode node = row.path("extracted_price");
+        if (!node.isNumber()) return null;
+        try { return new java.math.BigDecimal(node.asText()); }
+        catch (NumberFormatException e) { return null; }
+    }
+    private static String currencyOf(JsonNode row) {
+        String display = row.path("price").asText("");
+        return display.isEmpty() ? null : CURRENCY_SYMBOLS.get(display.charAt(0));
     }
 
     /**

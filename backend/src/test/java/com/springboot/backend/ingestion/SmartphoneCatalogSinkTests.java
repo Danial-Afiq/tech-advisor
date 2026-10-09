@@ -52,7 +52,7 @@ class SmartphoneCatalogSinkTests {
                 Map.of("ram", BigDecimal.ONE), Map.of("ram", "GB"));
         assertTrue(sink.supports(MOBILEAPI, spec));
         assertFalse(sink.supports(OTHER, spec));
-        assertFalse(sink.supports(MOBILEAPI, new Payload.Price("1", BigDecimal.ONE, "SGD")));
+        assertFalse(sink.supports(MOBILEAPI, new Payload.Price("1", null, BigDecimal.ONE, "SGD")));
     }
 
     @Test void persistsProductAndPhoneRowsWithAllFieldsPresent() {
