@@ -82,6 +82,15 @@ class SearchApiTests {
         assertEquals(List.of(256, 512), ProductMatcher.storageGbMentionsInTitle("Model A3523.a19. 256gb/512gb Silver"));
     }
 
+    @Test void storageGbMentionsInTitleHandlesDecimalsAndLongNonMatchingNumbers() {
+        // Supports fractional TB capacities, multiple titles in one line and deduplication.
+        assertEquals(List.of(1536, 256), ProductMatcher.storageGbMentionsInTitle(
+                "Phone 1.5 TB or 256 GB, also 1.5TB"));
+        // An extremely long digit run without a unit must not cause regex backtracking.
+        assertEquals(List.of(512), ProductMatcher.storageGbMentionsInTitle(
+                "7".repeat(10_000) + "X 512GB"));
+    }
+
     @Test void prefersTheLeastVariantSpecificValidIdentity() {
         var variants = json.readTree("""
                 [{"title":"Apple iPhone 16 Pro Natural Titanium","product_id":"variant","product_token":"a"},
