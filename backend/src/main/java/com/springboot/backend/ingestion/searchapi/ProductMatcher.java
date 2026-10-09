@@ -149,8 +149,8 @@ public final class ProductMatcher {
     }
 
     private static boolean regexWhitespace(char c) {
-        return c == ' ' || c == '\\t' || c == '\\n' || c == '\\r'
-                || c == '\\f' || c == '\\u000b';
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r'
+                || c == '\f' || c == '\u000b';
     }
 
     private static java.math.BigDecimal extractedPrice(JsonNode row) {
