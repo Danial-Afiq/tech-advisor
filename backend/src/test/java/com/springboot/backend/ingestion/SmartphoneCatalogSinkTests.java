@@ -194,6 +194,40 @@ class SmartphoneCatalogSinkTests {
         assertEquals(16, variants.getFirst().get("storage_gb"), "known storage must survive, not be overwritten");
     }
 
+    @Test void previouslyUnknownStorageIsFilledWhenStorageTiersBecomeAvailable() {
+        // The first MobileAPI response does not report storage; a later response lists
+        // all three tiers. Fill the existing unknown row with the first known tier,
+        // then create the remaining two variants instead of repeatedly updating NULL.
+        var unknownStorage = specPayload("43", "Apple", "iPhone 17 Pro", "Apple A19 Pro",
+                Map.of("ram", new BigDecimal("12"), "battery", new BigDecimal("3998")),
+                Map.of("ram", "GB", "battery", "mAh"));
+        sink.accept("run-1", unknownStorage);
+
+        long productId = db.queryForObject(
+                "SELECT id FROM products WHERE brand = 'Apple' AND model_name = 'iPhone 17 Pro'",
+                Long.class);
+        long originalVariantId = db.queryForObject(
+                "SELECT id FROM phone_variants WHERE product_id = ?", Long.class, productId);
+        assertNull(db.queryForObject(
+                "SELECT storage_gb FROM phone_variants WHERE id = ?", Integer.class, originalVariantId));
+
+        var knownTiers = specPayload("43", "Apple", "iPhone 17 Pro", "Apple A19 Pro",
+                Map.of("ram", new BigDecimal("12"), "battery", new BigDecimal("3998")),
+                Map.of("ram", "GB", "battery", "mAh"), List.of(256, 512, 1024));
+        sink.accept("run-2", knownTiers);
+
+        assertEquals(List.of(256, 512, 1024), db.queryForList(
+                "SELECT storage_gb FROM phone_variants WHERE product_id = ? ORDER BY storage_gb",
+                Integer.class, productId));
+        assertEquals(originalVariantId, db.queryForObject(
+                "SELECT id FROM phone_variants WHERE product_id = ? AND storage_gb = 256",
+                Long.class, productId));
+        // Repeating complete data must not create any more variants.
+        sink.accept("run-3", knownTiers);
+        assertEquals(3, db.queryForObject(
+                "SELECT COUNT(*) FROM phone_variants WHERE product_id = ?", Integer.class, productId));
+    }
+
     @Test void genuinelyDistinctChipsetsStayAsSeparateVariantsNotMergedByReconciliation() {
         // The reconciliation leniency only applies when a field is UNKNOWN on one side - two
         // real, known chipsets for the same storage/RAM must stay two rows, never merged.
