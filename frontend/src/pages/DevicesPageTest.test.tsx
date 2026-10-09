@@ -110,7 +110,7 @@ describe("DevicesPageTest", () => {
 
     expect(mocks.signIn).toHaveBeenCalledWith("user@example.com", "password123");
     await waitFor(() => expect(mocks.listDevices).toHaveBeenCalled());
-    expect(await screen.findByText(/Signed in as/)).toBeInTheDocument();
+    expect(screen.queryByText(/Signed in as/)).not.toBeInTheDocument();
     expect(await screen.findByText("No devices yet")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Sign out" }));

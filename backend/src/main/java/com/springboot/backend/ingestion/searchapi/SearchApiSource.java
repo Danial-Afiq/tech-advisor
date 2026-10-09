@@ -57,7 +57,11 @@ public class SearchApiSource implements IngestionSource {
             String token;
             if (cached.isPresent()) token = cached.get();
             else {
-                try { token = discover(context, product, selectedExternalId); }
+                try {
+                    var match = discover(context, product, selectedExternalId);
+                    token = match.token();
+                    emitPriceIfKnown(product, match, context, output);
+                }
                 catch (IngestionFailure noMatch) {
                     // A targeted (admin-named) run should fail loudly - the admin asked for this
                     // exact product. Untargeted mode records the attempt (so the next automatic
@@ -77,7 +81,9 @@ public class SearchApiSource implements IngestionSource {
                 repository.invalidate(product, settings);
                 if (cached.isEmpty()) throw failure;
                 // Only a cached token gets one rediscovery. Never loop over invalid responses.
-                token = discover(context, product, null);
+                var rediscovered = discover(context, product, null);
+                token = rediscovered.token();
+                emitPriceIfKnown(product, rediscovered, context, output);
                 try { pages = fetch(context, token); }
                 catch (IngestionFailure retry) {
                     if (retry.code() == SEARCHAPI_INVALID_TOKEN) repository.invalidate(product, settings);
@@ -91,12 +97,34 @@ public class SearchApiSource implements IngestionSource {
                     new Payload.ReviewBatch(product.id(), reviews)));
         }
     }
-    private String discover(SourceContext context, SearchApiRepository.Product product, String externalProductId) throws Exception {
+    private ProductMatcher.Match discover(SourceContext context, SearchApiRepository.Product product,
+            String externalProductId) throws Exception {
         var results = client.shopping(context, product.name());
         var match = externalProductId == null ? ProductMatcher.choose(product.brand(), product.model(), results)
                 : ProductMatcher.choose(product.brand(), product.model(), results, externalProductId);
         context.check(); repository.cache(product, settings, match, context.now());
-        return match.token();
+        return match;
+    }
+    /**
+     * Price capture only happens here, on the shopping() call discover() already makes for
+     * token resolution - never on a cache-hit run, which skips shopping() entirely and costs
+     * nothing extra. Trading continuous per-run price refresh for staying inside the existing
+     * request budget (AGENTS.md 17.4) is deliberate, not an oversight: always refreshing would
+     * add one request to every cached run too. Revisit only as an explicit decision alongside
+     * that budget, not silently here.
+     */
+    private void emitPriceIfKnown(SearchApiRepository.Product product, ProductMatcher.Match match,
+            SourceContext context, Consumer<Payload> output) {
+        if (match.price() == null || match.currency() == null) return;
+        var storageTokens = ProductMatcher.storageGbMentionsInTitle(match.title());
+        // Only an unambiguous single storage mention resolves a variant - a title with zero or
+        // several storage tokens can't be safely attributed to one exact row, so the price is
+        // still recorded, just at the model level (variantId left null).
+        Long variantId = storageTokens.size() == 1
+                ? repository.variantIdFor(product.id(), storageTokens.getFirst()).orElse(null) : null;
+        output.accept(new Payload(ID, product.id() + ":price:" + match.externalId(), context.now(),
+                new Payload.Price(Long.toString(product.id()), variantId == null ? null : Long.toString(variantId),
+                        match.price(), match.currency())));
     }
     private JsonNode[] fetch(SourceContext context, String token) throws Exception {
         return new JsonNode[] {client.reviews(context, token, "most_relevant"),

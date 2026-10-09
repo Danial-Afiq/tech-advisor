@@ -23,9 +23,26 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
      * Added once real schema existed to check against (V6__create_sprint_1_schema.sql), rather than
      * guessed speculatively beforehand.
      */
+    /**
+     * storageOptionsGb (ticket 1.8): every storage tier the source knows this model ships in,
+     * e.g. [256, 512, 1024] - separate from values.get("storage"), which stays the single
+     * base-tier figure phone.storage_gb has always held. Empty (not null) when the source gives
+     * no breakdown; SmartphoneCatalogSink falls back to values.get("storage") alone in that case
+     * so a product still gets at least one phone_variants row.
+     */
     public record Specifications(String productReference, String brand, String modelName, String chipset,
-                                 Map<String, BigDecimal> values, Map<String, String> units) implements Body {}
-    public record Price(String productReference, BigDecimal amount, String currency) implements Body {}
+                                 Map<String, BigDecimal> values, Map<String, String> units,
+                                 List<Integer> storageOptionsGb) implements Body {
+        public Specifications { storageOptionsGb = List.copyOf(storageOptionsGb); }
+    }
+    /**
+     * variantReference is nullable: a source that can't attribute this price to one exact
+     * SKU (e.g. a free-text field with no per-variant breakdown) still records a model-level
+     * observation rather than losing the price entirely - the sink leaves phone_variant_id
+     * null in that case. Resolving which internal row these string references point to is the
+     * sink's job, same division of responsibility as productReference always had.
+     */
+    public record Price(String productReference, String variantReference, BigDecimal amount, String currency) implements Body {}
     public record Benchmark(String productReference, String name, BigDecimal score, String unit)
             implements Body {}
 
@@ -58,13 +75,17 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
                         || s.values() == null || s.values().isEmpty()
                         || s.units() == null || !s.units().keySet().equals(s.values().keySet())
                         || s.values().values().stream().anyMatch(v -> v == null || v.signum() < 0)
-                        || s.units().values().stream().anyMatch(Payload::blank))
+                        || s.units().values().stream().anyMatch(Payload::blank)
+                        // storageOptionsGb itself is never null here - the record's compact
+                        // constructor already rejects that via List.copyOf, same as ReviewBatch.
+                        || s.storageOptionsGb().stream().anyMatch(gb -> gb <= 0))
                     throw new IllegalArgumentException("Invalid specifications");
                 // chipset is intentionally not required here: the catalogue schema allows it null,
                 // matching the "accept null for fields the source doesn't provide" ticket rule.
             }
             case Price p -> {
-                if (blank(p.productReference()) || p.amount() == null || p.amount().signum() < 0
+                if (blank(p.productReference()) || (p.variantReference() != null && p.variantReference().isBlank())
+                        || p.amount() == null || p.amount().signum() < 0
                         || p.currency() == null || !p.currency().matches("[A-Z]{3}"))
                     throw new IllegalArgumentException("Invalid price");
             }
