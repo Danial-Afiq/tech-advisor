@@ -6,6 +6,7 @@ import com.springboot.backend.ingestion.core.Payload;
 import com.springboot.backend.marketevent.MarketEventService;
 import com.springboot.backend.marketevent.MarketEventType;
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -15,6 +16,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Ticket 1.2 — persists smartphone Specifications payloads into the real
  * catalogue schema (V6__create_sprint_1_schema.sql: products + phone).
+ * Ticket 1.8 adds phone_variants (V8__add_phone_variants.sql) alongside it -
+ * phone itself is untouched, kept for whatever still reads it.
  *
  * Scoped to mobileapi-smartphone specifically, not Specifications generally:
  * "exactly one sink must match" (IngestionOrchestrator) means a future GPU
@@ -80,6 +83,8 @@ public class SmartphoneCatalogSink implements IngestionSink {
         long productId = ((Number) product.get("id")).longValue();
 
         Map<String, BigDecimal> v = spec.values();
+        Integer ram = intOrNull(v.get("ram")), baseStorage = intOrNull(v.get("storage")),
+                battery = intOrNull(v.get("battery"));
         db.update(
                 "INSERT INTO phone (product_id, chipset, ram_gb, storage_gb, battery_mah) "
                         + "VALUES (?, ?, ?, ?, ?) "
@@ -88,8 +93,21 @@ public class SmartphoneCatalogSink implements IngestionSink {
                         + "ram_gb = COALESCE(EXCLUDED.ram_gb, phone.ram_gb), "
                         + "storage_gb = COALESCE(EXCLUDED.storage_gb, phone.storage_gb), "
                         + "battery_mah = COALESCE(EXCLUDED.battery_mah, phone.battery_mah)",
-                productId, spec.chipset(),
-                intOrNull(v.get("ram")), intOrNull(v.get("storage")), intOrNull(v.get("battery")));
+                productId, spec.chipset(), ram, baseStorage, battery);
+
+        // Ticket 1.8: one phone_variants row per known storage tier, same chipset/ram/battery
+        // across all of them - MobileAPI gives exactly one of each for the whole model, not per
+        // tier (AGENTS.md 14.5a/17.4). No tier list at all (common on older/budget devices) still
+        // gets one row from the single base-tier figure above - and even when THAT is also
+        // unparseable (storage text empty/garbage on both counts, confirmed live against a real
+        // device), still one row with storage_gb null rather than zero. A product is never left
+        // with zero variants - the gap this closes. Collections.singletonList, not List.of:
+        // List.of rejects a null element, and baseStorage legitimately can be null here.
+        List<Integer> tiers = spec.storageOptionsGb().isEmpty()
+                ? java.util.Collections.singletonList(baseStorage) : spec.storageOptionsGb();
+        for (Integer storageGb : tiers) {
+            upsertVariant(productId, spec.chipset(), ram, storageGb, battery);
+        }
 
         if (Boolean.TRUE.equals(product.get("inserted"))) {
             marketEvents.record(new MarketEventService.NewMarketEvent(
@@ -101,6 +119,59 @@ public class SmartphoneCatalogSink implements IngestionSink {
                     null,
                     SOURCE_ID));
         }
+    }
+
+    /**
+     * Review feedback (PR #46): the unique key on {@code phone_variants} is an
+     * exact match on all five identity columns, so a later ingest where, say,
+     * {@code chipset} failed to parse this time ({@code NULL}) would never
+     * match an existing row whose chipset IS known - {@code ON CONFLICT}
+     * silently inserted a second, incomplete row for what is really the same
+     * physical variant. Same failure mode for RAM or storage going unknown on
+     * a later run. Fixed by reconciling against existing rows first, treating
+     * "unknown on either side" as compatible rather than requiring equality:
+     * exactly one compatible row is reused (and only ever filled in via
+     * COALESCE, never overwritten with an unknown value); zero compatible
+     * rows means this really is a new variant; more than one is genuinely
+     * ambiguous and is left alone rather than guessed at. Two rows that
+     * differ only by a chipset/model_number that's known on both sides (e.g.
+     * a real Snapdragon vs. Exynos release) still stay distinct, since a
+     * known-vs-known mismatch is never "compatible."
+     */
+    private void upsertVariant(long productId, String chipset, Integer ram, Integer storageGb, Integer battery) {
+        List<Map<String, Object>> candidates = db.queryForList(
+                "SELECT id, chipset, model_number, ram_gb, region, storage_gb FROM phone_variants "
+                        + "WHERE product_id = ?",
+                productId);
+        List<Map<String, Object>> compatible = candidates.stream()
+                .filter(row -> compatible(row.get("storage_gb"), storageGb)
+                        && compatible(row.get("chipset"), chipset)
+                        && compatible(row.get("ram_gb"), ram))
+                .toList();
+
+        if (compatible.size() == 1) {
+            long id = ((Number) compatible.get(0).get("id")).longValue();
+            db.update(
+                    "UPDATE phone_variants SET chipset = COALESCE(?, chipset), ram_gb = COALESCE(?, ram_gb), "
+                            + "storage_gb = COALESCE(?, storage_gb), "
+                            + "battery_mah = COALESCE(?, battery_mah), updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    chipset, ram, storageGb, battery, id);
+        } else if (compatible.isEmpty()) {
+            db.update(
+                    "INSERT INTO phone_variants (product_id, chipset, ram_gb, storage_gb, battery_mah) "
+                            + "VALUES (?, ?, ?, ?, ?) "
+                            + "ON CONFLICT (product_id, storage_gb, ram_gb, region, chipset, model_number) DO UPDATE SET "
+                            + "battery_mah = COALESCE(EXCLUDED.battery_mah, phone_variants.battery_mah), "
+                            + "updated_at = CURRENT_TIMESTAMP",
+                    productId, chipset, ram, storageGb, battery);
+        }
+        // compatible.size() > 1: genuinely ambiguous (two or more existing rows are each
+        // missing a different identity field) - don't guess which one this ingest is about.
+    }
+
+    /** Null-tolerant identity-column comparison: unknown on either side never rules out a match. */
+    private static boolean compatible(Object existing, Object incoming) {
+        return existing == null || incoming == null || existing.equals(incoming);
     }
 
     private static Integer intOrNull(BigDecimal value) {

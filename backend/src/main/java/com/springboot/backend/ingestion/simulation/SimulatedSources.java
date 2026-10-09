@@ -24,9 +24,9 @@ public class SimulatedSources {
                         context.now(), "Simulated review evidence; sentiment analysis happens downstream.")));
                 output.accept(new Payload(sourceId(), "specs-1", context.now(), new Payload.Specifications(
                         "demo-phone", "DemoBrand", "Demo Phone", "Demo Chipset",
-                        Map.of("battery", new BigDecimal("5000")), Map.of("battery", "mAh"))));
+                        Map.of("battery", new BigDecimal("5000")), Map.of("battery", "mAh"), java.util.List.of())));
                 output.accept(new Payload(sourceId(), "price-1", context.now(), new Payload.Price(
-                        "demo-phone", new BigDecimal("999.00"), "SGD")));
+                        "demo-phone", null, new BigDecimal("999.00"), "SGD")));
             }
         };
     }

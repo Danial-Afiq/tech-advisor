@@ -128,10 +128,14 @@ public class MobileApiSmartphoneSource implements IngestionSource {
         putIfPresent(values, units, "battery", MobileApiFieldExtractor.batteryMah(text(device, "battery_capacity")), "mAh");
         putIfPresent(values, units, "camera", MobileApiFieldExtractor.cameraMp(text(device, "camera")), "MP");
         String chipset = MobileApiFieldExtractor.chipset(hardware).orElse(null);
+        // Ticket 1.8: the full tier list ("256GB, 512GB, 1TB"), separate from values.get
+        // ("storage")'s single base-tier figure above - confirmed live this is a free-text
+        // list MobileAPI gives per model, not separate records (AGENTS.md 14.5a).
+        var storageOptions = MobileApiFieldExtractor.storageOptionsGb(text(device, "storage"));
 
         if (values.isEmpty()) return Optional.empty();
         return Optional.of(new Payload(sourceId, deviceId, observedAt,
-                new Payload.Specifications(deviceId, brand, modelName, chipset, values, units)));
+                new Payload.Specifications(deviceId, brand, modelName, chipset, values, units, storageOptions)));
     }
 
     private JsonNode fetchList(SourceContext context) throws Exception {

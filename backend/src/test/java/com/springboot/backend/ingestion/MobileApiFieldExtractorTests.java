@@ -20,6 +20,24 @@ class MobileApiFieldExtractorTests {
         assertTrue(MobileApiFieldExtractor.ramGb(null).isEmpty());
     }
 
+    // Real text pulled directly from a live GET /devices/43/ (Apple iPhone 17 Pro), ticket 1.8.
+    @Test void chipsetHandlesRamLeadingTheChipsetNotOnlyTrailingIt() {
+        // RAM leads here ("12GB RAM, Apple A19 Pro") - the opposite order from the Snapdragon
+        // fixture below. Stripping only a RAM *prefix* (the original implementation) returned
+        // empty for this real device: it never looked at what came after the match.
+        assertEquals("Apple A19 Pro", MobileApiFieldExtractor.chipset("12GB RAM, Apple A19 Pro").get());
+    }
+
+    @Test void chipsetStillHandlesRamTrailingTheChipset() {
+        assertEquals("Snapdragon 8 Gen 3", MobileApiFieldExtractor.chipset("Snapdragon 8 Gen 3, 8GB RAM").get());
+    }
+
+    @Test void chipsetMissingEntirelyReturnsEmpty() {
+        // Real BLU G5 hardware text (mobileapi-response.json) - no chipset recorded at all.
+        assertTrue(MobileApiFieldExtractor.chipset("2 GB RAM, ").isEmpty());
+        assertTrue(MobileApiFieldExtractor.chipset(null).isEmpty());
+    }
+
     @Test void extractsStorageBatteryAndCamera() {
         assertEquals(new BigDecimal("256"), MobileApiFieldExtractor.storageGb("256GB").get());
         assertEquals(new BigDecimal("5000"), MobileApiFieldExtractor.batteryMah("5000 mAh").get());
@@ -82,6 +100,65 @@ class MobileApiFieldExtractorTests {
     @Test void priceTextBlankOrNullReturnsEmpty() {
         assertTrue(MobileApiFieldExtractor.priceText("").isEmpty());
         assertTrue(MobileApiFieldExtractor.priceText(null).isEmpty());
+    }
+
+    // Real text pulled directly from a live GET /devices/43/ (Apple iPhone 17 Pro), ticket 1.8 -
+    // not invented. Thin space (U+2009) between symbol and amount, same as the iPhone SE case
+    // above; comma thousands separator is the new thing this string exercises.
+    @Test void priceTextParsesCommaGroupedThousandsRatherThanTruncatingAtTheComma() {
+        var price = MobileApiFieldExtractor.priceText(
+                "€ 1,299.00 / £ 1,099.00 / ₹ 134,900").get();
+        // Before the fix, the bare \d+ in PRICE_EUR stopped at the comma and this returned 1.
+        assertEquals(new BigDecimal("1299.00"), price.amount());
+        assertEquals("EUR", price.currency());
+    }
+
+    @Test void priceTextFallsBackToInrWhenNoOtherCurrencyMatches() {
+        var price = MobileApiFieldExtractor.priceText("₹ 134,900").get();
+        assertEquals(new BigDecimal("134900"), price.amount());
+        assertEquals("INR", price.currency());
+    }
+
+    // Review-flagged regression: a 4+-digit amount with NO thousands comma ("$1299.00") was
+    // still mis-parsed after the comma-grouped fix above - the first alternative's \d{1,3}
+    // matched just "129" with zero (?:,\d{3}) repeats, which is a complete match for that
+    // alternative with nothing mandatory after it, so the engine never tried the second,
+    // fully-greedy alternative. Fixed by requiring at least one comma group in the first
+    // alternative instead of allowing zero.
+    @Test void priceTextParsesUngroupedFourAndFiveDigitAmountsInFull() {
+        assertEquals(new BigDecimal("1299.00"), MobileApiFieldExtractor.priceText("$1299.00").get().amount());
+        assertEquals(new BigDecimal("2499.90"), MobileApiFieldExtractor.priceText("$2499.90").get().amount());
+        assertEquals(new BigDecimal("9999"), MobileApiFieldExtractor.priceText("$9999").get().amount());
+        // The code-form path (PRICE_CODE) shares the same AMOUNT pattern - must not regress too.
+        assertEquals(new BigDecimal("1299"), MobileApiFieldExtractor.priceText("1299 EUR").get().amount());
+    }
+
+    @Test void priceTextStillParsesCommaGroupedAmountsAfterTheUngroupedFix() {
+        assertEquals(new BigDecimal("1299.00"), MobileApiFieldExtractor.priceText("$1,299.00").get().amount());
+        assertEquals(new BigDecimal("1299"), MobileApiFieldExtractor.priceText("1,299 EUR").get().amount());
+    }
+
+    // Real text pulled directly from live GET /devices/43/ and /devices/42/ (iPhone 17 Pro /
+    // Pro Max), ticket 1.8 - MobileAPI lists every storage tier a model ships in as one
+    // free-text field, not separate records.
+    @Test void storageOptionsGbParsesTheRealCommaSeparatedTierList() {
+        assertEquals(java.util.List.of(256, 512, 1024),
+                MobileApiFieldExtractor.storageOptionsGb("256GB, 512GB, 1TB"));
+        assertEquals(java.util.List.of(256, 512, 2048),
+                MobileApiFieldExtractor.storageOptionsGb("256GB, 512GB, 2TB"));
+    }
+
+    @Test void storageOptionsGbHandlesTheRealGarbageAndBlankCases() {
+        // Real captured values, both from mobileapi-response.json - the first has the unit
+        // glued to unrelated text with no separator, the second is simply empty.
+        assertEquals(java.util.List.of(4), MobileApiFieldExtractor.storageOptionsGb("4 GBBuy memory card"));
+        assertEquals(java.util.List.of(), MobileApiFieldExtractor.storageOptionsGb(""));
+        assertEquals(java.util.List.of(), MobileApiFieldExtractor.storageOptionsGb(null));
+    }
+
+    @Test void storageOptionsGbDeduplicatesWithoutReordering() {
+        assertEquals(java.util.List.of(128, 256),
+                MobileApiFieldExtractor.storageOptionsGb("128GB, 256GB, 128GB"));
     }
 
     @Test void cpuGhzTakesFirstClockSpeedFromMulticoreText() {

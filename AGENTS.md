@@ -1338,6 +1338,9 @@ Fields:
 - `id`
 - `user_id`
 - `product_id` — nullable catalogue link
+- `phone_variant_id` — nullable, added ticket 1.8; the exact SKU owned, for
+  unambiguous spec autofill. Not yet populated by any code path — `product_id`
+  remains the only link `DeviceService`/the device-selection flow actually use.
 - `custom_name`
 - `purchase_date`
 - `condition`
@@ -1389,6 +1392,57 @@ Fields:
 
 These are deterministic facts. Spring Boot should calculate differences.
 
+**Still 1:1 with `products`** (`product_id` is its own primary key) — a model
+can only ever have one row here, which is the exact limitation ticket 1.8
+addresses. Kept exactly as-is, writable in parallel with `phone_variants` -
+`SmartphoneCatalogSink` now writes both (see §14.5a); the ticket 1.7 admin
+CRUD (`SmartphoneCatalogueService`/`Phone`/`PhoneRepository`) still reads/
+writes only this table.
+
+## 14.5a `phone_variants` (ticket 1.8)
+
+Same fields as `phone` above, plus `id` (its own primary key), `model_number`,
+and `region`; FK'd to `products` (now the general-model identity) instead of
+being that identity's primary key, so one product has many variant rows.
+Deduplicated on `(product_id, storage_gb, ram_gb, region, chipset,
+model_number)` — all five variant-distinguishing attributes named by the
+ticket's AC — with `NULLS NOT DISTINCT`, since no source gives a stable
+per-SKU external id to key on instead.
+
+**`SmartphoneCatalogSink` (MobileAPI) creates `phone_variants` rows for real**
+(closed after this was initially shipped additive-only - a real gap, not a
+hypothetical one). `Payload.Specifications.storageOptionsGb` carries every
+tier `MobileApiFieldExtractor.storageOptionsGb` finds in the device's free-text
+`storage` field ("256GB, 512GB, 1TB"); the sink writes one `phone_variants` row
+per tier, same chipset/ram/battery on every row (MobileAPI gives one of each
+for the whole model, not per tier). Three fallback levels keep a product from
+ever ending up with zero variants, confirmed live, not just unit-tested: no
+tier list (common on older/budget devices) falls back to the single base-tier
+figure `phone.storage_gb` has always held; if even that's unparseable (a real
+device was found live where it is), one row still gets written with
+`storage_gb` left `NULL` rather than skipping the insert. `model_number`/
+`region` stay null from this source - MobileAPI doesn't break those out
+separately. The ticket 1.7 admin CRUD still writes/reads only `phone` and has
+no variant-creation path of its own. `SearchApiSource` (§17.4) can *attach* a
+price to an existing variant but never creates one itself, consistent with
+MobileAPI being the sole source of truth for catalogue structure (§17.4).
+
+**Re-ingest reconciliation (PR #46 review fix).** The upsert on the write
+path above does NOT rely solely on the unique key's exact-match `ON
+CONFLICT` — that key requires every one of its five columns to match
+exactly, so a later ingest where, say, the chipset momentarily failed to
+parse (`NULL`) would never match an existing row whose chipset IS known,
+and silently insert a second, incomplete row for what is really the same
+physical variant (same failure mode for RAM or storage going unknown). Fixed
+by reconciling against a product's existing variant rows first, using a
+null-tolerant comparison per identity column — unknown on either side counts
+as compatible, a known-vs-known mismatch does not. Exactly one compatible
+row is reused (filled in via `COALESCE`, never overwritten with an unknown
+value); zero means this really is a new variant; more than one is genuinely
+ambiguous and is left alone rather than guessed at. A real Snapdragon vs.
+Exynos release of the same storage/RAM tier still lands as two rows, since
+both chipsets are known and unequal.
+
 ## 14.6 `gpu`
 
 Fields:
@@ -1410,12 +1464,39 @@ The table establishes the disjoint GPU subtype shape. GPU ingestion, recommendat
 Fields:
 - `id`
 - `product_id`
+- `phone_variant_id` — nullable, added ticket 1.8; the exact SKU this price
+  was observed for, when the source could attribute it to one. Null means a
+  model-level observation (e.g. MobileAPI's `misc.price`, which gives one
+  figure for the whole model with no tier breakdown) — still real evidence,
+  not nothing.
 - `price`
 - `currency`
 - `source`
 - `observed_at`
 
 Stores observations over time, not just one mutable current price.
+
+**First real writer landed ticket 1.8** (`PriceHistorySink`, ingestion package) —
+before that, `Payload.Price` existed since ticket 1.1's shared contract but
+nothing emitted it and nothing accepted it, so this table was always empty in
+production (confirmed by §17.1.1's existing note that the launch-event
+shortlist always failed for exactly this reason). `SearchApiSource` is the
+only current emitter: it records a price whenever `discover()` makes a fresh
+Google Shopping call and the matched listing has one — never on a cache-hit
+run, deliberately, to stay inside the source's existing 10-request/run budget
+(§17.4). `SmartphoneCatalogSink` (MobileAPI) still writes none.
+
+**`ProductRepository.findCompatibleCandidates`'s `DISTINCT ON (product_id)`
+query (§14.4) does not distinguish `phone_variant_id`.** It picks whichever
+row is most recently observed for a product, now potentially a mix of
+model-level and variant-specific rows (SearchAPI can write several variant
+rows plus a model-level one for the same product across different runs). A
+specific variant's price being used to represent "the product's price" for
+affordability filtering is an unreviewed consequence of ticket 1.8 landing
+real data into a query that was written when every row was implicitly
+model-level (because nothing wrote variant-level rows yet) — flagged here,
+not fixed, since the right fix (lowest variant price? the model-level
+observation preferentially? something else?) is a product decision.
 
 ## 14.8 `benchmark_results`
 
@@ -1605,8 +1686,11 @@ user_devices 1 ── 1 device_preferences
 
 products 1 ── N user_devices
 products 1 ── 0..1 phone
+products 1 ── N phone_variants       (ticket 1.8 — see §14.5a)
 products 1 ── 0..1 gpu
 products 1 ── N price_history
+phone_variants 1 ── N price_history  (nullable FK — ticket 1.8)
+phone_variants 1 ── N user_devices   (nullable FK — ticket 1.8)
 products 1 ── N benchmark_results
 products 1 ── N market_events
 products 1 ── N review_documents
@@ -1917,7 +2001,14 @@ never being provisioned, not a missing sink anymore.
   known product records nothing — spec/price change detection is not implemented.
   The sink writes no `price_history`, so a new product cannot pass the shortlist
   until a price exists; its trigger run normally ends with every pair
-  `NOT_SHORTLISTED`.
+  `NOT_SHORTLISTED`. **The price half is still true after ticket 1.8** —
+  `PriceHistorySink` exists now (§14.7) and `SearchApiSource` is a real
+  emitter, but nothing connects a MobileAPI launch to an immediate price
+  lookup; a just-launched product's `PRODUCT_LAUNCH` trigger still fires (and
+  still finds no price) before SearchAPI has ever run for that product, if it
+  ever does. **The `phone_variants` half is fixed** — the sink now writes one
+  on every ingest, so a just-launched product does have a variant by the time
+  its trigger fires; it just still has no price yet (§14.5a).
 
 ## 17.1.2 Commented-out adapter — smartphone/GPU reviews (ticket 1.4, revised scope, superseded)
 
@@ -2031,6 +2122,28 @@ Sources run in `IngestionSource.priority()` order (lower first), not alphabetica
 writes are visible to SearchAPI's untargeted product pick within the same run,
 regardless of source naming.
 
+**Price capture, ticket 1.8.** `discover()`'s Google Shopping call already
+carries `extracted_price`/`price` on the matched listing to resolve a review
+token — this data used to be discarded; it's now also emitted as a
+`Payload.Price` (persisted by `PriceHistorySink`, §14.7). Currency is read
+from the price display string's leading symbol (`extracted_price` itself
+carries no currency marker); every real listing observed used `$` regardless
+of `gl=sg`/`location=Singapore` — confirmed live, not assumed to generalize.
+`ProductMatcher.storageGbMentionsInTitle` scans the matched listing's title
+for an embedded storage figure to resolve a specific `phone_variants` row
+(`SearchApiRepository.variantIdFor`, exact match only — an ambiguous tie
+records the price at the model level instead of guessing). Deliberately
+**not** comprehensive: one run resolves at most the one listing SearchAPI's
+matching settled on, not a price per variant a product actually has: a
+product with three storage tiers gets at most one price observation per
+run, for whichever tier that one matched listing happens to name (or none,
+model-level, if it names none). Real per-variant coverage would need a
+separate shopping search per known variant — a real per-source request-budget
+decision (more than the existing 3-requests-per-product ceiling allows),
+not implemented. Also **only on a fresh `discover()` call** — never on a
+cache-hit run, which skips the shopping call entirely to stay inside the
+existing budget; price never refreshes for a product between rediscoveries.
+
 ---
 
 # 18. Current implementation snapshot on `main` — 18 Sep 2026
@@ -2064,7 +2177,9 @@ V3__anchor_daily_ingestion_schedule.sql
 V4__enable_pgvector.sql
 V5__add_password_hash_to_users.sql
 V6__create_sprint_1_schema.sql
-V7__add_external_review_ingestion.sql  # SearchAPI feature branch
+V7__add_external_review_ingestion.sql  # SearchAPI, merged to main
+V8__add_phone_variants.sql             # ticket 1.8 — phone_variants, user_devices.phone_variant_id
+V9__link_price_history_to_phone_variants.sql  # ticket 1.8 — price_history.phone_variant_id
 ```
 
 `V5` makes `users.password_hash` **NOT NULL**, so every seed, fixture, or test

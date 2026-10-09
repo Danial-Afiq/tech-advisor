@@ -22,7 +22,18 @@ public final class ProductMatcher {
 
         public String canonicalName() { return brand + " " + model; }
     }
-    public record Match(String externalId, String token, String title) {}
+    /**
+     * price/currency are nullable - a listing with no parseable price still matches on
+     * identity, it just can't also seed a price observation. currency is read from the
+     * leading symbol of the "price" display string (extracted_price itself is bare, no
+     * currency marker) - confirmed live: every result observed here showed "$" regardless of
+     * gl=sg/location=Singapore, not a documented API guarantee, so this is read per-listing
+     * rather than assumed fixed.
+     */
+    public record Match(String externalId, String token, String title,
+                        java.math.BigDecimal price, String currency) {}
+    private static final Map<Character, String> CURRENCY_SYMBOLS =
+            Map.of('$', "USD", '€', "EUR", '£', "GBP", '₹', "INR");
     @Schema(name = "SearchApiCandidateResponse", description = "Validated SearchAPI product identity safe to return to an administrator.")
     public record Candidate(
             @Schema(example = "searchapi-product-id") String externalProductId,
@@ -87,11 +98,70 @@ public final class ProductMatcher {
             if (!id.isBlank() && id.length() <= 1000 && !token.isBlank()
                     && title.length() <= 1000 && token.length() <= 16000
                     && accepts(brand, model, title)) {
-                Match match = new Match(id, token, title);
+                Match match = new Match(id, token, title, extractedPrice(row), currencyOf(row));
                 matches.merge(id, match, (a, z) -> specificity.compare(a, z) <= 0 ? a : z);
             }
         }
         return matches;
+    }
+
+    /**
+     * Finds storage capacities in a shopping title with a single left-to-right scan.
+     * A regex here was flagged by SonarCloud for super-linear backtracking; scanning
+     * digits, optional decimals, whitespace, and GB/TB units directly is linear.
+     */
+    static List<Integer> storageGbMentionsInTitle(String title) {
+        if (title == null) return List.of();
+        var found = new LinkedHashSet<Integer>();
+        int index = 0;
+        while (index < title.length()) {
+            if (!asciiDigit(title.charAt(index))) {
+                index++;
+                continue;
+            }
+            int start = index;
+            while (index < title.length() && asciiDigit(title.charAt(index))) index++;
+            if (index + 1 < title.length() && title.charAt(index) == '.'
+                    && asciiDigit(title.charAt(index + 1))) {
+                index++;
+                while (index < title.length() && asciiDigit(title.charAt(index))) index++;
+            }
+            int end = index;
+            while (index < title.length() && regexWhitespace(title.charAt(index))) index++;
+            if (index + 1 < title.length()
+                    && (title.charAt(index) == 'G' || title.charAt(index) == 'g'
+                        || title.charAt(index) == 'T' || title.charAt(index) == 't')
+                    && (title.charAt(index + 1) == 'B' || title.charAt(index + 1) == 'b')) {
+                double value = Double.parseDouble(title.substring(start, end));
+                if (title.charAt(index) == 'T' || title.charAt(index) == 't') value *= 1024;
+                if (Double.isFinite(value) && value <= Integer.MAX_VALUE)
+                    found.add((int) Math.round(value));
+                index += 2;
+            } else {
+                index = end;
+            }
+        }
+        return List.copyOf(found);
+    }
+
+    private static boolean asciiDigit(char c) {
+        return c >= '0' && c <= '9';
+    }
+
+    private static boolean regexWhitespace(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r'
+                || c == '\f' || c == 0x0B;
+    }
+
+    private static java.math.BigDecimal extractedPrice(JsonNode row) {
+        JsonNode node = row.path("extracted_price");
+        if (!node.isNumber()) return null;
+        try { return new java.math.BigDecimal(node.asText()); }
+        catch (NumberFormatException e) { return null; }
+    }
+    private static String currencyOf(JsonNode row) {
+        String display = row.path("price").asText("");
+        return display.isEmpty() ? null : CURRENCY_SYMBOLS.get(display.charAt(0));
     }
 
     /**

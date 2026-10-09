@@ -34,23 +34,45 @@ public final class MobileApiFieldExtractor {
     // currency symbol and the amount (e.g. "£ 145.00 / € 167.00 / $ 121.87") -
     // plain \s is ASCII-only in Java and silently matches nothing against that, dropping a
     // perfectly good price. Confirmed against a real captured string, not a hypothetical.
+    // AMOUNT accepts both comma-grouped thousands ("1,299.00") and plain digit runs ("999") -
+    // a real live misc.price string ("GET /devices/43/", iPhone 17 Pro) was silently
+    // mis-parsed as "1" before this: a bare \d+ stops at the first comma. firstMatch() strips
+    // any remaining comma before the BigDecimal parse.
+    //
+    // The first alternative requires at least one comma group ((?:,\d{3})+, not *) - with a
+    // bare *, "$1299.00" matched the first alternative via \d{1,3} alone (greedy to "129"),
+    // which succeeds with zero comma groups and nothing mandatory after it, so the engine
+    // never backtracks to the second, fully-greedy alternative: group(1) came back "129", not
+    // "1299.00". Requiring +, a string with no comma fails the first alternative outright and
+    // falls through to \d+, which consumes the whole run. Caught by review, not by the
+    // original test suite - none of its cases used a 4+-digit ungrouped amount.
+    private static final String AMOUNT = "(\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?)";
     private static final Pattern PRICE_USD = Pattern.compile(
-            "\\$\\s?(\\d+(?:\\.\\d{1,2})?)", Pattern.UNICODE_CHARACTER_CLASS);
+            "\\$\\s?" + AMOUNT, Pattern.UNICODE_CHARACTER_CLASS);
     private static final Pattern PRICE_EUR = Pattern.compile(
-            "€\\s?(\\d+(?:\\.\\d{1,2})?)", Pattern.UNICODE_CHARACTER_CLASS);
+            "€\\s?" + AMOUNT, Pattern.UNICODE_CHARACTER_CLASS);
     private static final Pattern PRICE_GBP = Pattern.compile(
-            "£\\s?(\\d+(?:\\.\\d{1,2})?)", Pattern.UNICODE_CHARACTER_CLASS);
-    // Possessive quantifiers keep long malformed price strings linear-time: once the
-    // numeric and whitespace portions are consumed, there is no useful fallback split.
-    // The lookbehind stops find() from retrying at every digit inside one long number.
+            "£\\s?" + AMOUNT, Pattern.UNICODE_CHARACTER_CLASS);
+    // INR (₹) added alongside USD/EUR/GBP - confirmed present on the same real iPhone 17 Pro
+    // misc.price string, not a hypothetical currency to support.
+    private static final Pattern PRICE_INR = Pattern.compile(
+            "₹\\s?" + AMOUNT, Pattern.UNICODE_CHARACTER_CLASS);
+    // The lookbehind stops find() from retrying at every digit inside one long number; the
+    // possessive \s*+ after AMOUNT means no backtracking into the whitespace once consumed.
+    // Was its own separate, comma-blind pattern until caught by review + a test: "1,299 EUR"
+    // returned 299 (the digits after the comma only) because the old \d++ stopped there and
+    // the lookbehind let find() retry from the first digit after the comma. Now shares AMOUNT.
     private static final Pattern PRICE_CODE = Pattern.compile(
-            "(?<!\\d)(\\d++(?:\\.\\d{1,2})?)\\s*+(USD|EUR|GBP)", Pattern.CASE_INSENSITIVE);
+            "(?<!\\d)" + AMOUNT + "\\s*+(USD|EUR|GBP|INR)", Pattern.CASE_INSENSITIVE);
     private static final Pattern CPU_GHZ = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*GHz", Pattern.CASE_INSENSITIVE);
     private static final Pattern DISPLAY_INCHES = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*inches?", Pattern.CASE_INSENSITIVE);
     private static final Pattern WEIGHT_G = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*g\\b", Pattern.CASE_INSENSITIVE);
     private static final Pattern QUARTER_YEAR = Pattern.compile("([1-4])Q\\s*(\\d{4})");
     private static final Pattern ANNOUNCED_MONTH_YEAR = Pattern.compile(
             "Announced\\s+([A-Za-z]+)\\s+(\\d{4})", Pattern.CASE_INSENSITIVE);
+    // Anchored at segment start (see storageOptionsGb) rather than scanning anywhere in it.
+    private static final Pattern STORAGE_TOKEN = Pattern.compile(
+            "^(\\d+(?:\\.\\d+)?)\\s*(GB|TB)", Pattern.CASE_INSENSITIVE);
 
     /** Base object's "hardware" field, e.g. "Snapdragon 8 Gen 3, 8GB RAM". */
     public static Optional<BigDecimal> ramGb(String hardwareText) { return firstMatch(hardwareText, RAM_GB); }
@@ -68,11 +90,19 @@ public final class MobileApiFieldExtractor {
      * Base object's "hardware" field with the RAM portion removed, e.g.
      * "Snapdragon 8 Gen 3, 8GB RAM" -> "Snapdragon 8 Gen 3". Some real
      * devices have no chipset recorded at all (just "2 GB RAM, ") -> empty.
+     *
+     * RAM can lead OR trail the chipset - confirmed live (ticket 1.8, GET
+     * /devices/43/): a real iPhone 17 Pro gives "12GB RAM, Apple A19 Pro",
+     * RAM first. Removing only a RAM *prefix* (the original form of this
+     * method) silently returned empty for that real device - it never
+     * looked at what came after the match. Removing the matched span
+     * itself, from wherever it falls, handles both real orderings.
      */
     public static Optional<String> chipset(String hardwareText) {
         if (hardwareText == null) return Optional.empty();
         Matcher m = RAM_GB.matcher(hardwareText);
-        String remainder = (m.find() ? hardwareText.substring(0, m.start()) : hardwareText).strip();
+        String remainder = (m.find() ? hardwareText.substring(0, m.start()) + hardwareText.substring(m.end()) : hardwareText).strip();
+        while (remainder.startsWith(",")) remainder = remainder.substring(1).strip();
         while (remainder.endsWith(",")) remainder = remainder.substring(0, remainder.length() - 1).strip();
         return remainder.isEmpty() ? Optional.empty() : Optional.of(remainder);
     }
@@ -90,6 +120,8 @@ public final class MobileApiFieldExtractor {
         if (eur.isPresent()) return Optional.of(new PriceMatch(eur.get(), "EUR"));
         Optional<BigDecimal> gbp = scan(miscResponse, PRICE_GBP);
         if (gbp.isPresent()) return Optional.of(new PriceMatch(gbp.get(), "GBP"));
+        Optional<BigDecimal> inr = scan(miscResponse, PRICE_INR);
+        if (inr.isPresent()) return Optional.of(new PriceMatch(inr.get(), "INR"));
         return Optional.empty();
     }
 
@@ -105,7 +137,12 @@ public final class MobileApiFieldExtractor {
         Matcher code = PRICE_CODE.matcher(priceText);
         if (code.find()) {
             try {
-                return Optional.of(new PriceMatch(new BigDecimal(code.group(1)), code.group(2).toUpperCase(Locale.ROOT)));
+                // Found alongside the regression fix above: a comma-grouped code-form amount
+                // ("1,299 EUR") threw here (BigDecimal doesn't accept commas) and silently fell
+                // through to the symbol check, which can't match a code-only string either -
+                // losing the price entirely instead of mis-parsing it. firstMatch() already
+                // stripped commas for every other caller; this direct construction did not.
+                return Optional.of(new PriceMatch(new BigDecimal(code.group(1).replace(",", "")), code.group(2).toUpperCase(Locale.ROOT)));
             } catch (NumberFormatException ignored) { /* fall through to symbol check */ }
         }
         Optional<BigDecimal> usd = firstMatch(priceText, PRICE_USD);
@@ -114,10 +151,35 @@ public final class MobileApiFieldExtractor {
         if (eur.isPresent()) return Optional.of(new PriceMatch(eur.get(), "EUR"));
         Optional<BigDecimal> gbp = firstMatch(priceText, PRICE_GBP);
         if (gbp.isPresent()) return Optional.of(new PriceMatch(gbp.get(), "GBP"));
+        Optional<BigDecimal> inr = firstMatch(priceText, PRICE_INR);
+        if (inr.isPresent()) return Optional.of(new PriceMatch(inr.get(), "INR"));
         return Optional.empty();
     }
 
     public record PriceMatch(BigDecimal amount, String currency) {}
+
+    /**
+     * MobileAPI's "storage" field is a free-text list of every tier the model ships in, not
+     * separate records - e.g. "256GB, 512GB, 1TB" (confirmed live, GET /devices/43/, iPhone 17
+     * Pro). Each comma-separated segment is matched anchored at its own start, so a garbage
+     * segment like "4 GBBuy memory card" (a real captured value, a different device) still
+     * yields its real leading number rather than matching nothing or matching mid-string junk.
+     * "1TB" style entries are converted to GB. Order is preserved, duplicates removed.
+     */
+    public static java.util.List<Integer> storageOptionsGb(String storageText) {
+        if (storageText == null || storageText.isBlank()) return java.util.List.of();
+        var result = new java.util.LinkedHashSet<Integer>();
+        for (String segment : storageText.split(",")) {
+            Matcher m = STORAGE_TOKEN.matcher(segment.strip());
+            if (!m.find()) continue;
+            double value;
+            try { value = Double.parseDouble(m.group(1)); }
+            catch (NumberFormatException ignored) { continue; }
+            boolean isTerabytes = m.group(2).equalsIgnoreCase("TB");
+            result.add((int) Math.round(isTerabytes ? value * 1024 : value));
+        }
+        return java.util.List.copyOf(result);
+    }
 
     /** platform.cpu, e.g. "2.0 GHz" or "Octa-core (4x1.6 GHz ... & 4x1.2 GHz ...)" - takes the first clock speed. */
     public static Optional<BigDecimal> cpuGhz(String cpuText) { return firstMatch(cpuText, CPU_GHZ); }
@@ -182,7 +244,10 @@ public final class MobileApiFieldExtractor {
         Matcher m = pattern.matcher(text);
         if (!m.find()) return Optional.empty();
         try {
-            return Optional.of(new BigDecimal(m.group(1)));
+            // Comma thousands separators never appear in a non-price match (RAM/storage/battery
+            // groups are plain \d+), so stripping unconditionally is safe and avoids a separate
+            // price-only code path.
+            return Optional.of(new BigDecimal(m.group(1).replace(",", "")));
         } catch (NumberFormatException e) {
             return Optional.empty();
         }
