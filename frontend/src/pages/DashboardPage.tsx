@@ -4,6 +4,7 @@ import {
   listDashboardRecommendations,
   type DashboardRecommendation,
 } from "../api/dashboard";
+import { signOut } from "../api/auth";
 import { ApiError } from "../api/client";
 import { getSession } from "../api/session";
 import { AppShell } from "../components/layout/AppShell";
@@ -158,6 +159,11 @@ export default function DashboardPage() {
     }
   };
 
+  const handleSignOut = () => {
+    signOut();
+    void navigate(LOGIN_PATH, { replace: true });
+  };
+
   return (
     <AppShell
       active="dashboard"
@@ -170,6 +176,7 @@ export default function DashboardPage() {
         <NotificationButton unread={attentionCount} />
       }
       onNavigate={handleNavigate}
+      onSignOut={handleSignOut}
     >
       <PageHeader
         eyebrow="Upgrade overview"

@@ -8,6 +8,7 @@ import { ApiError } from "../api/client";
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   listDashboardRecommendations: vi.fn(),
+  signOut: vi.fn(),
 }));
 
 vi.mock("../api/session", () => ({
@@ -17,6 +18,10 @@ vi.mock("../api/session", () => ({
 vi.mock("../api/dashboard", () => ({
   listDashboardRecommendations:
     mocks.listDashboardRecommendations,
+}));
+
+vi.mock("../api/auth", () => ({
+  signOut: mocks.signOut,
 }));
 
 function renderPage() {
@@ -125,6 +130,21 @@ describe("DashboardPage", () => {
     expect(
       await screen.findByText("devices route")
     ).toBeInTheDocument();
+  });
+
+  it("signs out from the sidebar and returns to login", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Sign out",
+      })
+    );
+
+    expect(mocks.signOut).toHaveBeenCalledOnce();
+    expect(await screen.findByText("login route")).toBeInTheDocument();
   });
 
   it("shows recommendation details and summary counts", async () => {

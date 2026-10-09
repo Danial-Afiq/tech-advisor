@@ -156,23 +156,17 @@ export default function DevicesPageTest() {
         }
       />
 
-      <Callout className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <span>
-          {account ? (
-            <>
-              Signed in as <b>{account.email}</b>. New devices are saved to
-              your account.
-            </>
-          ) : (
-            "Demo mode: these devices aren't saved. Sign in to add devices to your account."
-          )}
-        </span>
-        {!account && (
+      {!account && (
+        <Callout className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <span>
+            Demo mode: these devices aren't saved. Sign in to add devices to
+            your account.
+          </span>
           <Button size="sm" variant="primary" onClick={() => setSigningIn(true)}>
             Sign in
           </Button>
-        )}
-      </Callout>
+        </Callout>
+      )}
 
       {loading ? (
         <LoadingBlock label="Loading your devices…" />
