@@ -158,7 +158,7 @@ class DeviceServiceTest {
 
         deviceService.createDevice("user-a@example.com", request);
 
-        verify(eventPublisher).publishEvent(new DeviceInventoryChanged(42L));
+        verify(eventPublisher).publishEvent(new DeviceInventoryChanged(42L, DeviceInventoryChanged.Change.ADDED));
     }
 
     @Test
@@ -235,7 +235,7 @@ class DeviceServiceTest {
         assertEquals(new BigDecimal("1000.00"), existing.getBudget());
         assertEquals("USD", existing.getCurrency());
         verify(devicePreferenceRepository).save(existing);
-        verify(eventPublisher).publishEvent(new DeviceInventoryChanged(42L));
+        verify(eventPublisher).publishEvent(new DeviceInventoryChanged(42L, DeviceInventoryChanged.Change.UPDATED));
     }
 
     @Test

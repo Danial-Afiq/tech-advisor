@@ -192,6 +192,29 @@ public class RecommendationRepository {
 }
 
     /**
+     * {@link #replaceForDevice} for one candidate of one device, in a single
+     * transaction. When the candidate is no longer shortlisted, this device's rows
+     * for it are deleted, history included; otherwise each record goes through
+     * supersede-and-insert. Rows for every other candidate are left alone.
+     *
+     * @return how many rows were deleted
+     */
+    public int replaceForCandidate(
+            long currentDeviceId, long candidateProductId, boolean shortlisted, List<RecommendationRecord> records) {
+
+        Integer deleted = tx.execute(status -> {
+            int removed = shortlisted
+                    ? 0
+                    : db.update(
+                            "DELETE FROM recommendations WHERE current_device_id=? AND candidate_product_id=?",
+                            currentDeviceId, candidateProductId);
+            records.forEach(this::supersedeAndInsert);
+            return removed;
+        });
+        return deleted;
+    }
+
+    /**
      * Supersedes the previous ACTIVE row for the same (user, candidate) pair,
      * if any, then inserts the new one: this is "per-user/per-product"
      * persistence, one current answer per pair. Callers own the transaction.

@@ -13,6 +13,10 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
 
     Optional<Product> findByBrandAndModelName(String brand, String modelName);
 
+    Optional<Product> findByBrandIgnoreCaseAndModelNameIgnoreCase(String brand, String modelName);
+
+    List<Product> findAllByCategoryOrderByBrandAscModelNameAsc(String category);
+
     /**
      * Deterministic candidate shortlisting: same category, at or under the
      * budget ceiling, excluding the device the user already owns.

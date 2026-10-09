@@ -19,6 +19,10 @@ vi.mock('./IngestionAdmin', () => ({
   default: () => <h1>Admin ingestion route</h1>,
 }))
 
+vi.mock('./pages/AdminCatalogue', () => ({
+  default: () => <h1>Admin catalogue route</h1>,
+}))
+
 function renderAt(path: string) {
   window.history.replaceState({}, '', path)
   return render(<App />)
@@ -84,6 +88,23 @@ it("redirects USER visitors from / to /dashboard", async () => {
     setSession({ token: 'user-token', email: 'user@example.com', role: 'USER' })
     renderAt('/admin/ingestion')
     await expectRoute("Dashboard route", "/dashboard");
+  })
+
+  it('allows an ADMIN to access /admin/catalogue', async () => {
+    setSession({ token: 'admin-token', email: 'admin@example.com', role: 'ADMIN' })
+    renderAt('/admin/catalogue')
+    await expectRoute('Admin catalogue route', '/admin/catalogue')
+  })
+
+  it('redirects signed-out access to /admin/catalogue to /login', async () => {
+    renderAt('/admin/catalogue')
+    await expectRoute('Login route', '/login')
+  })
+
+  it('redirects a USER away from /admin/catalogue', async () => {
+    setSession({ token: 'user-token', email: 'user@example.com', role: 'USER' })
+    renderAt('/admin/catalogue')
+    await expectRoute('Dashboard route', '/dashboard')
   })
 
   it('redirects an ADMIN away from /devices', async () => {

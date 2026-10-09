@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 28 September 2026
+> **Last consolidated:** 6 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -436,12 +436,13 @@ still open (see §27.9).
 - Both documentation endpoints are intentionally unauthenticated so the Week 7
   demo and deployed API contract are reachable. Documented operations retain
   their runtime security.
-- Authentication, profile, owned-device, and admin-ingestion routes include
+- Authentication, profile, owned-device, catalogue, and admin routes include
   their HTTP methods, request/response schemas, expected status codes, and
   security requirements.
-- Swagger UI defines `bearerAuth` for account JWTs. Profile and owned-device
-  operations require a USER JWT; admin-ingestion operations require an ADMIN
-  JWT. `POST /api/auth/login` authenticates both USER and ADMIN accounts and
+- Swagger UI defines `bearerAuth` for account JWTs. Smartphone catalogue reads
+  require any authenticated USER or ADMIN JWT; catalogue mutations, ingestion,
+  and all other `/api/admin/**` operations require an ADMIN JWT.
+  `POST /api/auth/login` authenticates both USER and ADMIN accounts and
   returns the actual role; `POST /api/auth/admin/login` remains as a compatible
   admin-only endpoint. There is no separate Basic authentication or CSRF flow
   for ingestion.
@@ -572,18 +573,20 @@ This step performs **no** embeddings, retrieval or model calls, and must stay
 that way - bounding the candidate set is what bounds every downstream AI cost.
 
 **Broad scheduled catalogue discovery remains separate work.** The filter is exercised
-by tests and seeded data. A named admin SearchAPI run can create a VERIFIED smartphone
-only after the admin selects a validated provider identity and the worker revalidates
-that choice; it does not create price observations.
+by tests and seeded data. A named admin SearchAPI run can target only an existing
+VERIFIED smartphone after the admin selects a validated provider identity and the
+worker revalidates that choice; SearchAPI does not create catalogue or price rows.
 
-**Initial catalogue population and subsequent refreshes come from MobileAPI.dev
+**Automated catalogue population and subsequent refreshes come from MobileAPI.dev
 ingestion** (ticket 1.2, `MobileApiSmartphoneSource`/`SmartphoneCatalogSink`,
 §17.1.1) — not from a static file. An earlier one-time backfill
 (`data/catalogue_backfill.json` + `scripts/backfill_catalogue.py`, 453 staged
 configurations with price and benchmark observations) was used before MobileAPI
 ingestion existed; both files were removed 28 Sep 2026 once it did. They are
 not a fallback or bootstrap path to fall back on — MobileAPI is the sole
-source of truth for `products`/`phone` rows (§17.4). Any benchmark or price
+automated feed for `products`/`phone` rows (§17.4). Ticket 1.7 adds a separate
+ADMIN-only manual CRUD path for corrections and exceptional entries; it is not
+another ingestion source. Any benchmark or price
 rows that backfill run already wrote to a given environment's database are
 unaffected by the file deletion; MobileAPI ingestion does not currently write
 benchmark data at all (§17.1.1's implemented-adapter notes), so benchmark
@@ -1439,14 +1442,22 @@ Fields:
 - `source`
 - `detected_at`
 
-Examples:
+`event_type` values the application writes (closed set, `marketevent/MarketEventType`;
+the column itself stays free `TEXT`, no migration):
 - `PRODUCT_LAUNCH`
 - `PRICE_CHANGE`
 - `BENCHMARK_UPDATE`
 - `SPECIFICATION_CHANGE`
 - `SUPPORT_CHANGE`
 
-A market event can trigger recommendation reassessment.
+**Implemented (feat/3.9-ai-ml-triggers):** every row is written through
+`MarketEventService.record`, which publishes `MarketEventRecorded`; that is what fires
+the market-event recommendation trigger (§18.12). Current writers: admin entry
+(`POST /api/admin/market-events`) and `SmartphoneCatalogSink` (a `PRODUCT_LAUNCH` the
+first time a product row is inserted, §17.1.1). Any future source must also go
+through `MarketEventService`, not insert directly, or the trigger will not fire.
+Every event type fires the trigger when `product_id` is set; an event with no product
+is recorded and skipped.
 
 ## 14.10 `review_documents`
 
@@ -1745,13 +1756,14 @@ This is legitimate for:
 
 But simulated fixtures are **not** the final production data source.
 
-## 16.7 Admin ingestion UI
-Current frontend contains an ingestion admin panel.
+## 16.7 Admin routes and UI
+Current frontend contains separate ingestion and smartphone-catalogue admin pages.
 
 Known route:
 
 ```text
 /admin/ingestion
+/admin/catalogue
 ```
 
 Production authentication uses one normal login experience backed by
@@ -1772,23 +1784,37 @@ authenticates with the same signed-in session used everywhere else
 check, not a CSRF-token issuer.
 
 Frontend routes are role-guarded before their pages render. `/devices` accepts
-USER sessions, `/admin/ingestion` accepts ADMIN sessions, and `/login` redirects
-an existing session to its role-appropriate page. `/DevicesPageTest` and
+USER sessions, `/admin/ingestion` and `/admin/catalogue` accept ADMIN sessions,
+and `/login` redirects an existing session to its role-appropriate page. `/DevicesPageTest` and
 `/IngestionAdmin` are compatibility redirects only. The admin ingestion page
 signs out by clearing the shared frontend session and replacing the route with
-`/login`.
+`/login`. The two ADMIN pages share the responsive `AdminShell` sidebar, with
+navigation between manual ingestion and catalogue management and a sign-out
+control in the profile card. Signed-in USER pages use the same profile-card
+sign-out control rather than a duplicate page-level button.
+
+Ticket 1.7 implements authenticated smartphone catalogue reads at
+`/api/catalogue/smartphones` and `/api/catalogue/smartphones/{id}` for USER and
+ADMIN accounts. ADMIN-only create, update, and delete operations use
+`/api/admin/catalogue/smartphones` and `/api/admin/catalogue/smartphones/{id}`.
+The service writes the existing `products` and `phone` rows in one transaction,
+keeps `category` fixed to `SMARTPHONE`, and explicitly deletes both rows together.
+The list route returns only complete product/phone pairs so a legacy orphan row
+cannot break the whole catalogue response. The `/admin/catalogue` frontend is a
+protected page shell only; the interactive CRUD form is intentionally later work.
 
 The SearchAPI source is labelled **SearchAPI customer reviews** in the source list.
 Selecting it shows a required **Smartphone name** field. `POST
 /api/admin/ingestion/searchapi/candidates` returns up to 20 validated product titles
 and external IDs; provider product tokens never reach the browser. The admin selects
 one candidate before starting the run. The backend accepts `productName` plus that
-`externalProductId` on `POST /api/admin/ingestion/runs`. **MobileAPI is the sole
-source of truth for `products`/`phone` rows (§17.4, revised 28 Sep 2026) - an
+`externalProductId` on `POST /api/admin/ingestion/runs`. **SearchAPI never writes
+`products`/`phone`; MobileAPI is the automated feed and the admin catalogue API is
+the manual correction path (§17.4, revised 6 Oct 2026).** An
 existing exact case-insensitive, whitespace-normalized brand/model or unique
 model-only name resolves to a VERIFIED SMARTPHONE via `ProductMatcher.matchCatalogue`;
 an unknown brand/full-model name is rejected before admission rather than creating
-one.** The target persists in `RunLog.product`, participates in idempotency, survives
+one. The target persists in `RunLog.product`, participates in idempotency, survives
 restarts and appears in history. API clients omitting both fields and scheduled runs
 retain default selection. No migration is needed.
 
@@ -1824,10 +1850,11 @@ NOT a decision: the JWT is kept in `sessionStorage`, isolated in
 ## 17.1 Source strategy by data type — team decision 27 Sep 2026
 
 - **Smartphone specifications and prices:** MobileAPI.dev is the intended
-  authoritative ongoing external provider. Its integration is planned and is
-  not implemented in the current checkout. One-time and periodic ingestion
-  should write normalized data to `products`, `phone`, and `price_history`;
-  normal application requests then read PostgreSQL and do not call MobileAPI.dev.
+  authoritative ongoing external provider. Its implemented ingestion adapter
+  writes normalized data to `products` and `phone`; price persistence remains
+  separate work. Normal application requests read PostgreSQL and do not call
+  MobileAPI.dev. ADMIN catalogue CRUD is the manual correction/exception path,
+  not another external data provider.
 - **Owner reviews:** SearchAPI Google Product Reviews (§17.4).
 - **Benchmarks:** separate device-level benchmark sources and the existing
   benchmark enrichment/provenance. MobileAPI.dev is not currently established
@@ -1847,8 +1874,10 @@ The safe architectural decision is:
 - **The one-time catalogue backfill is retired, not reconciled against.**
   `data/catalogue_backfill.json` and `scripts/backfill_catalogue.py` were
   removed 28 Sep 2026 — MobileAPI.dev ingestion (§17.1.1 below) is now the
-  sole source of catalogue population and refresh (§17.4), so there is no
+  sole automated source of catalogue population and refresh (§17.4), so there is no
   competing dataset left to reconcile `SmartphoneCatalogSink` against.
+  ADMIN CRUD from ticket 1.7 is an intentional manual correction path, not a
+  second bulk dataset or ingestion adapter.
   Any rows a past backfill run already wrote to a given environment's
   database are unaffected and untouched by this — this is a documentation
   and file cleanup, not a data migration. `scripts/searchapi-smoke.ps1`
@@ -1880,6 +1909,15 @@ never being provisioned, not a missing sink anymore.
 - MobileAPI.dev isn't in the candidate list below (this section predates
   that decision) — added here for traceability, not because §17.1's "not
   fully confirmed" status has changed.
+- **Launch events (feat/3.9-ai-ml-triggers):** the sink now upserts inside one
+  transaction and, the first time a `(brand, model_name)` row is *inserted*
+  (`RETURNING (xmax = 0)`), records a `PRODUCT_LAUNCH` market event through
+  `MarketEventService` (§14.9). "Launch" means "first seen in the catalogue": the
+  first population of an empty catalogue records one per product. Re-ingesting a
+  known product records nothing — spec/price change detection is not implemented.
+  The sink writes no `price_history`, so a new product cannot pass the shortlist
+  until a price exists; its trigger run normally ends with every pair
+  `NOT_SHORTLISTED`.
 
 ## 17.1.2 Commented-out adapter — smartphone/GPU reviews (ticket 1.4, revised scope, superseded)
 
@@ -1958,15 +1996,17 @@ The owner-review source is `searchapi-google-product-reviews`. It uses the docum
 SearchAPI endpoints with Bearer authentication and Singapore localisation; it does not
 scrape. It is opt-in, and enabling it without `SEARCHAPI_API_KEY` fails startup.
 
-**MobileAPI.dev (ticket 1.2) is the sole source of truth for `products`/`phone`
-rows — SearchAPI never creates one** (revised 28 Sep 2026; it originally could, via
+**MobileAPI.dev (ticket 1.2) is the sole automated source for `products`/`phone`
+rows, and SearchAPI never creates one.** ADMIN catalogue CRUD is the only manual
+create/update/delete path (revised 6 Oct 2026; SearchAPI originally could create via
 an admin-named run — that path is removed). Manual discovery exposes validated
 titles and external IDs only. The worker revalidates the admin-selected ID before
 caching its server-only token, and an admin-typed name is matched against the
 existing catalogue via `ProductMatcher.matchCatalogue` (fuzzy, brand+model or a
 bare model name alone — same suffix tolerance already proven against Google
 Shopping titles, not exact-string equality) rather than promoted into a new row.
-No catalogue match fails closed: ingest the device via MobileAPI first. Matching
+No catalogue match fails closed: ingest the device via MobileAPI or add/correct it
+through the admin catalogue API first. Matching
 rejects accessories, used/refurbished products, conflicting models, and unknown
 wording. V7's `external_product_mapping` scopes cache entries by
 product/provider/locale/canonical name. A clearly invalid cached token gets one
@@ -2067,6 +2107,7 @@ Known files include:
 - `App.test.tsx`
 - `IngestionAdmin.tsx`
 - `IngestionAdmin.test.tsx`
+- `pages/AdminCatalogue.tsx`
 - `config.ts`
 - Vite setup
 - CSS
@@ -2218,17 +2259,15 @@ Deliberate boundaries:
   package still does not call it. `verdict`, `upgrade_score`, `deciding_factors`
   and every figure in `computed` continue to arrive as *input* on
   `RecommendationInput`; nothing here computes or second-guesses them, and the
-  verdict persisted is whatever the caller supplied (§7.1). Shortlisting and
-  classification are now joined by `CandidateEvaluationService` (§18.10), but
-  nothing yet feeds its output into `assessAndPersist` - that is the trigger
-  ticket's job.
+  verdict persisted is whatever the caller supplied (§7.1). The recommendation
+  triggers (§18.12) are the production caller: they build `RecommendationInput`
+  from the database through `trigger/AssessRequestFactory` for each pair past the
+  preference gate.
 - **The maturity gate (§8.3) is still not implemented.** Nothing in this package
   checks evidence maturity before spending a call.
-- **No trigger for the AI step.** No `@Scheduled`, no controller, no HTTP surface
-  reaches `assessAndPersist`. The inventory trigger in §18.12 runs the deterministic
-  step only. The scheduled job that will drive this calls `DeterministicRecommendationService.evaluateAllDevices()`
-  (§18.11) and then `RecommendationService.assessAndPersist` for the candidates
-  worth assessing.
+- **The AI step is reached only through the triggers (§18.12).** There is still no
+  `@Scheduled` batch; `evaluateAllDevices()` (§18.11) remains deterministic-only and
+  has no caller.
 - **No JPA.** `spring-boot-starter-data-jpa` remains on the classpath and unused;
   this package follows the `JdbcTemplate` precedent set by `RunStore` rather than
   introducing the first `@Entity` for one write-once table.
@@ -2333,8 +2372,8 @@ the thresholds move.
 
 Still absent, deliberately:
 
-- **No trigger.** Still no `@Scheduled` and no controller. The only production
-  caller is `CandidateEvaluationService` (§18.10), which itself has no trigger.
+- **No scheduled run.** The only production caller is `CandidateEvaluationService`
+  (§18.10), reached through the recommendation triggers (§18.12).
 - **The maturity gate (§8.3) is still not implemented.**
 - **Nothing populates the catalogue.** Ingestion still writes only to `system_log`,
   so against a real database there are no products, spec sheets or benchmarks to
@@ -2370,11 +2409,14 @@ Failure rules:
   catching that exception cannot mark the surrounding transaction rollback-only;
 - no viable candidates is an empty result, not an error.
 
-Deliberately **not** done here: no trigger (`@Scheduled`/controller), no maturity
-gate, no AI call. `evaluate` itself stays read-only; persistence is layered on top
-by `DeterministicRecommendationService` (§18.11). The head of the pipeline - what
-calls it and hands `worthAssessing()` to `RecommendationService.assessAndPersist` -
-is a separate ticket.
+Deliberately **not** done here: no maturity gate, no AI call. `evaluate` itself
+stays read-only; persistence is layered on top by `DeterministicRecommendationService`
+(§18.11). The head of the pipeline - what calls it and hands the pairs past the gate
+to `RecommendationService.assessAndPersist` - is the recommendation triggers (§18.12).
+
+`evaluate(userDeviceId, candidateProductId)` (added with the triggers) runs the same
+shortlist and classifier narrowed to one candidate: a candidate that fails the
+shortlist comes back with empty `ranked` and `skipped`.
 
 The owned side is loaded even when the shortlist is empty, so an unevaluable owned
 device always fails rather than passing for one with nothing to recommend.
@@ -2396,7 +2438,8 @@ Row contents:
 | `factor_analysis` | `deterministic` = the §18.9 breakdown; `evidence` and `irrelevant_chunk_ids` present but empty |
 | `input_snapshot` | `candidate` (id, brand, model, latest price, currency), `computed`, `analysis` - the same keys `RecommendationService` writes, minus AI-only ones |
 | `reasoning` | fixed Java template built only from verdict, score and deciding factors (§12 fallback) |
-| `ai_model`, `prompt_version`, `trigger_event_id` | `NULL` - no model, no trigger yet |
+| `ai_model`, `prompt_version` | `NULL` - no model |
+| `trigger_event_id` | the market event's id for a market-event run (§18.12), otherwise `NULL` |
 
 Lifecycle rules (decided 27 Sep 2026):
 
@@ -2416,9 +2459,16 @@ The delete and all inserts run in **one transaction** (`RecommendationRepository
 so a run lands completely or not at all. `save` and `replaceForDevice` share one
 supersede-and-insert helper.
 
-Worth-assessing rows (verdict other than `NO_MEANINGFUL_CHANGE`) are expected to be superseded by the AI
-step's `assessAndPersist` row once the trigger ticket wires it, so a full cycle
-leaves a deterministic row and an AI row in history for those candidates.
+Worth-assessing rows (verdict other than `NO_MEANINGFUL_CHANGE`) are superseded by the AI
+step's `assessAndPersist` row when the trigger's AI call succeeds, so a full cycle
+leaves a deterministic row and an AI row in history for those candidates. If the AI
+call is skipped or fails, the deterministic row stays `ACTIVE`.
+
+**Per-candidate variant.** `evaluatePairAndPersist(userDeviceId, candidateProductId,
+triggerEventId)` applies the same lifecycle rules to one pair only (via
+`RecommendationRepository.replaceForCandidate`): classified → supersede-and-insert,
+fell off the shortlist → that device's rows for that candidate are deleted,
+unclassifiable → untouched. No other candidate's rows change.
 
 **Batch entry point for the trigger.** `DeterministicRecommendationService.evaluateAllDevices()`
 is the method the scheduled/controller trigger is meant to call. It evaluates every
@@ -2428,35 +2478,80 @@ catalogue product, with a `device_preferences` row - in id order, each through
 on its own, and any exception is caught per device, logged and returned in
 `BatchRun.failed` so one bad device cannot stop the rest. A failed device keeps its
 previous rows. Devices that are not evaluable are never attempted, and their
-existing rows are not touched by the run. It does not yet hand `worthAssessing()`
-to the AI step; that belongs with the trigger ticket.
+existing rows are not touched by the run. It does not hand anything to the AI step
+and still has no caller; the triggers (§18.12) use the per-device and per-pair
+methods instead.
 
 Test: `DeterministicRecommendationPersistenceTest` (real PostgreSQL, rolled back).
 
-## 18.12 Inventory trigger - 27 Sep 2026, branch `feat/3.8-evaluate-reccos`
+## 18.12 Recommendation triggers - IMPLEMENTED, branch `feat/3.9-ai-ml-triggers`
 
-Adding or editing a device re-runs the deterministic pipeline for **that device only**,
-so a user sees verdicts without waiting for a batch run. This pulls part of SCRUM-20
-(capturing a budget) into this branch; that ticket's story points are being reduced.
+Supersedes the 27 Sep deterministic-only inventory trigger (`feat/3.8-evaluate-reccos`).
+Package `recommendation/trigger/`. Two triggers decide *when* the pipeline runs and
+*for whom*; neither changes scoring, the gate or the AI service.
 
-- `DeviceService.createDevice` / `updateDevice` publish `service/DeviceInventoryChanged(userDeviceId)`.
-  `removeDevice` does not.
-- `recommendation/InventoryRecommendationTrigger` listens with
-  `@TransactionalEventListener(AFTER_COMMIT)` + `@Async("recommendationExecutor")`:
-  after commit, so the evaluation (on another thread) can see the device and a rolled-back
-  save produces nothing; async, so the HTTP response does not wait on the pipeline.
-- It checks `UserDeviceRepository.isEvaluable(id)` (same bar as `findEvaluableDeviceIds`)
-  and calls `DeterministicRecommendationService.evaluateAndPersist`. Not evaluable is
-  logged at INFO and skipped; any failure is logged and swallowed, since the inventory
-  change has already committed.
-- `RecommendationTriggerConfiguration` defines the named executor with **one thread**:
-  evaluations queue and run one at a time, so two quick edits cannot race on the
-  partial unique `ACTIVE` index. A named executor is required because the ingestion
-  `ThreadPoolTaskScheduler` is also an `Executor` and would otherwise catch `@Async`.
-- `recommendation.inventory-trigger-enabled` (default `true`) turns the listener off.
-- Deterministic only - it does not call the AI step (§18.8).
+| | Trigger 1 - market event | Trigger 2 - device inventory |
+|---|---|---|
+| Fires on | `MarketEventRecorded` (any `MarketEventService.record`, §14.9) | `DeviceInventoryChanged` from `DeviceService.createDevice` / `updateDevice` (`removeDevice` does not) |
+| Selects | `AffectedDeviceSelector`: every current device whose catalogue product shares the event product's category, excluding devices that *are* that product; devices without `device_preferences` are counted, not evaluated | the one device, if `isEvaluable` |
+| Runs | `evaluatePairAndPersist(device, event product, event id)` per device | `evaluateAndPersist(device)` - its whole shortlist |
+| `trigger_event_id` | the event's id, on deterministic and AI rows | `NULL` |
+| Listener | `MarketEventRecommendationTrigger`, `recommendation.market-event-trigger-enabled` (default true) | `InventoryRecommendationTrigger`, `recommendation.inventory-trigger-enabled` (default true) |
 
-**Budget on the device API (API contract change).** `DeviceRequest` gained optional
+Shared behaviour (`RecommendationTriggerService`):
+
+- **After commit + async.** `@TransactionalEventListener(AFTER_COMMIT)` +
+  `@Async("recommendationExecutor")`: the run must see the committed row and a
+  rolled-back save produces nothing; the HTTP request / ingestion run never waits.
+- **One thread** (`RecommendationTriggerConfiguration`). Runs queue and execute one at a
+  time, so two runs cannot race on the `ACTIVE` unique index and AI calls go out one
+  at a time. Named because the ingestion `ThreadPoolTaskScheduler` would otherwise
+  catch `@Async`. A long market-event run delays device runs queued behind it.
+- **Early exit.** A pair whose Channel A verdict is `NO_MEANINGFUL_CHANGE` keeps its
+  deterministic row and makes **no** AI call (§7.1).
+- **AI step** (`AiAssessmentStep`) for every other pair: `AssessRequestFactory` builds
+  the §9 request from the DB, then `RecommendationService.assessAndPersist` makes
+  the one call and supersedes the deterministic row. The factory **does not invent
+  context**: if the device lacks a valid `condition`, `satisfaction_score` or
+  `purchase_date`, the preferences lack a valid `upgrade_urgency` /
+  `brand_flexibility` or contain a non-factor priority, or the candidate has no
+  `release_date`, the call is skipped and the gaps are logged. **Today the device API
+  cannot set urgency or brand flexibility (§27.10), so devices created through it
+  never reach the model** until SCRUM-20 adds those fields; seed them directly for a
+  demo. `recommendation.triggers.ai-assessment-enabled` (`RECOMMENDATION_AI_ASSESSMENT_ENABLED`,
+  default true) switches the AI step off entirely.
+- **Isolation.** Every pair commits on its own; any exception is caught per pair (or
+  per device for Trigger 2), so one AI or data failure never rolls back or stops the
+  rest. A failed pair keeps its deterministic row.
+- **Duplicates.** Unchanged: supersede-and-insert on the existing V6 partial unique
+  index `(user_id, candidate_product_id) WHERE status='ACTIVE'`. Re-running a pair
+  leaves one `ACTIVE` row and the old one `SUPERSEDED`. **No new migration**; the
+  per-device index proposed in the ticket handoff was rejected to keep §18.2 semantics.
+- **Logging.** Exactly one `system_log` row per run: component `TRIGGER_MARKET_EVENT`
+  or `TRIGGER_DEVICE_INVENTORY`; status `SUCCESS`, `PARTIAL_SUCCESS` (some pairs
+  failed), `FAILURE` (nothing succeeded) or `SKIPPED` (nothing to do: event with no
+  product, product/event missing, device not evaluable). Metadata: `trigger`,
+  `cause` (`MARKET_EVENT_RECORDED`, `DEVICE_ADDED`, `DEVICE_UPDATED`, `ADMIN_REFIRE`),
+  target ids, `pairs_selected` / `_succeeded` / `_assessed` / `_rejected_early` /
+  `_ai_skipped` / `_not_shortlisted` / `_unclassifiable` / `_failed`, `rows_deleted`,
+  `failures` and `ai_skipped` (each capped at 20 entries), `duration_ms`.
+- **Manual firing** (ADMIN, Swagger-documented, `202 Accepted` with
+  `{trigger, targetId, status: "QUEUED"}`, `404` for an unknown target):
+  `POST /api/admin/triggers/market-events/{marketEventId}` and
+  `POST /api/admin/triggers/user-devices/{userDeviceId}`. Safe to press repeatedly.
+  Demo flow: `POST /api/admin/market-events` with a `productId` fires Trigger 1 by itself.
+
+Known limits, deliberately not addressed here:
+- Manual devices (`product_id IS NULL`) have no category and are never selected.
+- An admin `PRICE_CHANGE` event does not write `price_history`; the deterministic
+  verdict uses the latest stored price, the event's old/new values only reach the model
+  as `computed.trigger_event`.
+- Trigger 2 costs up to one model call per shortlisted candidate past the gate, on
+  add *and* on edit; there is no per-device cap.
+- The Java maturity gate (§8.3) is still not implemented.
+- Removing a device, or unlinking its product, leaves its `ACTIVE` rows in place.
+
+**Budget on the device API (API contract change, 27 Sep).** `DeviceRequest` gained optional
 `budget` (>= 0, 10.2 digits) and `currency` (3 upper-case letters). With a budget,
 create/update upserts `device_preferences` (currency defaults to `SGD` on create and is
 kept on update when omitted). Without one, existing preferences are left untouched.
@@ -2465,13 +2560,16 @@ flexibility and notes still have no API. `DeviceResponse` does not return the bu
 Without a budget a device is never evaluable (§27.10), so a frontend add-device form
 must send one for the demo to show anything.
 
-Not handled yet: removing a device, or unlinking its product, leaves its existing
-`ACTIVE` rows in place.
+`AssessVocabulary` mirrors the non-factor closed vocabularies of `ai/app/factors.py`;
+`AssessVocabularyTest` reads `factors.py` and fails on drift (it also checks `Factors`).
 
-Tests: `DeviceServiceTest`, `InventoryRecommendationTriggerTest` (Mockito), and
-`InventoryRecommendationTriggerIntegrationTest` - real PostgreSQL and deliberately
-**not** `@Transactional`, because the listener only fires after a real commit; it cleans
-up what it commits.
+Tests: `RecommendationTriggerServiceTest`, `AssessRequestFactoryTest`,
+`InventoryRecommendationTriggerTest` (Mockito); `RecommendationTriggerIntegrationTest`
+(real PostgreSQL, mocked `AiAssessmentClient`, not `@Transactional`: selection, event
+link, early exit with no model call, re-fire supersede, AI-failure isolation, async
+return); `TriggerAdminEndpointsTest` (202/403/404, OpenAPI contract);
+`InventoryRecommendationTriggerIntegrationTest`; launch events in
+`SmartphoneCatalogSinkTests`.
 
 ---
 
@@ -2583,6 +2681,7 @@ JWT_SECRET
 JWT_EXPIRATION_SECONDS    # optional; defaults to 3600 and must be positive
 ADMIN_EMAIL               # required bootstrap administrator email
 ADMIN_PASSWORD            # required; minimum 12 characters
+RECOMMENDATION_AI_ASSESSMENT_ENABLED # optional, commented out; default true (§18.12)
 ```
 
 `AI_API_KEY` and `INGESTION_DEMO_PASSWORD` appeared in an earlier version of this
@@ -2614,7 +2713,18 @@ and the Fly.io image are unaffected — `optional:` simply skips the missing fil
 `backend/pom.xml` pins `POSTGRES_DB=techadvisor_test` for the test phase only, so
 `mvnw test` can never run against the development database.
 Tests also clear live source selection/SearchAPI credentials and disable scheduling;
-fixture tests supply their own source configuration. AI pgvector tests now require
+fixture tests supply their own source configuration. The test phase also sets
+`recommendation.triggers.ai-assessment-enabled=false`, because the root `.env` carries
+a live `AI_SERVICE_TOKEN` and a trigger with a complete request would make a billed
+call; tests that cover the AI step mock `AiAssessmentClient` and turn it back on.
+
+Every distinct Spring test context is cached for the rest of the run with its own
+Hikari pool (10 connections), and the suite is close to PostgreSQL's default
+`max_connections` (100). A test class whose `@MockitoBean`s, properties or
+`@DynamicPropertySource` give it a context nobody else shares should carry
+`@DirtiesContext`, so its pool is released when the class finishes, rather than the
+pool size being reduced for everyone. Prefer reusing an existing property set where
+the test allows it. AI pgvector tests now require
 `TEST_DATABASE_URL` pointing to an actual database ending `_test` and optionally
 `TEST_EMBEDDING_MODEL_PATH` for baked weights.
 
@@ -2686,8 +2796,8 @@ Future auth should replace temporary/demo mechanisms rather than exposing privil
 
 The Vercel project root is `frontend`, so `frontend/vercel.json` owns the SPA
 fallback. Its catch-all rewrite serves `/index.html`, allowing BrowserRouter
-routes such as `/login`, `/devices`, and `/admin/ingestion` to be entered or
-refreshed directly without a Vercel filesystem 404.
+routes such as `/login`, `/devices`, `/admin/ingestion`, and `/admin/catalogue`
+to be entered or refreshed directly without a Vercel filesystem 404.
 
 The repository configuration is the source of truth; no manual Vercel dashboard
 routing rule is required. The frontend deliberately remains on BrowserRouter,
@@ -3116,7 +3226,10 @@ shortlisting, so a preferences row without one cannot be evaluated.
 
 **Flag for SCRUM-20 (device inventory management):** the preferences UI must
 always collect a budget. The backend now accepts `budget`/`currency` on
-`POST`/`PUT /api/devices` (§18.12); the frontend does not send them yet. If the product decides a budget should be optional,
+`POST`/`PUT /api/devices` (§18.12); the frontend does not send them yet. The AI step
+of the triggers additionally needs `condition`, `satisfaction_score`, `purchase_date`,
+`upgrade_urgency` and `brand_flexibility`; the last two have no API yet, so until
+they do, user-created devices get deterministic verdicts only. If the product decides a budget should be optional,
 relax the constraint in a later migration rather than editing V6.
 
 ## 27.11 Where the AI service is hosted — OPEN
@@ -3599,7 +3712,7 @@ Recommended doc cleanup:
 
 If only reading one section, read this:
 
-> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203, backed by a generic product catalogue with `phone` and `gpu` subtype tables for schema evolution. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. MobileAPI.dev is the planned authoritative ongoing source for smartphone specifications and prices, ingested periodically into PostgreSQL rather than called per user request. SearchAPI supplies owner reviews, while benchmarks use separate device-level sources. Other live-source choices remain open and adapters remain replaceable.
+> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203, backed by a generic product catalogue with `phone` and `gpu` subtype tables for schema evolution. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. MobileAPI.dev is the authoritative automated source for smartphone specifications and prices, while authenticated admins can manually correct the catalogue through the dedicated CRUD API. SearchAPI supplies owner reviews, while benchmarks use separate device-level sources. Other live-source choices remain open and adapters remain replaceable.
 
 ---
 

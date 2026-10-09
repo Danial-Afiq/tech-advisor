@@ -8,9 +8,11 @@ import {
 } from "./components/auth/SessionRoute";
 import DashboardPage from "./pages/DashboardPage";
 import DevicesPageTest from "./pages/DevicesPageTest";
-import Login from "./pages/Login";
+import AdminCatalogue from "./pages/AdminCatalogue";
 import ThingieMagiggie from "./pages/ThingieMagiggie";
+import Login from "./pages/Login";
 import {
+  ADMIN_CATALOGUE_PATH,
   ADMIN_HOME_PATH,
   DASHBOARD_PATH,
   DEVICES_PATH,
@@ -33,10 +35,8 @@ function App() {
         </Route>
 
         <Route element={<RequireRole role="ADMIN" />}>
-          <Route
-            path={ADMIN_HOME_PATH}
-            element={<IngestionAdmin />}
-          />
+          <Route path={ADMIN_HOME_PATH} element={<IngestionAdmin />} />
+          <Route path={ADMIN_CATALOGUE_PATH} element={<AdminCatalogue />} />
         </Route>
 
         <Route

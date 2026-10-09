@@ -41,7 +41,7 @@ export default function Login() {
         ? await signUp(email, password)
         : await signIn(email, password);
 
-    navigate(homePathForRole(session.role), { replace: true });
+    await navigate(homePathForRole(session.role), { replace: true });
   };
 
   return (

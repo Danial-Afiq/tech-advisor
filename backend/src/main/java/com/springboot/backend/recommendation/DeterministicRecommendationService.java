@@ -29,9 +29,11 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code ai_model} and {@code prompt_version} stay null for the same reason,
  * and {@code reasoning} is a Java template rather than model prose.
  *
- * <p>{@link InventoryRecommendationTrigger} calls {@link #evaluateAndPersist} when a
- * device is added or edited. Nothing schedules a full run yet; {@link #evaluateAllDevices()}
- * is the entry point a scheduled run is meant to call.
+ * <p>The recommendation triggers ({@code recommendation.trigger}) call
+ * {@link #evaluateAndPersist} when a device is added or edited, and
+ * {@link #evaluatePairAndPersist} for each affected device when a market event is
+ * recorded. Nothing schedules a full run yet; {@link #evaluateAllDevices()} is the
+ * entry point a scheduled run is meant to call.
  */
 @Service
 public class DeterministicRecommendationService {
@@ -106,23 +108,51 @@ public class DeterministicRecommendationService {
         evaluation.ranked().forEach(c -> shortlisted.add(c.candidate().getProductId()));
         evaluation.skipped().forEach(s -> shortlisted.add(s.candidate().getProductId()));
 
-        List<RecommendationRecord> records = new ArrayList<>();
-        for (CandidateEvaluation.Classified classified : evaluation.ranked()) {
-            records.add(toRecord(evaluation, classified));
-        }
+        List<RecommendationRecord> records = toRecords(evaluation, null);
 
         int deleted = repository.replaceForDevice(userDeviceId, shortlisted, records);
         return new PersistedEvaluation(evaluation, records.size(), deleted);
     }
 
-    private RecommendationRecord toRecord(CandidateEvaluation evaluation, CandidateEvaluation.Classified classified) {
+    /**
+     * {@link #evaluateAndPersist} narrowed to one candidate, for when only that
+     * product changed. The §18.11 lifecycle rules apply to that one pair: a
+     * classified candidate is superseded-and-inserted, one that fell off the
+     * shortlist has its rows for this device deleted, and an unclassifiable one is
+     * left as it was. No other candidate's rows are touched.
+     *
+     * @param triggerEventId the market event that caused this run, stored on the
+     *                       row as {@code trigger_event_id}; nullable
+     */
+    public PersistedEvaluation evaluatePairAndPersist(
+            Long userDeviceId, Long candidateProductId, Long triggerEventId) {
+
+        CandidateEvaluation evaluation = evaluationService.evaluate(userDeviceId, candidateProductId);
+        boolean shortlisted = !evaluation.ranked().isEmpty() || !evaluation.skipped().isEmpty();
+
+        List<RecommendationRecord> records = toRecords(evaluation, triggerEventId);
+
+        int deleted = repository.replaceForCandidate(userDeviceId, candidateProductId, shortlisted, records);
+        return new PersistedEvaluation(evaluation, records.size(), deleted);
+    }
+
+    private List<RecommendationRecord> toRecords(CandidateEvaluation evaluation, Long triggerEventId) {
+        List<RecommendationRecord> records = new ArrayList<>();
+        for (CandidateEvaluation.Classified classified : evaluation.ranked()) {
+            records.add(toRecord(evaluation, classified, triggerEventId));
+        }
+        return records;
+    }
+
+    private RecommendationRecord toRecord(
+            CandidateEvaluation evaluation, CandidateEvaluation.Classified classified, Long triggerEventId) {
         CandidateProduct candidate = classified.candidate();
         UpgradeClassification classification = classified.classification();
         return new RecommendationRecord(
                 evaluation.userId(),
                 evaluation.userDeviceId(),
                 candidate.getProductId(),
-                null,
+                triggerEventId,
                 classification.verdict(),
                 null,
                 inputSnapshot(candidate, classification),

@@ -63,7 +63,27 @@ public class CandidateEvaluationService {
      */
     @Transactional(readOnly = true)
     public CandidateEvaluation evaluate(Long userDeviceId) {
-        List<CandidateProduct> candidates = pruningService.getViableCandidates(userDeviceId);
+        return evaluate(userDeviceId, pruningService.getViableCandidates(userDeviceId));
+    }
+
+    /**
+     * Evaluates one owned device against one candidate only, through exactly the
+     * same shortlist and classifier as {@link #evaluate(Long)}. Used when a single
+     * product changed (a market event), so the other candidates are not re-scored.
+     *
+     * <p>A candidate that fails the shortlist (other category, over budget, not
+     * verified, no price, or the owned product itself) comes back with empty
+     * {@code ranked} and {@code skipped}; the same owned-device failures apply.
+     */
+    @Transactional(readOnly = true)
+    public CandidateEvaluation evaluate(Long userDeviceId, Long candidateProductId) {
+        List<CandidateProduct> candidates = pruningService.getViableCandidates(userDeviceId).stream()
+                .filter(candidate -> candidate.getProductId().equals(candidateProductId))
+                .toList();
+        return evaluate(userDeviceId, candidates);
+    }
+
+    private CandidateEvaluation evaluate(Long userDeviceId, List<CandidateProduct> candidates) {
         OwnedSide owned = classificationService.loadOwnedSide(userDeviceId);
 
         List<CandidateEvaluation.Classified> classified = new ArrayList<>();

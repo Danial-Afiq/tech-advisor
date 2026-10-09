@@ -60,6 +60,8 @@ public class IngestionOrchestrator {
     }
     private void execute(RunLog run, String owner) {
         var ownershipLost = new AtomicBoolean();
+        // Guards run/result counters shared with the source worker thread.
+        var runLock = new Object();
         Runnable check = () -> {
             if (ownershipLost.get()) throw new IllegalStateException("Ingestion ownership lost");
             store.heartbeat(run.runId, owner);
@@ -84,7 +86,7 @@ public class IngestionOrchestrator {
                         try {
                             var seen = new HashSet<String>();
                             adapter.ingest(context, payload -> {
-                                synchronized (run) {
+                                synchronized (runLock) {
                                     context.check();
                                     if (result.processedPayloadCount + result.duplicatePayloadCount + result.rejectedPayloadCount >= 1000)
                                         throw new IllegalStateException("Source payload limit exceeded");
@@ -111,7 +113,8 @@ public class IngestionOrchestrator {
                     result.status = result.errorCount == 0 ? "SUCCESS" : "PARTIAL_FAILURE";
                     applyCooldown(run.runId, owner, id, adapter.cooldown());
                 } catch (Exception e) {
-                    synchronized (run) {
+                    if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                    synchronized (runLock) {
                         Throwable error = e;
                         while ((error instanceof ExecutionException || error instanceof CompletionException) && error.getCause() != null) error = error.getCause();
                         if (error instanceof SourceContext.RetryLater retry)
@@ -125,7 +128,7 @@ public class IngestionOrchestrator {
                                 .limit(5).map(StackTraceElement::toString).forEach(result.errors::add);
                     }
                 }
-                synchronized (run) {
+                synchronized (runLock) {
                     result.finishedAt = clock.instant(); store.progress(run, owner);
                 }
             }
