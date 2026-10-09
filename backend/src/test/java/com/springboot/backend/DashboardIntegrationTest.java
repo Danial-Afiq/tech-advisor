@@ -220,7 +220,7 @@ class DashboardIntegrationTest {
                     owner.getId(),
                     currentDeviceId,
                     candidateProductId,
-                    "NOT_RECOMMENDED",
+                    "NO_MEANINGFUL_CHANGE",
                     "D",
                     "Old recommendation"
             );
@@ -262,7 +262,7 @@ class DashboardIntegrationTest {
                     owner.getId(),
                     removedDeviceId,
                     removedDeviceCandidateProductId,
-                    "RECOMMENDED",
+                    "STRONG_UPGRADE_CANDIDATE",
                     "A",
                     "Removed device recommendation"
             );
@@ -283,7 +283,7 @@ class DashboardIntegrationTest {
                     otherUser.getId(),
                     otherDeviceId,
                     candidateProductId,
-                    "RECOMMENDED",
+                    "STRONG_UPGRADE_CANDIDATE",
                     "A",
                     "Another user's recommendation"
             );

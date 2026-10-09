@@ -56,7 +56,7 @@ const recommended = {
   candidateModelName: "Galaxy S26",
   latestPrice: 1299,
   currency: "SGD",
-  verdict: "RECOMMENDED",
+  verdict: "STRONG_UPGRADE_CANDIDATE",
   confidence: "A",
   reasoning: "This device provides a meaningful upgrade.",
   createdAt: "2026-10-07T00:00:00Z",
@@ -71,9 +71,39 @@ const notRecommended = {
   candidateModelName: "iPhone 18",
   latestPrice: 1499,
   currency: "SGD",
-  verdict: "NOT_RECOMMENDED",
+  verdict: "NO_MEANINGFUL_CHANGE",
   confidence: "B",
   reasoning: "The improvement is not large enough.",
+  createdAt: "2026-10-07T00:00:00Z",
+};
+
+const worthConsidering = {
+  recommendationId: 3,
+  currentDeviceId: 11,
+  currentDeviceName: "Second phone",
+  candidateProductId: 22,
+  candidateBrand: "Google",
+  candidateModelName: "Pixel 11",
+  latestPrice: 1199,
+  currency: "SGD",
+  verdict: "WORTH_CONSIDERING",
+  confidence: "B",
+  reasoning: "This upgrade is worth considering.",
+  createdAt: "2026-10-07T00:00:00Z",
+};
+
+const worthWatching = {
+  recommendationId: 4,
+  currentDeviceId: 12,
+  currentDeviceName: "Third phone",
+  candidateProductId: 23,
+  candidateBrand: "OnePlus",
+  candidateModelName: "OnePlus 15",
+  latestPrice: 999,
+  currency: "SGD",
+  verdict: "WORTH_WATCHING",
+  confidence: "C",
+  reasoning: "This candidate is worth monitoring.",
   createdAt: "2026-10-07T00:00:00Z",
 };
 
@@ -150,6 +180,8 @@ describe("DashboardPage", () => {
   it("shows recommendation details and summary counts", async () => {
     mocks.listDashboardRecommendations.mockResolvedValue([
       recommended,
+      worthConsidering,
+      worthWatching,
       notRecommended,
     ]);
 
@@ -176,11 +208,19 @@ describe("DashboardPage", () => {
     ).toBeInTheDocument();
 
     expect(
-      screen.getByText("Upgrade recommended")
+      screen.getByText("Strong upgrade candidate")
     ).toBeInTheDocument();
 
     expect(
-      screen.getByText("No upgrade needed")
+      screen.getByText("Worth considering")
+    ).toBeInTheDocument();
+
+    expect(
+      screen.getByText("Worth watching")
+    ).toBeInTheDocument();
+
+    expect(
+      screen.getByText("No meaningful change")
     ).toBeInTheDocument();
 
     expect(
@@ -197,15 +237,14 @@ describe("DashboardPage", () => {
       )
     ).toBeInTheDocument();
 
-    expect(within(summary).getByText("2")).toBeInTheDocument();
-
     /*
-     * Both recommendation rows belong to the same device.
-     * Therefore, the device must only be counted once.
+     * There are four active recommendations across three devices.
+     * The strong-upgrade and worth-considering devices require
+     * attention. The worth-watching device does not.
      */
+    expect(within(summary).getByText("4")).toBeInTheDocument();
+    expect(within(summary).getByText("2")).toBeInTheDocument();
     expect(within(summary).getByText("1")).toBeInTheDocument();
-
-    expect(within(summary).getByText("0")).toBeInTheDocument();
   });
 
   it("shows an error message when the dashboard request fails", async () => {

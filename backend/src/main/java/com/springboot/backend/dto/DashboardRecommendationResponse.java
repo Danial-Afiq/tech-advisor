@@ -40,7 +40,7 @@ public record DashboardRecommendationResponse(
         @Schema(example = "SGD")
         String currency,
 
-        @Schema(example = "RECOMMENDED")
+        @Schema(example = "STRONG_UPGRADE_CANDIDATE")
         String verdict,
 
         @Schema(example = "A")

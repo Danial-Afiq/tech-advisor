@@ -23,9 +23,9 @@ import {
 
 function verdictDetails(verdict: string) {
   switch (verdict) {
-    case "RECOMMENDED":
+    case "STRONG_UPGRADE_CANDIDATE":
       return {
-        label: "Upgrade recommended",
+        label: "Strong upgrade candidate",
         colour:
           "border-[#ff8a65]/35 bg-[#ff8a65]/10 text-[#ffb199]",
         requiresAttention: true,
@@ -39,9 +39,17 @@ function verdictDetails(verdict: string) {
         requiresAttention: true,
       };
 
-    case "NOT_RECOMMENDED":
+    case "WORTH_WATCHING":
       return {
-        label: "No upgrade needed",
+        label: "Worth watching",
+        colour:
+          "border-[#28c0ff]/35 bg-[#28c0ff]/10 text-[#7ddcff]",
+        requiresAttention: false,
+      };
+
+    case "NO_MEANINGFUL_CHANGE":
+      return {
+        label: "No meaningful change",
         colour:
           "border-[#58d6a9]/35 bg-[#58d6a9]/10 text-[#83e4c1]",
         requiresAttention: false,
@@ -265,7 +273,7 @@ export default function DashboardPage() {
 
             <Button
               variant="primary"
-              onClick={() => navigate(DEVICES_PATH)}
+              onClick={() => void navigate(DEVICES_PATH)}
             >
               View my devices
             </Button>
