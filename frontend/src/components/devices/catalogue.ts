@@ -124,6 +124,23 @@ export function specsToForm(specs?: PhoneSpecs): SpecFormValues {
   ) as SpecFormValues;
 }
 
+/** A field that had a baseline (prefilled) value and is now empty. */
+export const isCleared = (
+  values: SpecFormValues,
+  baseline: SpecFormValues,
+  key: PhoneSpecKey
+) => baseline[key].trim() !== "" && values[key].trim() === "";
+
+/** Emptied prefilled fields the user hasn't yet confirmed as empty on purpose. */
+export const unconfirmedClears = (
+  values: SpecFormValues,
+  baseline: SpecFormValues,
+  keptEmpty: ReadonlySet<PhoneSpecKey>
+): PhoneSpecKey[] =>
+  PHONE_SPEC_KEYS.filter(
+    (key) => isCleared(values, baseline, key) && !keptEmpty.has(key)
+  );
+
 /** Filled-in values only; blank or unparseable numbers are left out. */
 export function formToSpecs(values: SpecFormValues): PhoneSpecs {
   const specs: Record<string, string | number> = {};

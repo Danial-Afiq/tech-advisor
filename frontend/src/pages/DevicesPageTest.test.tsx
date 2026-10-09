@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   listDevices: vi.fn(),
   createDevice: vi.fn(),
   updateDevice: vi.fn(),
+  deleteDevice: vi.fn(),
   listSmartphones: vi.fn(),
 }));
 
@@ -28,6 +29,7 @@ vi.mock("../api/devices", () => ({
   listDevices: mocks.listDevices,
   createDevice: mocks.createDevice,
   updateDevice: mocks.updateDevice,
+  deleteDevice: mocks.deleteDevice,
 }));
 
 vi.mock("../api/catalogue", () => ({
@@ -223,6 +225,50 @@ describe("DevicesPageTest", () => {
     );
     expect(await screen.findByText("Test Laptop Pro was updated in your account.")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /Test Laptop Pro/ })).toBeInTheDocument();
+  });
+
+  it("removes a signed-in device through the backend", async () => {
+    const user = userEvent.setup();
+    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
+    mocks.listDevices.mockResolvedValue([apiDevice]);
+    mocks.deleteDevice.mockResolvedValue(undefined);
+    renderPage();
+
+    await screen.findByRole("heading", { name: /Test Laptop/ });
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+
+    expect(mocks.deleteDevice).toHaveBeenCalledWith("9");
+    expect(await screen.findByText("Device removed")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Test Laptop/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps the device and says so when the backend can't remove it", async () => {
+    const user = userEvent.setup();
+    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
+    mocks.listDevices.mockResolvedValue([apiDevice]);
+    mocks.deleteDevice.mockRejectedValue(new ApiError(0, "Can't reach the server."));
+    renderPage();
+
+    await screen.findByRole("heading", { name: /Test Laptop/ });
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+
+    expect(await screen.findByText("Couldn't remove Test Laptop")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Test Laptop/ })).toBeInTheDocument();
+    expect(screen.queryByText("Device removed")).not.toBeInTheDocument();
+  });
+
+  it("drops a device the backend says is already gone", async () => {
+    const user = userEvent.setup();
+    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
+    mocks.listDevices.mockResolvedValue([apiDevice]);
+    mocks.deleteDevice.mockRejectedValue(new ApiError(404, "Device not found"));
+    renderPage();
+
+    await screen.findByRole("heading", { name: /Test Laptop/ });
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+
+    expect(await screen.findByText("Device removed")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Test Laptop/ })).not.toBeInTheDocument();
   });
 
   it("keeps the edit form open when the backend rejects an edit", async () => {

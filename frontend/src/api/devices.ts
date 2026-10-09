@@ -17,3 +17,7 @@ export const updateDevice = (id: string, request: DeviceRequest) =>
     method: "PUT",
     body: request,
   });
+
+/** `DELETE /api/devices/{id}` — removes a device from the user's current devices. */
+export const deleteDevice = (id: string) =>
+  apiFetch<void>(`/api/devices/${encodeURIComponent(id)}`, { method: "DELETE" });

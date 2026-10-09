@@ -147,6 +147,7 @@ describe("clearing a prefilled spec", () => {
     await user.click(screen.getByRole("option", { name: /iPhone 15 Pro/ }));
     await user.clear(screen.getByLabelText("Chipset"));
     expect(screen.getByLabelText(/Chipset/)).toHaveAccessibleName("Chipset Edited");
+    await user.click(screen.getByRole("button", { name: "Keep empty" }));
     await user.click(screen.getByRole("button", { name: /Continue to upgrade preferences/ }));
 
     const saved = onSave.mock.calls[0][0] as Device;
@@ -187,6 +188,73 @@ describe("clearing a prefilled spec", () => {
     expect(second.getByLabelText(/Chipset/)).toHaveValue("");
     await user.click(second.getByRole("button", { name: "Save device" }));
     expect(onSaveAgain.mock.calls[0][0]).toMatchObject({ specOverrides: { chipset: null } });
+  });
+});
+
+describe("warning when a prefilled spec is emptied", () => {
+  const pickIphone = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.type(modelBox(), "15 pro");
+    await user.click(screen.getByRole("option", { name: /iPhone 15 Pro/ }));
+  };
+  const renderAdd = () => {
+    const onSave = vi.fn();
+    render(
+      <DeviceFormModal device={null} catalogue={ready} onClose={vi.fn()} onSave={onSave} />
+    );
+    return onSave;
+  };
+
+  it("shows the catalogue value and can put it back", async () => {
+    const user = userEvent.setup();
+    renderAdd();
+    await pickIphone(user);
+
+    await user.clear(screen.getByLabelText("RAM (GB)"));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "You left this empty. The catalogue lists 8 GB."
+    );
+    await user.click(screen.getByRole("button", { name: "Use catalogue value" }));
+
+    expect(screen.getByLabelText("RAM (GB)")).toHaveValue(8);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("won't save until each emptied spec is confirmed or restored", async () => {
+    const user = userEvent.setup();
+    const onSave = renderAdd();
+    await pickIphone(user);
+    await user.clear(screen.getByLabelText("RAM (GB)"));
+
+    await user.click(screen.getByRole("button", { name: /Continue to upgrade preferences/ }));
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByText(/Some prefilled specifications are now empty/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Keep empty" }));
+    expect(screen.getByText(/Left empty on purpose/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Continue to upgrade preferences/ }));
+    expect((onSave.mock.calls[0][0] as Device).specOverrides).toEqual({ ramGb: null });
+  });
+
+  it("asks again if a kept-empty spec is filled in and emptied again", async () => {
+    const user = userEvent.setup();
+    renderAdd();
+    await pickIphone(user);
+    const ram = screen.getByLabelText("RAM (GB)");
+    await user.clear(ram);
+    await user.click(screen.getByRole("button", { name: "Keep empty" }));
+    await user.type(ram, "12");
+    await user.clear(ram);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+
+  it("doesn't warn about fields the catalogue never filled", async () => {
+    const user = userEvent.setup();
+    renderAdd();
+    await pickIphone(user);
+    const battery = screen.getByLabelText("Battery (mAh)");
+    await user.type(battery, "3000");
+    await user.clear(battery);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
 

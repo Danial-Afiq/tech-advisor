@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { signIn, signOut } from "../api/auth";
 import { ApiError } from "../api/client";
-import { createDevice, listDevices, updateDevice } from "../api/devices";
+import {
+  createDevice,
+  deleteDevice,
+  listDevices,
+  updateDevice,
+} from "../api/devices";
 import { getSession } from "../api/session";
 import type { Session } from "../api/session";
 import { SignInModal } from "../components/auth/SignInModal";
@@ -32,9 +37,9 @@ import {
  * My Devices — remake of the prototype's "My devices" page.
  *
  * Signed out: local demo devices. Signed in: devices load from
- * `GET /api/devices`, new devices are saved with `POST /api/devices` and
- * edits with `PUT /api/devices/{id}`. Removing and upgrade preferences are
- * still local-only. Signed in,
+ * `GET /api/devices`, new devices are saved with `POST /api/devices`, edits
+ * with `PUT /api/devices/{id}` and removals with `DELETE /api/devices/{id}`.
+ * Upgrade preferences are still local-only. Signed in,
  * the device form suggests smartphones from `GET /api/catalogue/smartphones`
  * and prefills their specs.
  */
@@ -137,12 +142,24 @@ export default function DevicesPageTest() {
     setPrefs({ id: device.id, isNew: true }); // straight into step 2
   };
 
-  const removeDevice = (device: Device) => {
+  const removeDevice = async (device: Device) => {
     if (!window.confirm(`Remove ${name(device)}?`)) return;
+    if (account) {
+      try {
+        await deleteDevice(device.id);
+      } catch (err) {
+        // 404: already gone from the account, so dropping it here is right.
+        if (!(err instanceof ApiError && err.status === 404)) {
+          const message = err instanceof Error ? err.message : "Please try again.";
+          pushToast(`Couldn't remove ${name(device)}`, message, "!");
+          return;
+        }
+      }
+    }
     setDevices((all) => all.filter((d) => d.id !== device.id));
     pushToast(
       "Device removed",
-      `It will no longer be considered in recommendations${localOnly}.`,
+      "It will no longer be considered in recommendations.",
       "−"
     );
   };
@@ -199,7 +216,7 @@ export default function DevicesPageTest() {
           onAdd={() => setEditing("new")}
           onEdit={setEditing}
           onEditPreferences={(d) => setPrefs({ id: d.id, isNew: false })}
-          onRemove={removeDevice}
+          onRemove={(d) => void removeDevice(d)}
         />
       )}
 

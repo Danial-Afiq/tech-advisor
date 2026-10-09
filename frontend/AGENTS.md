@@ -254,10 +254,11 @@ as one deliberate change across all components, not piecemeal.
 
 - Built to this system: `DevicesPageTest`, mounted at the authenticated USER
   route `/devices`. It loads devices from `GET /api/devices`, saves new ones
-  with `POST /api/devices` and edits with `PUT /api/devices/{id}`. Remove and
-  upgrade preferences are still local-only, and the page says so in its
-  toasts. `DELETE /api/devices/{id}` exists but isn't wired yet, and there is
-  no endpoint for device preferences. Brand is required only when adding a
+  with `POST /api/devices`, edits with `PUT /api/devices/{id}` and removes
+  with `DELETE /api/devices/{id}` (a failed remove keeps the device and shows
+  a toast; a 404 counts as already removed). Upgrade preferences are still
+  local-only, and the page says so in its toast. There is no endpoint for
+  device preferences. Brand is required only when adding a
   device: a saved device without a catalogue link comes back with its whole
   name in the model field.
 - Signed in, the device form suggests smartphones from the catalogue as the
@@ -266,7 +267,10 @@ as one deliberate change across all components, not piecemeal.
   keyed by snake_case `phone` column name (what the backend reads). Clearing
   a prefilled field saves it as an explicit `null` override, so it stays
   blank after a reload. The backend's comparison treats a `null` override as
-  unknown (skipped, not scored), never as the catalogue value. No match, an unavailable catalogue, or "Enter manually
+  unknown (skipped, not scored), never as the catalogue value. Emptying a
+  prefilled field shows a warning with "Use catalogue value" and "Keep
+  empty"; the form won't save until each emptied field has one of them.
+  Specs already saved as cleared count as kept. No match, an unavailable catalogue, or "Enter manually
   instead" all leave plain manual entry, with no error. Signed out (demo
   mode) there are no suggestions. Matching is client-side over the full list.
 - `GET /api/devices` doesn't return specs, so the page fills linked devices'

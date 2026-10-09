@@ -19,10 +19,11 @@ import {
   formToSpecs,
   matchCatalogue,
   specsToForm,
+  unconfirmedClears,
 } from "./catalogue";
 import { CONDITIONS, DEVICE_TYPES, defaultPrefs } from "./deviceOptions";
 import { PhoneSpecFields } from "./PhoneSpecFields";
-import type { PhoneSpecs } from "./phoneSpecs";
+import type { PhoneSpecKey, PhoneSpecs } from "./phoneSpecs";
 import type { Condition, Device } from "./types";
 import type { SmartphoneCatalogue } from "./useSmartphoneCatalogue";
 
@@ -65,6 +66,16 @@ export function DeviceFormModal({
   const [linkedId, setLinkedId] = useState(device?.productId ?? null);
   const [specValues, setSpecValues] = useState(() =>
     specsToForm(device?.specs)
+  );
+  // Prefilled specs the user emptied and confirmed as "keep empty". Ones
+  // cleared in an earlier save start out confirmed.
+  const [keptEmpty, setKeptEmpty] = useState<ReadonlySet<PhoneSpecKey>>(
+    () =>
+      new Set(
+        Object.entries(device?.specOverrides ?? {})
+          .filter(([, value]) => value === null)
+          .map(([key]) => key as PhoneSpecKey)
+      )
   );
   const modelId = useId();
 
@@ -138,6 +149,16 @@ export function DeviceFormModal({
   const submit = async (event: { preventDefault: () => void }) => {
     event.preventDefault();
     setError(null);
+    if (
+      isPhone &&
+      baselineForm &&
+      unconfirmedClears(specValues, baselineForm, keptEmpty).length > 0
+    ) {
+      setError(
+        'Some prefilled specifications are now empty. For each one, choose "Keep empty" or put the value back.'
+      );
+      return;
+    }
     setSaving(true);
     try {
       await onSave(
@@ -270,10 +291,17 @@ export function DeviceFormModal({
         {isPhone && (
           <PhoneSpecFields
             values={specValues}
-            onChange={(key, value) =>
-              setSpecValues((all) => ({ ...all, [key]: value }))
-            }
+            onChange={(key, value) => {
+              setSpecValues((all) => ({ ...all, [key]: value }));
+              // Typing again means a later clear has to be confirmed again.
+              if (value.trim() !== "" && keptEmpty.has(key)) {
+                setKeptEmpty((all) => new Set([...all].filter((k) => k !== key)));
+              }
+            }}
             baseline={baselineForm}
+            baselineIsCatalogue={linkedItem !== undefined}
+            keptEmpty={keptEmpty}
+            onKeepEmpty={(key) => setKeptEmpty((all) => new Set(all).add(key))}
           />
         )}
 
