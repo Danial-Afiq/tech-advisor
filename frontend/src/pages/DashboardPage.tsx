@@ -97,7 +97,7 @@ export default function DashboardPage() {
         }
 
         if (err instanceof ApiError && err.status === 401) {
-          navigate(LOGIN_PATH, { replace: true });
+          void navigate(LOGIN_PATH, { replace: true });
           return;
         }
 
@@ -150,11 +150,11 @@ export default function DashboardPage() {
 
   const handleNavigate = (key: NavKey) => {
     if (key === "dashboard") {
-      navigate(DASHBOARD_PATH);
+      void navigate(DASHBOARD_PATH);
     }
 
     if (key === "devices") {
-      navigate(DEVICES_PATH);
+      void navigate(DEVICES_PATH);
     }
   };
 

@@ -130,11 +130,11 @@ export default function DevicesPageTest() {
       title="My devices"
       onNavigate={(key) => {
         if (key === "dashboard") {
-          navigate(DASHBOARD_PATH);
+          void navigate(DASHBOARD_PATH);
         }
 
         if (key === "devices") {
-          navigate(DEVICES_PATH);
+          void navigate(DEVICES_PATH);
         }
       }}
       user={
