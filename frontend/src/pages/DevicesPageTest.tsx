@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { signIn, signOut } from "../api/auth";
 import { ApiError } from "../api/client";
-import { createDevice, listDevices } from "../api/devices";
+import { createDevice, listDevices, updateDevice } from "../api/devices";
 import { getSession } from "../api/session";
 import type { Session } from "../api/session";
 import { SignInModal } from "../components/auth/SignInModal";
@@ -19,6 +19,7 @@ import { DeviceGrid } from "../components/devices/DeviceGrid";
 import { UpgradePreferencesModal } from "../components/devices/UpgradePreferencesModal";
 import { withCatalogue } from "../components/devices/catalogue";
 import { deviceFromApi, deviceToRequest } from "../components/devices/deviceApi";
+import type { DeviceResponse } from "../components/devices/deviceApi";
 import { DEMO_DEVICES, DEMO_USER } from "../components/devices/demoData";
 import type { Device } from "../components/devices/types";
 import { useSmartphoneCatalogue } from "../components/devices/useSmartphoneCatalogue";
@@ -27,8 +28,9 @@ import { useSmartphoneCatalogue } from "../components/devices/useSmartphoneCatal
  * My Devices — remake of the prototype's "My devices" page.
  *
  * Signed out: local demo devices. Signed in: devices load from
- * `GET /api/devices` and new devices are saved with `POST /api/devices`.
- * Editing, removing and upgrade preferences are still local-only. Signed in,
+ * `GET /api/devices`, new devices are saved with `POST /api/devices` and
+ * edits with `PUT /api/devices/{id}`. Removing and upgrade preferences are
+ * still local-only. Signed in,
  * the device form suggests smartphones from `GET /api/catalogue/smartphones`
  * and prefills their specs.
  */
@@ -98,23 +100,32 @@ export default function DevicesPageTest() {
 
   /** Throws on API failure so `DeviceFormModal` stays open and shows it. */
   const saveDevice = async (draft: Device, isNew: boolean) => {
+    // The saved row, plus what the backend doesn't store yet.
+    const fromSaved = (saved: DeviceResponse): Device => ({
+      ...deviceFromApi(saved, {
+        preferences: draft.upgradePreferences,
+        primary: draft.primary,
+        image: draft.image,
+      }),
+      type: draft.type, // not stored by the backend; keep it for this session
+    });
+
     if (!isNew) {
-      replace(draft);
+      const device = account
+        ? fromSaved(await updateDevice(draft.id, deviceToRequest(draft)))
+        : draft;
+      replace(device);
       setEditing(null);
-      pushToast("Device updated", `${name(draft)} was updated${localOnly}.`);
+      pushToast(
+        "Device updated",
+        `${name(device)} was updated${account ? " in your account" : ""}.`
+      );
       return;
     }
 
     let device = draft;
     if (account) {
-      const saved = await createDevice(deviceToRequest(draft));
-      device = {
-        ...deviceFromApi(saved, {
-          preferences: draft.upgradePreferences,
-          primary: draft.primary,
-        }),
-        type: draft.type, // not stored by the backend; keep it for this session
-      };
+      device = fromSaved(await createDevice(deviceToRequest(draft)));
       pushToast("Device saved", `${name(device)} was added to your account.`);
     }
     setEditing(null);
@@ -159,7 +170,7 @@ export default function DevicesPageTest() {
         <span>
           {account ? (
             <>
-              Signed in as <b>{account.email}</b>. New devices are saved to
+              Signed in as <b>{account.email}</b>. Devices you add or edit are saved to
               your account.
             </>
           ) : (

@@ -71,7 +71,7 @@ public class SpecComparisonService {
         }
 
         for (SpecFactorCatalog.TextSpecRule rule : SpecFactorCatalog.TEXT_SPECS) {
-            String from = rule.reader().apply(owned);
+            String from = textOverrideOr(ownedOverrides, rule.spec(), rule.reader().apply(owned));
             String to = rule.reader().apply(candidate);
             if (from == null && to == null) {
                 continue;
@@ -193,6 +193,9 @@ public class SpecComparisonService {
     /**
      * The owner's override for a spec, falling back to the catalogue value.
      *
+     * <p>An explicit {@code null} means the owner cleared the catalogue value as
+     * wrong or unknown, so the spec is unknown rather than the catalogue figure.
+     *
      * <p>An override that is present but not a number is ignored rather than
      * failing the whole comparison: {@code spec_overrides} is free-form JSON the
      * user controls, and one malformed entry should cost that spec, not the
@@ -200,6 +203,9 @@ public class SpecComparisonService {
      */
     private static Double overrideOr(Map<String, Object> overrides, String spec, Number catalogueValue) {
         if (overrides != null) {
+            if (overrides.containsKey(spec) && overrides.get(spec) == null) {
+                return null;
+            }
             Object override = overrides.get(spec);
             if (override instanceof Number number) {
                 return number.doubleValue();
@@ -213,6 +219,26 @@ public class SpecComparisonService {
             }
         }
         return SpecFactorCatalog.toDouble(catalogueValue);
+    }
+
+    /**
+     * The owner's override for a text spec, falling back to the catalogue value.
+     * An explicit {@code null} or blank override means the owner cleared it, so
+     * the spec is unknown. A non-text override is ignored, as in
+     * {@link #overrideOr}.
+     */
+    private static String textOverrideOr(Map<String, Object> overrides, String spec, String catalogueValue) {
+        if (overrides == null || !overrides.containsKey(spec)) {
+            return catalogueValue;
+        }
+        Object override = overrides.get(spec);
+        if (override == null) {
+            return null;
+        }
+        if (override instanceof String text) {
+            return text.isBlank() ? null : text.trim();
+        }
+        return catalogueValue;
     }
 
     /** One decimal place, matching the precision the §9 examples use. */

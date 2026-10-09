@@ -8,7 +8,9 @@ export type SmartphoneCatalogue = {
   items: SmartphoneCatalogueItem[];
 };
 
+// Shared constants, so a consumer's memos don't rerun on every render.
 const UNAVAILABLE: SmartphoneCatalogue = { status: "unavailable", items: [] };
+const LOADING: SmartphoneCatalogue = { status: "loading", items: [] };
 
 /**
  * Loads the smartphone catalogue once while `enabled` (the endpoint needs a
@@ -34,5 +36,5 @@ export function useSmartphoneCatalogue(enabled: boolean): SmartphoneCatalogue {
   }, [enabled]);
 
   if (!enabled) return UNAVAILABLE;
-  return loaded ?? { status: "loading", items: [] };
+  return loaded ?? LOADING;
 }

@@ -68,8 +68,15 @@ export function DeviceFormModal({
   );
   const modelId = useId();
 
+  // The catalogue row the spec fields were filled from. Fixed when the form
+  // opens or a suggestion is picked: if the catalogue finishes loading while
+  // the form is open, the fields still hold the saved specs, and comparing
+  // them to the late row would read every untouched value as cleared.
+  const [linkedItem, setLinkedItem] = useState(() =>
+    catalogue?.items.find((item) => item.id === device?.productId)
+  );
+
   const items = useMemo(() => catalogue?.items ?? [], [catalogue]);
-  const linkedItem = items.find((item) => item.id === linkedId);
   const isPhone = type === "Phone";
   const suggestions = useMemo(
     () => (linkedId === null ? matchCatalogue(items, model, brand) : []),
@@ -92,6 +99,7 @@ export function DeviceFormModal({
 
   const pick = (item: SmartphoneCatalogueItem) => {
     setLinkedId(item.id);
+    setLinkedItem(item);
     setBrand(item.brand);
     setModel(item.modelName);
     setType("Phone");
@@ -190,7 +198,9 @@ export function DeviceFormModal({
           </Field>
           <Field label="Brand">
             <Input
-              required
+              // A saved device without a catalogue link comes back with its
+              // whole name in the model field, so editing it needs no brand.
+              required={isNew}
               value={brand}
               onChange={(e) => {
                 setBrand(e.target.value);

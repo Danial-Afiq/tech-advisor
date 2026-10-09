@@ -10,7 +10,8 @@ import {
   specsToForm,
   withCatalogue,
 } from "./catalogue";
-import { deviceToRequest } from "./deviceApi";
+import { deviceFromApi, deviceToRequest } from "./deviceApi";
+import type { DeviceResponse } from "./deviceApi";
 import { DeviceFormModal } from "./DeviceFormModal";
 import type { Device } from "./types";
 import type { SmartphoneCatalogue } from "./useSmartphoneCatalogue";
@@ -90,6 +91,10 @@ describe("catalogue helpers", () => {
     expect(
       diffSpecs({ ramGb: 12, os: "iOS", storageGb: 256 }, { ramGb: 8, os: "iOS", storageGb: 256 })
     ).toEqual({ ramGb: 12 });
+    // A baseline value the user cleared is an explicit null, not "unchanged".
+    expect(diffSpecs({ os: "iOS" }, { chipset: "Apple A17 Pro", os: "iOS" })).toEqual({
+      chipset: null,
+    });
   });
 
   it("fills a linked device's specs from the catalogue, keeping overrides", () => {
@@ -128,6 +133,87 @@ describe("catalogue helpers", () => {
       customName: null,
       specOverrides: '{"storage_gb":512,"display_size_inches":6.1}',
     });
+  });
+});
+
+describe("clearing a prefilled spec", () => {
+  it("survives saving and reloading instead of reverting to the catalogue", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(
+      <DeviceFormModal device={null} catalogue={ready} onClose={vi.fn()} onSave={onSave} />
+    );
+    await user.type(modelBox(), "15 pro");
+    await user.click(screen.getByRole("option", { name: /iPhone 15 Pro/ }));
+    await user.clear(screen.getByLabelText("Chipset"));
+    expect(screen.getByLabelText(/Chipset/)).toHaveAccessibleName("Chipset Edited");
+    await user.click(screen.getByRole("button", { name: /Continue to upgrade preferences/ }));
+
+    const saved = onSave.mock.calls[0][0] as Device;
+    expect(saved.specOverrides).toEqual({ chipset: null });
+    expect(saved.specs?.chipset).toBeNull();
+
+    // Sent as an explicit null ...
+    const request = deviceToRequest(saved);
+    expect(request.specOverrides).toBe('{"chipset":null}');
+
+    // ... and read back as null, so the catalogue value doesn't reappear.
+    const reloaded = deviceFromApi({
+      id: 1,
+      productId: 12,
+      productBrand: "Apple",
+      productModelName: "iPhone 15 Pro",
+      customName: null,
+      purchaseDate: null,
+      condition: null,
+      satisfactionScore: null,
+      useCases: "[]",
+      specOverrides: request.specOverrides,
+      current: true,
+      createdAt: "",
+      updatedAt: "",
+    } satisfies DeviceResponse);
+    expect(reloaded.specOverrides).toEqual({ chipset: null });
+    const shown = withCatalogue(reloaded, iphone);
+    expect(shown.specs).toMatchObject({ chipset: null, storageGb: 256, ramGb: 8 });
+
+    // Editing it again keeps the field blank and the override in place.
+    const onSaveAgain = vi.fn();
+    render(
+      <DeviceFormModal device={shown} catalogue={ready} onClose={vi.fn()} onSave={onSaveAgain} />
+    );
+    const dialogs = screen.getAllByRole("dialog");
+    const second = within(dialogs[dialogs.length - 1]);
+    expect(second.getByLabelText(/Chipset/)).toHaveValue("");
+    await user.click(second.getByRole("button", { name: "Save device" }));
+    expect(onSaveAgain.mock.calls[0][0]).toMatchObject({ specOverrides: { chipset: null } });
+  });
+});
+
+describe("editing a linked device while the catalogue loads", () => {
+  it("doesn't clear untouched specs when the catalogue arrives mid-edit", async () => {
+    const user = userEvent.setup();
+    // As the devices page passes it before the catalogue loads: overrides only.
+    const device = {
+      id: "1",
+      productId: 12,
+      type: "Phone",
+      brand: "Apple",
+      model: "iPhone 15 Pro",
+      primary: true,
+      use: "",
+      purchaseDate: "",
+      specs: { storageGb: 512 },
+      specOverrides: { storageGb: 512 },
+    } as unknown as Device;
+    const onSave = vi.fn();
+    const props = { device, onClose: vi.fn(), onSave };
+    const { rerender } = render(
+      <DeviceFormModal {...props} catalogue={{ status: "loading", items: [] }} />
+    );
+    rerender(<DeviceFormModal {...props} catalogue={ready} />);
+    await user.click(screen.getByRole("button", { name: "Save device" }));
+    expect((onSave.mock.calls[0][0] as Device).specOverrides).toEqual({ storageGb: 512 });
   });
 });
 

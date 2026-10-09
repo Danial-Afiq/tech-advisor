@@ -38,16 +38,17 @@ export function withCatalogue(
   };
 }
 
-const SUMMARY_KEYS: PhoneSpecKey[] = ["chipset", "storageGb", "ramGb"];
+/** The fields a suggestion's summary line shows, in order. */
+const SUMMARY_FIELDS = (["chipset", "storageGb", "ramGb"] as PhoneSpecKey[]).map(
+  (key) => PHONE_SPEC_GROUPS.flatMap((g) => g.fields).find((f) => f.key === key)!
+);
 
 /** Short spec line for a suggestion, e.g. "Apple A17 Pro · 256 GB · 8 GB RAM". */
 export function catalogueSummary(item: SmartphoneCatalogueItem): string {
   const specs = catalogueSpecs(item);
-  const fields = PHONE_SPEC_GROUPS.flatMap((g) => g.fields);
-  return SUMMARY_KEYS.map((key) => {
-    const field = fields.find((f) => f.key === key);
-    const text = field && formatSpec(field, specs[key]);
-    return text && key === "ramGb" ? `${text} RAM` : text;
+  return SUMMARY_FIELDS.map((field) => {
+    const text = formatSpec(field, specs[field.key]);
+    return text && field.key === "ramGb" ? `${text} RAM` : text;
   })
     .filter(Boolean)
     .join(" · ");
@@ -55,6 +56,32 @@ export function catalogueSummary(item: SmartphoneCatalogueItem): string {
 
 const words = (text: string) =>
   text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
+type IndexedItem = {
+  item: SmartphoneCatalogueItem;
+  /** Words of "brand model", lowercased. */
+  name: string[];
+  brand: string;
+  model: string;
+};
+
+// Lowercased names, built once per catalogue list instead of on every
+// keystroke. Keyed by the array, which stays the same while the list is.
+const indexes = new WeakMap<SmartphoneCatalogueItem[], IndexedItem[]>();
+
+function indexed(items: SmartphoneCatalogueItem[]): IndexedItem[] {
+  let index = indexes.get(items);
+  if (!index) {
+    index = items.map((item) => ({
+      item,
+      name: words(catalogueName(item)),
+      brand: item.brand.toLowerCase(),
+      model: item.modelName.toLowerCase(),
+    }));
+    indexes.set(items, index);
+  }
+  return index;
+}
 
 /**
  * Catalogue items whose name matches what the user typed. Every typed word
@@ -70,17 +97,16 @@ export function matchCatalogue(
   const tokens = words(query);
   if (tokens.length === 0) return [];
   const brandKey = brand.trim().toLowerCase();
+  const queryKey = query.trim().toLowerCase();
 
-  return items
-    .map((item, index) => {
-      const name = words(catalogueName(item));
-      if (!tokens.every((t) => name.some((w) => w.startsWith(t)))) return null;
+  return indexed(items)
+    .flatMap((entry, index) => {
+      if (!tokens.every((t) => entry.name.some((w) => w.startsWith(t)))) return [];
       let rank = 0;
-      if (brandKey && item.brand.toLowerCase().startsWith(brandKey)) rank -= 2;
-      if (item.modelName.toLowerCase().startsWith(query.trim().toLowerCase())) rank -= 1;
-      return { item, rank, index };
+      if (brandKey && entry.brand.startsWith(brandKey)) rank -= 2;
+      if (entry.model.startsWith(queryKey)) rank -= 1;
+      return [{ item: entry.item, rank, index }];
     })
-    .filter((m) => m !== null)
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .slice(0, limit)
     .map((m) => m.item);
@@ -117,11 +143,13 @@ export function formToSpecs(values: SpecFormValues): PhoneSpecs {
 /**
  * The values in `specs` that differ from `baseline`. Saved as the device's
  * `spec_overrides`, so the shared catalogue row is never copied or mutated.
+ * A baseline value missing from `specs` was cleared by the user and comes
+ * back as `null`, so it stays blank instead of falling back to the catalogue.
  */
 export function diffSpecs(specs: PhoneSpecs, baseline: PhoneSpecs): PhoneSpecs {
   return Object.fromEntries(
-    Object.entries(specs).filter(
-      ([key, value]) => baseline[key as PhoneSpecKey] !== value
+    PHONE_SPEC_KEYS.map((key) => [key, specs[key] ?? null] as const).filter(
+      ([key, value]) => (baseline[key] ?? null) !== value
     )
   ) as PhoneSpecs;
 }

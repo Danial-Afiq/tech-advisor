@@ -10,3 +10,10 @@ export const listDevices = () => apiFetch<DeviceResponse[]>("/api/devices");
 /** `POST /api/devices` — adds a device to the signed-in user's inventory. */
 export const createDevice = (request: DeviceRequest) =>
   apiFetch<DeviceResponse>("/api/devices", { method: "POST", body: request });
+
+/** `PUT /api/devices/{id}` — replaces every editable field of an owned device. */
+export const updateDevice = (id: string, request: DeviceRequest) =>
+  apiFetch<DeviceResponse>(`/api/devices/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: request,
+  });

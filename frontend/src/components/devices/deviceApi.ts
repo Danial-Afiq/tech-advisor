@@ -56,6 +56,8 @@ const snake = (key: string) =>
  * Only `device.specOverrides` is sent, keyed by `phone` column name as the
  * backend reads them. `device.specs` is catalogue + overrides merged, so
  * sending it would copy catalogue values into overrides.
+ * A cleared spec is sent as `null`, which the backend reads as "unknown"
+ * rather than falling back to the catalogue value.
  */
 export function deviceToRequest(device: Device): DeviceRequest {
   const name = `${device.brand} ${device.model}`.trim();

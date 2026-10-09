@@ -253,17 +253,20 @@ as one deliberate change across all components, not piecemeal.
 ## 7. Current state (keep this section up to date)
 
 - Built to this system: `DevicesPageTest`, mounted at the authenticated USER
-  route `/devices`. It loads devices from `GET /api/devices` and saves new ones
-  with `POST /api/devices`. Edit, remove and upgrade preferences are still
-  local-only, and the page says so in its toasts. `PUT` / `DELETE
-  /api/devices/{id}` exist but aren't wired yet, and there is no endpoint for
-  device preferences.
+  route `/devices`. It loads devices from `GET /api/devices`, saves new ones
+  with `POST /api/devices` and edits with `PUT /api/devices/{id}`. Remove and
+  upgrade preferences are still local-only, and the page says so in its
+  toasts. `DELETE /api/devices/{id}` exists but isn't wired yet, and there is
+  no endpoint for device preferences. Brand is required only when adding a
+  device: a saved device without a catalogue link comes back with its whole
+  name in the model field.
 - Signed in, the device form suggests smartphones from the catalogue as the
   user types a model name. Picking one sends its `productId` and prefills the
   spec fields. Only specs the user changes are saved as `specOverrides`,
   keyed by snake_case `phone` column name (what the backend reads). Clearing
-  a prefilled field doesn't override it, because the backend falls back to the
-  catalogue value. No match, an unavailable catalogue, or "Enter manually
+  a prefilled field saves it as an explicit `null` override, so it stays
+  blank after a reload. The backend's comparison treats a `null` override as
+  unknown (skipped, not scored), never as the catalogue value. No match, an unavailable catalogue, or "Enter manually
   instead" all leave plain manual entry, with no error. Signed out (demo
   mode) there are no suggestions. Matching is client-side over the full list.
 - `GET /api/devices` doesn't return specs, so the page fills linked devices'

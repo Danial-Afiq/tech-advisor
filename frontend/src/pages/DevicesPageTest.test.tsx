@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   signOut: vi.fn(),
   listDevices: vi.fn(),
   createDevice: vi.fn(),
+  updateDevice: vi.fn(),
   listSmartphones: vi.fn(),
 }));
 
@@ -26,6 +27,7 @@ vi.mock("../api/auth", () => ({
 vi.mock("../api/devices", () => ({
   listDevices: mocks.listDevices,
   createDevice: mocks.createDevice,
+  updateDevice: mocks.updateDevice,
 }));
 
 vi.mock("../api/catalogue", () => ({
@@ -192,5 +194,50 @@ describe("DevicesPageTest", () => {
     expect(screen.getAllByText("Google Tensor G4")).toHaveLength(2);
     expect(screen.getByText("256 GB")).toBeInTheDocument();
     expect(screen.getByText("128 GB")).toBeInTheDocument();
+  });
+
+  it("saves edits to a signed-in device through the backend", async () => {
+    const user = userEvent.setup();
+    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
+    mocks.listDevices.mockResolvedValue([apiDevice]);
+    mocks.updateDevice.mockResolvedValue({
+      ...apiDevice,
+      customName: "Test Laptop Pro",
+      condition: "Fair",
+    });
+    renderPage();
+
+    await screen.findByRole("heading", { name: /Test Laptop/ });
+    await user.click(screen.getByRole("button", { name: "Edit device" }));
+    const model = screen.getByLabelText("Model / configuration");
+    await user.clear(model);
+    await user.type(model, "Test Laptop Pro");
+    await user.selectOptions(screen.getByLabelText("Condition"), "Fair");
+    await user.click(screen.getByRole("button", { name: "Save device" }));
+
+    await waitFor(() =>
+      expect(mocks.updateDevice).toHaveBeenCalledWith(
+        "9",
+        expect.objectContaining({ customName: "Test Laptop Pro", condition: "Fair" })
+      )
+    );
+    expect(await screen.findByText("Test Laptop Pro was updated in your account.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Test Laptop Pro/ })).toBeInTheDocument();
+  });
+
+  it("keeps the edit form open when the backend rejects an edit", async () => {
+    const user = userEvent.setup();
+    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
+    mocks.listDevices.mockResolvedValue([apiDevice]);
+    mocks.updateDevice.mockRejectedValue(new ApiError(400, "Invalid device"));
+    renderPage();
+
+    await screen.findByRole("heading", { name: /Test Laptop/ });
+    await user.click(screen.getByRole("button", { name: "Edit device" }));
+    await user.click(screen.getByRole("button", { name: "Save device" }));
+
+    expect(await screen.findByText("Invalid device")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save device" })).toBeInTheDocument();
+    expect(screen.queryByText("Device updated")).not.toBeInTheDocument();
   });
 });
