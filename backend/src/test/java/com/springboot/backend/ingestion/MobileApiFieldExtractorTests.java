@@ -119,6 +119,25 @@ class MobileApiFieldExtractorTests {
         assertEquals("INR", price.currency());
     }
 
+    // Review-flagged regression: a 4+-digit amount with NO thousands comma ("$1299.00") was
+    // still mis-parsed after the comma-grouped fix above - the first alternative's \d{1,3}
+    // matched just "129" with zero (?:,\d{3}) repeats, which is a complete match for that
+    // alternative with nothing mandatory after it, so the engine never tried the second,
+    // fully-greedy alternative. Fixed by requiring at least one comma group in the first
+    // alternative instead of allowing zero.
+    @Test void priceTextParsesUngroupedFourAndFiveDigitAmountsInFull() {
+        assertEquals(new BigDecimal("1299.00"), MobileApiFieldExtractor.priceText("$1299.00").get().amount());
+        assertEquals(new BigDecimal("2499.90"), MobileApiFieldExtractor.priceText("$2499.90").get().amount());
+        assertEquals(new BigDecimal("9999"), MobileApiFieldExtractor.priceText("$9999").get().amount());
+        // The code-form path (PRICE_CODE) shares the same AMOUNT pattern - must not regress too.
+        assertEquals(new BigDecimal("1299"), MobileApiFieldExtractor.priceText("1299 EUR").get().amount());
+    }
+
+    @Test void priceTextStillParsesCommaGroupedAmountsAfterTheUngroupedFix() {
+        assertEquals(new BigDecimal("1299.00"), MobileApiFieldExtractor.priceText("$1,299.00").get().amount());
+        assertEquals(new BigDecimal("1299"), MobileApiFieldExtractor.priceText("1,299 EUR").get().amount());
+    }
+
     // Real text pulled directly from live GET /devices/43/ and /devices/42/ (iPhone 17 Pro /
     // Pro Max), ticket 1.8 - MobileAPI lists every storage tier a model ships in as one
     // free-text field, not separate records.

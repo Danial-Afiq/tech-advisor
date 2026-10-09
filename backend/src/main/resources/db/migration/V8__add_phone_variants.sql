@@ -22,6 +22,7 @@ CREATE TABLE phone_variants (
     product_id              BIGINT      NOT NULL
                              REFERENCES products (id) ON DELETE CASCADE,
     chipset                 TEXT,
+    model_number            TEXT,
     ram_gb                  INTEGER,
     cpu_ghz                 NUMERIC,
     storage_gb              INTEGER,
@@ -39,13 +40,18 @@ CREATE TABLE phone_variants (
     software_support_years  NUMERIC,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- All five AC-named distinguishing attributes (chipset/SoC, RAM, storage,
+    -- model number, region), not just three of them: two variants sharing
+    -- storage/RAM/region but differing only in chipset or model_number must
+    -- stay distinguishable (ticket 1.8 AC4) - storage/ram/region alone let a
+    -- real chipset-only difference collide into one row.
     -- NULLS NOT DISTINCT (PG15+): two variants of the same product with every
     -- dimension unknown are still treated as the same row, not silently
     -- duplicated - no source gives a stable per-SKU identity to key on
     -- instead (see AGENTS.md on MobileAPI's storage/colors being free-text
     -- lists, not separate records).
     CONSTRAINT phone_variants_identity_unique UNIQUE NULLS NOT DISTINCT
-        (product_id, storage_gb, ram_gb, region)
+        (product_id, storage_gb, ram_gb, region, chipset, model_number)
 );
 
 COMMENT ON TABLE phone_variants IS
@@ -53,8 +59,12 @@ COMMENT ON TABLE phone_variants IS
     'the general-model identity; a model with no known variant breakdown yet '
     'simply has one row here with storage_gb/ram_gb/region left null.';
 COMMENT ON COLUMN phone_variants.region IS
-    'Regional/carrier distinction when known (e.g. a model number suffix); '
-    'null when the source does not distinguish region.';
+    'Regional/carrier distinction when known; null when the source does not '
+    'distinguish region.';
+COMMENT ON COLUMN phone_variants.model_number IS
+    'The manufacturer''s own per-SKU model number when known (e.g. a specific '
+    'entry from MobileAPI''s comma-separated misc.model_numbers list), not a '
+    'Tech Advisor identifier. Null when the source does not break this out.';
 
 CREATE INDEX phone_variants_product_idx ON phone_variants (product_id);
 

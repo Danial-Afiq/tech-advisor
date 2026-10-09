@@ -38,7 +38,15 @@ public final class MobileApiFieldExtractor {
     // a real live misc.price string ("GET /devices/43/", iPhone 17 Pro) was silently
     // mis-parsed as "1" before this: a bare \d+ stops at the first comma. firstMatch() strips
     // any remaining comma before the BigDecimal parse.
-    private static final String AMOUNT = "(\\d{1,3}(?:,\\d{3})*(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?)";
+    //
+    // The first alternative requires at least one comma group ((?:,\d{3})+, not *) - with a
+    // bare *, "$1299.00" matched the first alternative via \d{1,3} alone (greedy to "129"),
+    // which succeeds with zero comma groups and nothing mandatory after it, so the engine
+    // never backtracks to the second, fully-greedy alternative: group(1) came back "129", not
+    // "1299.00". Requiring +, a string with no comma fails the first alternative outright and
+    // falls through to \d+, which consumes the whole run. Caught by review, not by the
+    // original test suite - none of its cases used a 4+-digit ungrouped amount.
+    private static final String AMOUNT = "(\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:\\.\\d{1,2})?)";
     private static final Pattern PRICE_USD = Pattern.compile(
             "\\$\\s?" + AMOUNT, Pattern.UNICODE_CHARACTER_CLASS);
     private static final Pattern PRICE_EUR = Pattern.compile(
@@ -49,11 +57,13 @@ public final class MobileApiFieldExtractor {
     // misc.price string, not a hypothetical currency to support.
     private static final Pattern PRICE_INR = Pattern.compile(
             "₹\\s?" + AMOUNT, Pattern.UNICODE_CHARACTER_CLASS);
-    // Possessive quantifiers keep long malformed price strings linear-time: once the
-    // numeric and whitespace portions are consumed, there is no useful fallback split.
-    // The lookbehind stops find() from retrying at every digit inside one long number.
+    // The lookbehind stops find() from retrying at every digit inside one long number; the
+    // possessive \s*+ after AMOUNT means no backtracking into the whitespace once consumed.
+    // Was its own separate, comma-blind pattern until caught by review + a test: "1,299 EUR"
+    // returned 299 (the digits after the comma only) because the old \d++ stopped there and
+    // the lookbehind let find() retry from the first digit after the comma. Now shares AMOUNT.
     private static final Pattern PRICE_CODE = Pattern.compile(
-            "(?<!\\d)(\\d++(?:\\.\\d{1,2})?)\\s*+(USD|EUR|GBP|INR)", Pattern.CASE_INSENSITIVE);
+            "(?<!\\d)" + AMOUNT + "\\s*+(USD|EUR|GBP|INR)", Pattern.CASE_INSENSITIVE);
     private static final Pattern CPU_GHZ = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*GHz", Pattern.CASE_INSENSITIVE);
     private static final Pattern DISPLAY_INCHES = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*inches?", Pattern.CASE_INSENSITIVE);
     private static final Pattern WEIGHT_G = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*g\\b", Pattern.CASE_INSENSITIVE);
@@ -127,7 +137,12 @@ public final class MobileApiFieldExtractor {
         Matcher code = PRICE_CODE.matcher(priceText);
         if (code.find()) {
             try {
-                return Optional.of(new PriceMatch(new BigDecimal(code.group(1)), code.group(2).toUpperCase(Locale.ROOT)));
+                // Found alongside the regression fix above: a comma-grouped code-form amount
+                // ("1,299 EUR") threw here (BigDecimal doesn't accept commas) and silently fell
+                // through to the symbol check, which can't match a code-only string either -
+                // losing the price entirely instead of mis-parsing it. firstMatch() already
+                // stripped commas for every other caller; this direct construction did not.
+                return Optional.of(new PriceMatch(new BigDecimal(code.group(1).replace(",", "")), code.group(2).toUpperCase(Locale.ROOT)));
             } catch (NumberFormatException ignored) { /* fall through to symbol check */ }
         }
         Optional<BigDecimal> usd = firstMatch(priceText, PRICE_USD);
