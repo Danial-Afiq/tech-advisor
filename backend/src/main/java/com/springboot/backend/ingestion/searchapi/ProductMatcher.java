@@ -105,8 +105,13 @@ public final class ProductMatcher {
         return matches;
     }
 
-    private static final java.util.regex.Pattern STORAGE_MENTION =
-            java.util.regex.Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(GB|TB)", java.util.regex.Pattern.CASE_INSENSITIVE);
+    // Possessive quantifiers (++/*+) on the digit/whitespace runs: each one only ever
+    // needs to match greedily with no backtracking into it once past, so forcing that
+    // instead of leaving it to the engine avoids the super-linear worst case the plain
+    // +/* version has on pathological input (SonarCloud java:S8786) without changing
+    // what matches - still "256GB"/"1.5 TB" etc, same as before.
+    private static final java.util.regex.Pattern STORAGE_MENTION = java.util.regex.Pattern.compile(
+            "(\\d++(?:\\.\\d++)?)\\s*+(GB|TB)", java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /**
      * Every storage figure mentioned anywhere in a shopping listing title (e.g. "Apple
