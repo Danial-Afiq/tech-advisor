@@ -80,11 +80,19 @@ public final class MobileApiFieldExtractor {
      * Base object's "hardware" field with the RAM portion removed, e.g.
      * "Snapdragon 8 Gen 3, 8GB RAM" -> "Snapdragon 8 Gen 3". Some real
      * devices have no chipset recorded at all (just "2 GB RAM, ") -> empty.
+     *
+     * RAM can lead OR trail the chipset - confirmed live (ticket 1.8, GET
+     * /devices/43/): a real iPhone 17 Pro gives "12GB RAM, Apple A19 Pro",
+     * RAM first. Removing only a RAM *prefix* (the original form of this
+     * method) silently returned empty for that real device - it never
+     * looked at what came after the match. Removing the matched span
+     * itself, from wherever it falls, handles both real orderings.
      */
     public static Optional<String> chipset(String hardwareText) {
         if (hardwareText == null) return Optional.empty();
         Matcher m = RAM_GB.matcher(hardwareText);
-        String remainder = (m.find() ? hardwareText.substring(0, m.start()) : hardwareText).strip();
+        String remainder = (m.find() ? hardwareText.substring(0, m.start()) + hardwareText.substring(m.end()) : hardwareText).strip();
+        while (remainder.startsWith(",")) remainder = remainder.substring(1).strip();
         while (remainder.endsWith(",")) remainder = remainder.substring(0, remainder.length() - 1).strip();
         return remainder.isEmpty() ? Optional.empty() : Optional.of(remainder);
     }

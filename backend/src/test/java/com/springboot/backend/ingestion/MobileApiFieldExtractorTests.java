@@ -20,6 +20,24 @@ class MobileApiFieldExtractorTests {
         assertTrue(MobileApiFieldExtractor.ramGb(null).isEmpty());
     }
 
+    // Real text pulled directly from a live GET /devices/43/ (Apple iPhone 17 Pro), ticket 1.8.
+    @Test void chipsetHandlesRamLeadingTheChipsetNotOnlyTrailingIt() {
+        // RAM leads here ("12GB RAM, Apple A19 Pro") - the opposite order from the Snapdragon
+        // fixture below. Stripping only a RAM *prefix* (the original implementation) returned
+        // empty for this real device: it never looked at what came after the match.
+        assertEquals("Apple A19 Pro", MobileApiFieldExtractor.chipset("12GB RAM, Apple A19 Pro").get());
+    }
+
+    @Test void chipsetStillHandlesRamTrailingTheChipset() {
+        assertEquals("Snapdragon 8 Gen 3", MobileApiFieldExtractor.chipset("Snapdragon 8 Gen 3, 8GB RAM").get());
+    }
+
+    @Test void chipsetMissingEntirelyReturnsEmpty() {
+        // Real BLU G5 hardware text (mobileapi-response.json) - no chipset recorded at all.
+        assertTrue(MobileApiFieldExtractor.chipset("2 GB RAM, ").isEmpty());
+        assertTrue(MobileApiFieldExtractor.chipset(null).isEmpty());
+    }
+
     @Test void extractsStorageBatteryAndCamera() {
         assertEquals(new BigDecimal("256"), MobileApiFieldExtractor.storageGb("256GB").get());
         assertEquals(new BigDecimal("5000"), MobileApiFieldExtractor.batteryMah("5000 mAh").get());
