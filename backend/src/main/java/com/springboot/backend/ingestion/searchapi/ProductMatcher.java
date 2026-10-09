@@ -150,7 +150,7 @@ public final class ProductMatcher {
 
     private static boolean regexWhitespace(char c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r'
-                || c == '\f' || c == '\u000b';
+                || c == '\f' || c == 0x0B;
     }
 
     private static java.math.BigDecimal extractedPrice(JsonNode row) {
