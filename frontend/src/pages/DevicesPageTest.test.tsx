@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   signOut: vi.fn(),
   listDevices: vi.fn(),
   createDevice: vi.fn(),
+  listSmartphones: vi.fn(),
 }));
 
 vi.mock("../api/session", () => ({
@@ -25,6 +26,10 @@ vi.mock("../api/auth", () => ({
 vi.mock("../api/devices", () => ({
   listDevices: mocks.listDevices,
   createDevice: mocks.createDevice,
+}));
+
+vi.mock("../api/catalogue", () => ({
+  listSmartphones: mocks.listSmartphones,
 }));
 
 function renderPage() {
@@ -61,6 +66,7 @@ beforeEach(() => {
   mocks.signOut.mockImplementation(() => undefined);
   mocks.listDevices.mockResolvedValue([]);
   mocks.createDevice.mockResolvedValue(apiDevice);
+  mocks.listSmartphones.mockResolvedValue([]);
   vi.spyOn(window, "confirm").mockReturnValue(true);
 });
 
@@ -141,5 +147,50 @@ describe("DevicesPageTest", () => {
 
     await user.click(screen.getByRole("button", { name: "Save upgrade profile" }));
     expect(await screen.findByText("Upgrade profile saved")).toBeInTheDocument();
+  });
+
+  it("adds a catalogue phone and shows catalogue specs on linked devices", async () => {
+    const user = userEvent.setup();
+    const pixel = {
+      id: 5,
+      brand: "Google",
+      modelName: "Pixel 9",
+      chipset: "Google Tensor G4",
+      ramGb: 12,
+      storageGb: 128,
+    };
+    const linked = {
+      ...apiDevice,
+      id: 3,
+      productId: 5,
+      productBrand: "Google",
+      productModelName: "Pixel 9",
+      customName: null,
+      specOverrides: '{"storage_gb":256}',
+    };
+    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
+    mocks.listDevices.mockResolvedValue([linked]);
+    mocks.listSmartphones.mockResolvedValue([pixel]);
+    mocks.createDevice.mockResolvedValue({ ...linked, id: 4, specOverrides: "{}" });
+    renderPage();
+
+    await screen.findByRole("heading", { name: /Google Pixel 9/ });
+    await user.click(screen.getByRole("button", { name: /Add device/ }));
+    await user.type(screen.getByRole("combobox", { name: "Model / configuration" }), "pixel");
+    await user.click(await screen.findByRole("option", { name: /Google Pixel 9/ }));
+    expect(screen.getByLabelText("Chipset")).toHaveValue("Google Tensor G4");
+    await user.click(screen.getByRole("button", { name: /Continue to upgrade preferences/ }));
+
+    await waitFor(() =>
+      expect(mocks.createDevice).toHaveBeenCalledWith(
+        expect.objectContaining({ productId: 5, customName: null, specOverrides: "{}" })
+      )
+    );
+    await user.click(await screen.findByRole("button", { name: "Save upgrade profile" }));
+
+    // Both linked devices show catalogue specs; the loaded one keeps its override.
+    expect(screen.getAllByText("Google Tensor G4")).toHaveLength(2);
+    expect(screen.getByText("256 GB")).toBeInTheDocument();
+    expect(screen.getByText("128 GB")).toBeInTheDocument();
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { signIn, signOut } from "../api/auth";
 import { ApiError } from "../api/client";
@@ -17,16 +17,20 @@ import { useToasts } from "../components/ui/useToasts";
 import { DeviceFormModal } from "../components/devices/DeviceFormModal";
 import { DeviceGrid } from "../components/devices/DeviceGrid";
 import { UpgradePreferencesModal } from "../components/devices/UpgradePreferencesModal";
+import { withCatalogue } from "../components/devices/catalogue";
 import { deviceFromApi, deviceToRequest } from "../components/devices/deviceApi";
 import { DEMO_DEVICES, DEMO_USER } from "../components/devices/demoData";
 import type { Device } from "../components/devices/types";
+import { useSmartphoneCatalogue } from "../components/devices/useSmartphoneCatalogue";
 
 /**
  * My Devices — remake of the prototype's "My devices" page.
  *
  * Signed out: local demo devices. Signed in: devices load from
  * `GET /api/devices` and new devices are saved with `POST /api/devices`.
- * Editing, removing and upgrade preferences are still local-only.
+ * Editing, removing and upgrade preferences are still local-only. Signed in,
+ * the device form suggests smartphones from `GET /api/catalogue/smartphones`
+ * and prefills their specs.
  */
 export default function DevicesPageTest() {
   const navigate = useNavigate();
@@ -39,11 +43,19 @@ export default function DevicesPageTest() {
     null
   );
   const { toasts, pushToast } = useToasts();
+  const catalogue = useSmartphoneCatalogue(account !== null);
+  // Linked devices get their specs from the catalogue list.
+  const shownDevices = useMemo(() => {
+    const byId = new Map(catalogue.items.map((item) => [item.id, item]));
+    return devices.map((d) =>
+      d.productId ? withCatalogue(d, byId.get(d.productId)) : d
+    );
+  }, [devices, catalogue.items]);
 
   const name = (d: Device) => `${d.brand} ${d.model}`.trim();
   const replace = (next: Device) =>
     setDevices((all) => all.map((d) => (d.id === next.id ? next : d)));
-  const prefsDevice = prefs && devices.find((d) => d.id === prefs.id);
+  const prefsDevice = prefs && shownDevices.find((d) => d.id === prefs.id);
   const localOnly = account ? " (this page only — not saved to your account yet)" : "";
 
   useEffect(() => {
@@ -165,7 +177,7 @@ export default function DevicesPageTest() {
         <LoadingBlock label="Loading your devices…" />
       ) : (
         <DeviceGrid
-          devices={devices}
+          devices={shownDevices}
           onAdd={() => setEditing("new")}
           onEdit={setEditing}
           onEditPreferences={(d) => setPrefs({ id: d.id, isNew: false })}
@@ -184,6 +196,7 @@ export default function DevicesPageTest() {
         <DeviceFormModal
           device={editing === "new" ? null : editing}
           isFirst={devices.length === 0}
+          catalogue={account ? catalogue : undefined}
           onClose={() => setEditing(null)}
           onSave={saveDevice}
         />

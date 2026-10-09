@@ -76,7 +76,8 @@ Reach for these first. All are named exports.
 | Percentage bar | `Meter` |
 | Small pill label | `Tag` |
 | Dialog | `Modal` + `ModalActions` for the footer buttons |
-| Form layout | `FormGrid` (2 columns → 1 on phones) and `Field` (label + control, `span2` for full width) |
+| Form layout | `FormGrid` (2 columns → 1 on phones) and `Field` (label + control, `span2` for full width; pass `htmlFor` when the field holds more than the control, e.g. a suggestion list) |
+| Muted note under a control | `FieldHint` |
 | Form controls | `Input`, `Select` (pass `options`), `Textarea`, `Range` |
 | Feedback after an action | `useToasts()` + `ToastStack` |
 
@@ -97,7 +98,11 @@ Reach for these first. All are named exports.
 `PhoneCard` (`DeviceCard` + `PhoneSpecsDropdown`), `DeviceThumb`,
 `ConditionBadge`, `UpgradeProfileSummary`, `DeviceFormModal`,
 `UpgradePreferencesModal`, `BudgetSlider`, `PriorityPicker`,
-`DevicePickerModal`, `ScanOverlay`. Shared types are in `types.ts`, and option
+`DevicePickerModal`, `ScanOverlay`, `CatalogueSearchInput` (ARIA combobox of
+catalogue suggestions; typing stays free text), `PhoneSpecFields` (editable
+phone specs, tagging fields changed from the catalogue as "Edited").
+`useSmartphoneCatalogue(enabled)` loads the catalogue once, and
+`catalogue.ts` holds the matching, spec-form and `withCatalogue` helpers. Shared types are in `types.ts`, and option
 lists and formatters (`money`, `formatDate`, `ageLabel`) are in
 `deviceOptions.ts`.
 
@@ -114,6 +119,7 @@ them. Never show placeholder numbers as if they were real.
   error bodies into an `ApiError` with a readable message.
 - `auth.ts` has `signIn` / `signOut`.
 - `devices.ts` has `listDevices` / `createDevice`.
+- `catalogue.ts` has `listSmartphones` (`GET /api/catalogue/smartphones`).
 - `session.ts` stores the JWT.
 
 Components never call `fetch` directly. Write the payload with
@@ -252,9 +258,21 @@ as one deliberate change across all components, not piecemeal.
   local-only, and the page says so in its toasts. `PUT` / `DELETE
   /api/devices/{id}` exist but aren't wired yet, and there is no endpoint for
   device preferences.
+- Signed in, the device form suggests smartphones from the catalogue as the
+  user types a model name. Picking one sends its `productId` and prefills the
+  spec fields. Only specs the user changes are saved as `specOverrides`,
+  keyed by snake_case `phone` column name (what the backend reads). Clearing
+  a prefilled field doesn't override it, because the backend falls back to the
+  catalogue value. No match, an unavailable catalogue, or "Enter manually
+  instead" all leave plain manual entry, with no error. Signed out (demo
+  mode) there are no suggestions. Matching is client-side over the full list.
+- `GET /api/devices` doesn't return specs, so the page fills linked devices'
+  specs from the catalogue list with `withCatalogue`. The catalogue only
+  has smartphones. It has no GPU/VRAM or launch-price columns, so nothing
+  prefills those.
 - Device type isn't stored for devices without a catalogue product (the
-  backend derives it from `products.category`, and there's no product-search
-  endpoint to link one). After a reload such devices show as type "Other".
+  backend derives it from `products.category`). After a reload such devices
+  show as type "Other", or "Phone" if they have spec overrides.
 - JWT storage is **temporary**: `sessionStorage` via `src/api/session.ts`.
   The token-storage decision is still open. Change `session.ts` when it's
   decided.

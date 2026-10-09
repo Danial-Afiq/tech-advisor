@@ -8,23 +8,48 @@ import type {
 const fieldClass =
   "w-full border-white/[0.09] bg-[#091321] text-[14px] text-[#eef5ff] focus:border-[#7c5cff]/85 focus:outline-none focus:ring-[3px] focus:ring-[#7c5cff]/12 focus-within:outline-none";
 
-/** Label + control. `span2` makes it fill both columns of a `FormGrid`. */
+/**
+ * Label + control. `span2` makes it fill both columns of a `FormGrid`.
+ * Pass `htmlFor` (the control's id) when the field holds more than the
+ * control, e.g. a suggestion list, so that text stays out of its label.
+ */
 export function Field({
   label,
   span2,
+  htmlFor,
   children,
 }: {
   label: ReactNode;
   span2?: boolean;
+  htmlFor?: string;
   children: ReactNode;
 }) {
+  const className = `mb-[14px] flex flex-col gap-2 ${span2 ? "col-span-2 max-[620px]:col-auto" : ""}`;
+  const text = "text-[13px] font-semibold text-[#c6d1df]";
+  if (htmlFor) {
+    return (
+      <div className={className}>
+        <label htmlFor={htmlFor} className={text}>
+          {label}
+        </label>
+        {children}
+      </div>
+    );
+  }
   return (
-    <label
-      className={`mb-[14px] flex flex-col gap-2 ${span2 ? "col-span-2 max-[620px]:col-auto" : ""}`}
-    >
-      <span className="text-[13px] font-semibold text-[#c6d1df]">{label}</span>
+    <label className={className}>
+      <span className={text}>{label}</span>
       {children}
     </label>
+  );
+}
+
+/** Small muted note under a form control. */
+export function FieldHint({ id, children }: { id?: string; children: ReactNode }) {
+  return (
+    <p id={id} className="m-0 text-[12px] leading-[1.45] text-[#8fa0b8]">
+      {children}
+    </p>
   );
 }
 
