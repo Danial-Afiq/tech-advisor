@@ -145,6 +145,96 @@ class SmartphoneCatalogSinkTests {
                 "SELECT count(*) FROM phone_variants WHERE product_id = ?", Integer.class, product.get("id")));
     }
 
+    @Test void reingestingWithChipsetNowMissingReconcilesIntoTheExistingVariantRatherThanDuplicating() {
+        // Review feedback (PR #46): an existing (storage=256, ram=12, chipset="Apple A19 Pro")
+        // variant must NOT get a second, incomplete row when a later run's hardware text fails
+        // to parse a chipset (NULL) - the old exact-match ON CONFLICT key let that slip through.
+        var first = specPayload("43", "Apple", "iPhone 17 Pro", "Apple A19 Pro",
+                Map.of("ram", new BigDecimal("12")), Map.of("ram", "GB"), List.of(256));
+        sink.accept("run-1", first);
+        var chipsetUnparseable = specPayload("43", "Apple", "iPhone 17 Pro", null,
+                Map.of("ram", new BigDecimal("12")), Map.of("ram", "GB"), List.of(256));
+        sink.accept("run-2", chipsetUnparseable);
+
+        var product = db.queryForMap("SELECT id FROM products WHERE brand = 'Apple' AND model_name = 'iPhone 17 Pro'");
+        var variants = db.queryForList("SELECT * FROM phone_variants WHERE product_id = ?", product.get("id"));
+        assertEquals(1, variants.size());
+        assertEquals("Apple A19 Pro", variants.getFirst().get("chipset"), "known chipset must survive, not be overwritten");
+    }
+
+    @Test void reingestingWithRamNowMissingReconcilesIntoTheExistingVariantRatherThanDuplicating() {
+        var first = specPayload("43", "Apple", "iPhone 17 Pro", "Apple A19 Pro",
+                Map.of("ram", new BigDecimal("12")), Map.of("ram", "GB"), List.of(256));
+        sink.accept("run-1", first);
+        var ramUnparseable = specPayload("43", "Apple", "iPhone 17 Pro", "Apple A19 Pro",
+                Map.of(), Map.of(), List.of(256));
+        sink.accept("run-2", ramUnparseable);
+
+        var product = db.queryForMap("SELECT id FROM products WHERE brand = 'Apple' AND model_name = 'iPhone 17 Pro'");
+        var variants = db.queryForList("SELECT * FROM phone_variants WHERE product_id = ?", product.get("id"));
+        assertEquals(1, variants.size());
+        assertEquals(12, variants.getFirst().get("ram_gb"), "known RAM must survive, not be overwritten");
+    }
+
+    @Test void reingestingWithStorageNowUnknownReconcilesWhenOnlyOneVariantExists() {
+        // Same reconciliation logic covers storage going unknown: with only one existing
+        // variant, a later run whose storage text is entirely unparseable (NULL) still has
+        // exactly one compatible candidate (chipset and RAM both still agree), so it updates
+        // that row rather than adding a second "unknown storage" one for the same phone.
+        var known = specPayload("148", "Keneksi", "Keneksi Glass", "MediaTek Helio A22",
+                Map.of("ram", new BigDecimal("1")), Map.of("ram", "GB"), List.of(16));
+        sink.accept("run-1", known);
+        var storageUnparseable = specPayload("148", "Keneksi", "Keneksi Glass", "MediaTek Helio A22",
+                Map.of("ram", new BigDecimal("1")), Map.of("ram", "GB"));
+        sink.accept("run-2", storageUnparseable);
+
+        var product = db.queryForMap("SELECT id FROM products WHERE brand = 'Keneksi' AND model_name = 'Keneksi Glass'");
+        var variants = db.queryForList("SELECT * FROM phone_variants WHERE product_id = ?", product.get("id"));
+        assertEquals(1, variants.size());
+        assertEquals(16, variants.getFirst().get("storage_gb"), "known storage must survive, not be overwritten");
+    }
+
+    @Test void genuinelyDistinctChipsetsStayAsSeparateVariantsNotMergedByReconciliation() {
+        // The reconciliation leniency only applies when a field is UNKNOWN on one side - two
+        // real, known chipsets for the same storage/RAM must stay two rows, never merged.
+        var snapdragon = specPayload("200", "Samsung", "Galaxy S99", "Snapdragon 8 Gen 5",
+                Map.of("ram", new BigDecimal("12")), Map.of("ram", "GB"), List.of(256));
+        sink.accept("run-1", snapdragon);
+        var exynos = specPayload("200", "Samsung", "Galaxy S99", "Exynos 2600",
+                Map.of("ram", new BigDecimal("12")), Map.of("ram", "GB"), List.of(256));
+        sink.accept("run-2", exynos);
+
+        var product = db.queryForMap("SELECT id FROM products WHERE brand = 'Samsung' AND model_name = 'Galaxy S99'");
+        var chipsets = db.queryForList(
+                "SELECT chipset FROM phone_variants WHERE product_id = ? ORDER BY chipset", product.get("id"));
+        assertEquals(2, chipsets.size());
+        assertEquals("Exynos 2600", chipsets.get(0).get("chipset"));
+        assertEquals("Snapdragon 8 Gen 5", chipsets.get(1).get("chipset"));
+    }
+
+    @Test void ambiguousReconciliationAcrossTwoIncompleteRowsIsLeftAlone() {
+        // Two existing rows, each missing a DIFFERENT identity field, both become compatible
+        // candidates for an ingest that supplies both fields - genuinely ambiguous, so this
+        // ingest must not guess which one to update (and must not add a third row either).
+        var product = db.queryForMap(
+                "INSERT INTO products (brand, model_name, category) VALUES ('Acme', 'Ambi 1', 'SMARTPHONE') RETURNING id");
+        long productId = ((Number) product.get("id")).longValue();
+        db.update("INSERT INTO phone_variants (product_id, chipset, ram_gb, storage_gb) VALUES (?, NULL, 8, 128)", productId);
+        db.update("INSERT INTO phone_variants (product_id, chipset, ram_gb, storage_gb) VALUES (?, 'Chip X', NULL, 128)", productId);
+
+        var ambiguous = specPayload("300", "Acme", "Ambi 1", "Chip X",
+                Map.of("ram", new BigDecimal("8")), Map.of("ram", "GB"), List.of(128));
+        sink.accept("run-1", ambiguous);
+
+        var variants = db.queryForList(
+                "SELECT chipset, ram_gb FROM phone_variants WHERE product_id = ? ORDER BY chipset NULLS FIRST", productId);
+        assertEquals(2, variants.size(), "must not merge into either candidate or add a third row");
+        assertNull(variants.get(0).get("chipset"));
+        assertEquals(8, variants.get(0).get("ram_gb"));
+        assertEquals("Chip X", variants.get(1).get("chipset"));
+        assertNull(variants.get(1).get("ram_gb"));
+    }
+
     @Test void missingOptionalFieldsPersistAsNullNotAsBlockingTheRecord() {
         // Only ram present - matches a real device where camera/storage/battery came back empty.
         var payload = specPayload("1", "Acme", "Budget Phone", null,

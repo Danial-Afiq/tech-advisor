@@ -1427,6 +1427,22 @@ no variant-creation path of its own. `SearchApiSource` (§17.4) can *attach* a
 price to an existing variant but never creates one itself, consistent with
 MobileAPI being the sole source of truth for catalogue structure (§17.4).
 
+**Re-ingest reconciliation (PR #46 review fix).** The upsert on the write
+path above does NOT rely solely on the unique key's exact-match `ON
+CONFLICT` — that key requires every one of its five columns to match
+exactly, so a later ingest where, say, the chipset momentarily failed to
+parse (`NULL`) would never match an existing row whose chipset IS known,
+and silently insert a second, incomplete row for what is really the same
+physical variant (same failure mode for RAM or storage going unknown). Fixed
+by reconciling against a product's existing variant rows first, using a
+null-tolerant comparison per identity column — unknown on either side counts
+as compatible, a known-vs-known mismatch does not. Exactly one compatible
+row is reused (filled in via `COALESCE`, never overwritten with an unknown
+value); zero means this really is a new variant; more than one is genuinely
+ambiguous and is left alone rather than guessed at. A real Snapdragon vs.
+Exynos release of the same storage/RAM tier still lands as two rows, since
+both chipsets are known and unequal.
+
 ## 14.6 `gpu`
 
 Fields:
