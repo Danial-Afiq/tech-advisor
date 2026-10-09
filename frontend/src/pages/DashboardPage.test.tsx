@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DashboardPage from "./DashboardPage";
@@ -101,6 +102,28 @@ describe("DashboardPage", () => {
       screen.getByRole("button", {
         name: "View my devices",
       })
+    ).toBeInTheDocument();
+ });
+
+  it("navigates between the dashboard and devices pages", async () => {
+    const user = userEvent.setup();
+
+    renderPage();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Dashboard",
+      })
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "My devices",
+      })
+    );
+
+    expect(
+      await screen.findByText("devices route")
     ).toBeInTheDocument();
   });
 
