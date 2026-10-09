@@ -20,6 +20,10 @@ import { UpgradePreferencesModal } from "../components/devices/UpgradePreference
 import { deviceFromApi, deviceToRequest } from "../components/devices/deviceApi";
 import { DEMO_DEVICES, DEMO_USER } from "../components/devices/demoData";
 import type { Device } from "../components/devices/types";
+import {
+  DASHBOARD_PATH,
+  DEVICES_PATH,
+} from "../routing/paths";
 
 /**
  * My Devices — remake of the prototype's "My devices" page.
@@ -124,6 +128,15 @@ export default function DevicesPageTest() {
     <AppShell
       active="devices"
       title="My devices"
+      onNavigate={(key) => {
+        if (key === "dashboard") {
+          navigate(DASHBOARD_PATH);
+        }
+
+        if (key === "devices") {
+          navigate(DEVICES_PATH);
+        }
+      }}
       user={
         account
           ? { name: account.email.split("@")[0], email: account.email }

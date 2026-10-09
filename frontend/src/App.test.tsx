@@ -7,6 +7,10 @@ vi.mock('./pages/Login', () => ({
   default: () => <h1>Login route</h1>,
 }))
 
+vi.mock("./pages/DashboardPage", () => ({
+  default: () => <h1>Dashboard route</h1>,
+}));
+
 vi.mock('./pages/DevicesPageTest', () => ({
   default: () => <h1>Devices route</h1>,
 }))
@@ -36,11 +40,17 @@ describe('authenticated App routes', () => {
     await expectRoute('Login route', '/login')
   })
 
-  it('redirects USER visitors from / to /devices', async () => {
-    setSession({ token: 'user-token', email: 'user@example.com', role: 'USER' })
-    renderAt('/')
-    await expectRoute('Devices route', '/devices')
-  })
+it("redirects USER visitors from / to /dashboard", async () => {
+    setSession({
+      token: "user-token",
+      email: "user@example.com",
+      role: "USER",
+    });
+
+    renderAt("/");
+
+    await expectRoute("Dashboard route", "/dashboard");
+  });
 
   it('redirects ADMIN visitors from / to /admin/ingestion', async () => {
     setSession({ token: 'admin-token', email: 'admin@example.com', role: 'ADMIN' })
@@ -51,7 +61,7 @@ describe('authenticated App routes', () => {
   it('redirects an authenticated USER away from /login', async () => {
     setSession({ token: 'user-token', email: 'user@example.com', role: 'USER' })
     renderAt('/login')
-    await expectRoute('Devices route', '/devices')
+    await expectRoute("Dashboard route", "/dashboard");
   })
 
   it('redirects an authenticated ADMIN away from /login', async () => {
@@ -73,7 +83,7 @@ describe('authenticated App routes', () => {
   it('redirects a USER away from /admin/ingestion', async () => {
     setSession({ token: 'user-token', email: 'user@example.com', role: 'USER' })
     renderAt('/admin/ingestion')
-    await expectRoute('Devices route', '/devices')
+    await expectRoute("Dashboard route", "/dashboard");
   })
 
   it('redirects an ADMIN away from /devices', async () => {

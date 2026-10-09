@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
+import com.springboot.backend.dto.DashboardRecommendationResponse;
 
 /**
  * Typed-column persistence for {@code recommendations}, plus the degraded-path
@@ -85,6 +86,110 @@ public class RecommendationRepository {
         });
         return deleted;
     }
+
+    public List<DashboardRecommendationResponse>
+        findActiveDashboardRecommendationsByUserId(
+                long userId) {
+
+    String sql = """
+            SELECT
+                r.id AS recommendation_id,
+                r.current_device_id,
+                COALESCE(
+                    NULLIF(BTRIM(ud.custom_name), ''),
+                    NULLIF(
+                        CONCAT_WS(
+                            ' ',
+                            owned_product.brand,
+                            owned_product.model_name
+                        ),
+                        ''
+                    ),
+                    'Unnamed device'
+                ) AS current_device_name,
+                r.candidate_product_id,
+                candidate.brand AS candidate_brand,
+                candidate.model_name AS candidate_model_name,
+                latest_price.price AS latest_price,
+                BTRIM(latest_price.currency)
+                    AS price_currency,
+                r.verdict,
+                r.confidence,
+                r.reasoning,
+                r.created_at
+            FROM recommendations r
+            JOIN user_devices ud
+                ON ud.id = r.current_device_id
+                AND ud.user_id = r.user_id
+                AND ud.is_current = TRUE
+            LEFT JOIN products owned_product
+                ON owned_product.id = ud.product_id
+            JOIN products candidate
+                ON candidate.id = r.candidate_product_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    ph.price,
+                    ph.currency
+                FROM price_history ph
+                WHERE ph.product_id =
+                    r.candidate_product_id
+                ORDER BY
+                    ph.observed_at DESC,
+                    ph.id DESC
+                LIMIT 1
+            ) latest_price ON TRUE
+            WHERE r.user_id = ?
+                AND r.status = 'ACTIVE'
+            ORDER BY
+                r.created_at DESC,
+                r.id DESC
+            """;
+
+    return db.query(
+            sql,
+            (resultSet, rowNumber) ->
+                    new DashboardRecommendationResponse(
+                            resultSet.getLong(
+                                    "recommendation_id"
+                            ),
+                            resultSet.getLong(
+                                    "current_device_id"
+                            ),
+                            resultSet.getString(
+                                    "current_device_name"
+                            ),
+                            resultSet.getLong(
+                                    "candidate_product_id"
+                            ),
+                            resultSet.getString(
+                                    "candidate_brand"
+                            ),
+                            resultSet.getString(
+                                    "candidate_model_name"
+                            ),
+                            resultSet.getBigDecimal(
+                                    "latest_price"
+                            ),
+                            resultSet.getString(
+                                    "price_currency"
+                            ),
+                            resultSet.getString(
+                                    "verdict"
+                            ),
+                            resultSet.getString(
+                                    "confidence"
+                            ),
+                            resultSet.getString(
+                                    "reasoning"
+                            ),
+                            resultSet.getObject(
+                                    "created_at",
+                                    java.time.OffsetDateTime.class
+                            )
+                    ),
+            userId
+    );
+}
 
     /**
      * Supersedes the previous ACTIVE row for the same (user, candidate) pair,

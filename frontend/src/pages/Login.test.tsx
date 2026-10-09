@@ -16,7 +16,7 @@ function renderLogin(url = "/login") {
     <MemoryRouter initialEntries={[url]}>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/devices" element={<p>devices page</p>} />
+        <Route path="/dashboard"  element={<p>dashboard page</p>} />
       </Routes>
     </MemoryRouter>
   );
@@ -28,7 +28,7 @@ afterEach(() => {
 });
 
 describe("Login page", () => {
-  it("signs up, logs in and goes to the devices page", async () => {
+  it("signs up, logs in and goes to the dashboard page", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(json(201, { id: 2, email: "new@example.com" }))
@@ -41,7 +41,7 @@ describe("Login page", () => {
     await user.type(screen.getByLabelText(/^Password/), "password123");
     await user.click(screen.getByRole("button", { name: "Create account" }));
 
-    expect(await screen.findByText("devices page")).toBeInTheDocument();
+    expect(await screen.findByText("dashboard page")).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       expect.stringMatching(/\/api\/auth\/register$/),
       expect.stringMatching(/\/api\/auth\/login$/),
