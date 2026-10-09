@@ -105,31 +105,52 @@ public final class ProductMatcher {
         return matches;
     }
 
-    // Possessive quantifiers (++/*+) on the digit/whitespace runs: each one only ever
-    // needs to match greedily with no backtracking into it once past, so forcing that
-    // instead of leaving it to the engine avoids the super-linear worst case the plain
-    // +/* version has on pathological input (SonarCloud java:S8786) without changing
-    // what matches - still "256GB"/"1.5 TB" etc, same as before.
-    private static final java.util.regex.Pattern STORAGE_MENTION = java.util.regex.Pattern.compile(
-            "(\\d++(?:\\.\\d++)?)\\s*+(GB|TB)", java.util.regex.Pattern.CASE_INSENSITIVE);
-
     /**
-     * Every storage figure mentioned anywhere in a shopping listing title (e.g. "Apple
-     * iPhone 16 Pro 256GB" -> [256]), not just at the start of the string - unlike
-     * MobileApiFieldExtractor.storageOptionsGb(), which is anchored for parsing MobileAPI's
-     * own bare comma-separated "storage" field and matches nothing against a sentence with
-     * the figure embedded mid-string (confirmed: it silently returned empty against a real
-     * title here, caught by this method's own test).
+     * Finds storage capacities in a shopping title with a single left-to-right scan.
+     * A regex here was flagged by SonarCloud for super-linear backtracking; scanning
+     * digits, optional decimals, whitespace, and GB/TB units directly is linear.
      */
     static List<Integer> storageGbMentionsInTitle(String title) {
         if (title == null) return List.of();
         var found = new LinkedHashSet<Integer>();
-        var m = STORAGE_MENTION.matcher(title);
-        while (m.find()) {
-            double value = Double.parseDouble(m.group(1));
-            found.add((int) Math.round(m.group(2).equalsIgnoreCase("TB") ? value * 1024 : value));
+        int index = 0;
+        while (index < title.length()) {
+            if (!asciiDigit(title.charAt(index))) {
+                index++;
+                continue;
+            }
+            int start = index;
+            while (index < title.length() && asciiDigit(title.charAt(index))) index++;
+            if (index + 1 < title.length() && title.charAt(index) == '.'
+                    && asciiDigit(title.charAt(index + 1))) {
+                index++;
+                while (index < title.length() && asciiDigit(title.charAt(index))) index++;
+            }
+            int end = index;
+            while (index < title.length() && regexWhitespace(title.charAt(index))) index++;
+            if (index + 1 < title.length()
+                    && (title.charAt(index) == 'G' || title.charAt(index) == 'g'
+                        || title.charAt(index) == 'T' || title.charAt(index) == 't')
+                    && (title.charAt(index + 1) == 'B' || title.charAt(index + 1) == 'b')) {
+                double value = Double.parseDouble(title.substring(start, end));
+                if (title.charAt(index) == 'T' || title.charAt(index) == 't') value *= 1024;
+                if (Double.isFinite(value) && value <= Integer.MAX_VALUE)
+                    found.add((int) Math.round(value));
+                index += 2;
+            } else {
+                index = end;
+            }
         }
         return List.copyOf(found);
+    }
+
+    private static boolean asciiDigit(char c) {
+        return c >= '0' && c <= '9';
+    }
+
+    private static boolean regexWhitespace(char c) {
+        return c == ' ' || c == '\\t' || c == '\\n' || c == '\\r'
+                || c == '\\f' || c == '\\u000b';
     }
 
     private static java.math.BigDecimal extractedPrice(JsonNode row) {
