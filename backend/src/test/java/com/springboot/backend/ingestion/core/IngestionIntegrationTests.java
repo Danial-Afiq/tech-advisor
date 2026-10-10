@@ -1,7 +1,9 @@
 package com.springboot.backend.ingestion.core;
 
+import com.springboot.backend.ingestion.SmartphoneCatalogSink;
 import com.springboot.backend.ingestion.run.RunLog;
 import com.springboot.backend.ingestion.run.RunStore;
+import java.math.BigDecimal;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -24,7 +26,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest(properties={"ingestion.reconciliation-enabled=false",
         "ingestion.anchor=2026-09-17T05:00:00Z", "logging.level.root=WARN", "debug=false",
-        "ingestion.enabled-sources=simulated-release,simulated-failure,test-quality"})
+        "ingestion.enabled-sources=simulated-release,simulated-failure,test-quality,test-catalogue-validation"})
 // Only for SimulatedSources/SimulationSink (test fixtures), not for admin auth - that's the
 // app's normal ROLE_ADMIN JWT check now, with no ingestion-specific profile gate.
 @ActiveProfiles("ingestion-demo")
@@ -43,6 +45,32 @@ class IngestionIntegrationTests {
                     output.accept(valid); output.accept(valid);
                     output.accept(new Payload("wrong-source", "bad", context.now(), valid.body()));
                     throw new IllegalStateException("Do not expose this source message or secret");
+                }
+            };
+        }
+        @Bean IngestionSource catalogueValidationSource() {
+            return new IngestionSource() {
+                public String sourceId() { return "test-catalogue-validation"; }
+                public Duration cooldown() { return Duration.ZERO; }
+                public void ingest(SourceContext context, java.util.function.Consumer<Payload> output) {
+                    output.accept(specification("valid-phone", "Valid Phone", BigDecimal.valueOf(5000), context.now()));
+                    output.accept(specification("invalid-phone", "Rejected Phone", BigDecimal.valueOf(-1), context.now()));
+                }
+                private Payload specification(String externalId, String model, BigDecimal battery, Instant observedAt) {
+                    return new Payload(sourceId(), externalId, observedAt, new Payload.Specifications(
+                            externalId, "ValidationTest", model, "Test Chipset",
+                            Map.of("battery", battery), Map.of("battery", "mAh"), List.of()));
+                }
+            };
+        }
+        @Bean IngestionSink catalogueValidationSink(SmartphoneCatalogSink catalogue) {
+            return new IngestionSink() {
+                public boolean supports(IngestionSource source, Payload.Body body) {
+                    return source.sourceId().equals("test-catalogue-validation")
+                            && body instanceof Payload.Specifications;
+                }
+                public Result accept(String runId, Payload payload) {
+                    return catalogue.accept(runId, payload);
                 }
             };
         }
@@ -65,6 +93,7 @@ class IngestionIntegrationTests {
                 "Integration tests require a dedicated database whose name ends in _test");
         // All asynchronous runs in this class are awaited before the next test.
         db.update("DELETE FROM system_log WHERE component LIKE 'INGESTION_%'");
+        db.update("DELETE FROM products WHERE brand='ValidationTest'");
         clock.now.set(ANCHOR);
         mvc = MockMvcBuilders.webAppContextSetup(web).apply(springSecurity()).build();
     }
@@ -175,6 +204,41 @@ class IngestionIntegrationTests {
         assertEquals(1, run.rejectedPayloadCount); assertEquals(2, run.errorCount); assertEquals(1, run.errorStackCount);
         assertEquals("PARTIAL_FAILURE", run.status);
         assertFalse(run.sources.getFirst().errors.toString().contains("secret"));
+    }
+    @Test void validationProtectsCataloguePersistenceAndIsRecordedInTheRun() throws Exception {
+        var run = await(runner.manual(List.of("test-catalogue-validation"), "admin",
+                "catalogue-validation-key", null).runId);
+
+        assertEquals("PARTIAL_FAILURE", run.status);
+        assertEquals(1, run.processedPayloadCount);
+        assertEquals(1, run.rejectedPayloadCount);
+        assertEquals(1, run.errorCount);
+
+        var storedPhone = db.queryForMap("""
+                SELECT p.model_name, ph.chipset, ph.battery_mah
+                FROM products p JOIN phone ph ON ph.product_id=p.id
+                WHERE p.brand='ValidationTest'
+                """);
+        assertEquals("Valid Phone", storedPhone.get("model_name"));
+        assertEquals("Test Chipset", storedPhone.get("chipset"));
+        assertEquals(5000, storedPhone.get("battery_mah"));
+        assertEquals(0, db.queryForObject("""
+                SELECT count(*) FROM products
+                WHERE brand='ValidationTest' AND model_name='Rejected Phone'
+                """, Integer.class));
+
+        var storedRun = db.queryForMap("""
+                SELECT status,
+                       (metadata->>'processedPayloadCount')::int AS processed,
+                       (metadata->>'rejectedPayloadCount')::int AS rejected,
+                       (metadata->>'errorCount')::int AS errors
+                FROM system_log
+                WHERE component='INGESTION_RUN' AND metadata->>'runId'=?
+                """, run.runId);
+        assertEquals("PARTIAL_FAILURE", storedRun.get("status"));
+        assertEquals(1, storedRun.get("processed"));
+        assertEquals(1, storedRun.get("rejected"));
+        assertEquals(1, storedRun.get("errors"));
     }
     @Test void dueScheduleWaitsForManualAndLongRetryAfterPersists() {
         var run = store.admit(List.of("simulated-release"), "admin", "overlap-key", null, false, true);
