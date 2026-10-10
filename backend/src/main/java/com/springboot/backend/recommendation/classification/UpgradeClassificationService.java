@@ -11,6 +11,8 @@ import com.springboot.backend.repository.DevicePreferenceRepository;
 import com.springboot.backend.repository.PhoneRepository;
 import com.springboot.backend.repository.UserDeviceRepository;
 import java.math.BigDecimal;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -217,7 +219,9 @@ public class UpgradeClassificationService {
             String currency) {
 
         public OwnedSide {
-            specOverrides = Map.copyOf(specOverrides);
+            // Not Map.copyOf: it rejects null values, and a null override is a
+            // spec the owner deliberately cleared (SpecComparisonService).
+            specOverrides = Collections.unmodifiableMap(new HashMap<>(specOverrides));
             benchmarks = List.copyOf(benchmarks);
         }
     }

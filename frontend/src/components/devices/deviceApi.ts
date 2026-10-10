@@ -1,5 +1,5 @@
 import { CONDITIONS, defaultPrefs } from "./deviceOptions";
-import { PHONE_SPEC_KEYS } from "./phoneSpecs";
+import { PHONE_SPEC_KEYS, TEXT_SPEC_KEYS } from "./phoneSpecs";
 import type { PhoneSpecKey, PhoneSpecs } from "./phoneSpecs";
 import type { Condition, Device, UpgradePreferences } from "./types";
 
@@ -44,26 +44,36 @@ export type DeviceRequest = {
   specOverrides: string;
 };
 
+const snake = (key: string) =>
+  key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+
 /**
- * Builds the request body for saving a device. Without a catalogue link the
- * name goes in `customName` (there is no product-search endpoint yet, so the
- * form can't pick a `productId`). Device type is not stored by the backend;
- * it comes from the linked product's category.
+ * Builds the request body for saving a device. A device picked from the
+ * catalogue sends its `productId`; otherwise the name goes in `customName`.
+ * Device type is not stored by the backend; it comes from the linked
+ * product's category.
  *
- * `specOverrides` is sent empty: `device.specs` is catalogue + overrides
- * merged, so sending it back would copy catalogue values into overrides.
+ * Only `device.specOverrides` is sent, keyed by `phone` column name as the
+ * backend reads them. `device.specs` is catalogue + overrides merged, so
+ * sending it would copy catalogue values into overrides.
+ * A cleared spec is sent as `null`, which the backend reads as "unknown"
+ * rather than falling back to the catalogue value.
  */
 export function deviceToRequest(device: Device): DeviceRequest {
   const name = `${device.brand} ${device.model}`.trim();
-  const use = device.use.trim();
+  const useCases = device.use.split(",").map((use) => use.trim()).filter(Boolean);
   return {
     productId: device.productId ?? null,
     customName: device.productId ? null : name || null,
     purchaseDate: device.purchaseDate || null,
     condition: device.condition ?? null,
     satisfactionScore: device.satisfaction ?? null,
-    useCases: JSON.stringify(use ? [use] : []),
-    specOverrides: "{}",
+    useCases: JSON.stringify(useCases),
+    specOverrides: JSON.stringify(
+      Object.fromEntries(
+        Object.entries(device.specOverrides ?? {}).map(([k, v]) => [snake(k), v])
+      )
+    ),
   };
 }
 
@@ -86,13 +96,6 @@ const CATEGORY_TO_TYPE: Record<string, string> = {
   MONITOR: "Monitor",
   DESKTOP: "Desktop PC",
 };
-
-const TEXT_SPECS = new Set<PhoneSpecKey>([
-  "chipset",
-  "cameraSpecs",
-  "ipRating",
-  "os",
-]);
 
 function parseJson(text: string | null | undefined): unknown {
   if (!text) return null;
@@ -121,7 +124,7 @@ export function normalizePhoneSpecs(raw: unknown): PhoneSpecs {
       specs[k] = value;
     } else if (typeof value === "string") {
       const n = Number(value);
-      const numeric = !TEXT_SPECS.has(k) && value.trim() !== "" && !Number.isNaN(n);
+      const numeric = !TEXT_SPEC_KEYS.has(k) && value.trim() !== "" && !Number.isNaN(n);
       specs[k] = numeric ? n : value;
     }
   }
@@ -174,5 +177,6 @@ export function deviceFromApi(
       type === "Phone"
         ? { ...normalizePhoneSpecs(extras.phone), ...overrides }
         : undefined,
+    specOverrides: overrides,
   };
 }

@@ -7,6 +7,7 @@ import com.springboot.backend.model.Phone;
 import com.springboot.backend.recommendation.AssessRequest;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -88,6 +89,41 @@ class SpecComparisonServiceTest {
                 .orElseThrow();
         assertEquals(512.0, storage.current());
         assertTrue(storage.deltaPct() < 0, "256GB is a downgrade from 512GB");
+    }
+
+    @Test
+    void aClearedOverrideMakesTheSpecUnknownInsteadOfUsingTheCatalogue() {
+        Phone owned = Phone.builder(1L).storageGb(128).build();
+        Phone candidate = Phone.builder(2L).storageGb(256).build();
+        // Map.of rejects null values, as JSON's {"storage_gb": null} does not.
+        Map<String, Object> cleared = new HashMap<>();
+        cleared.put("storage_gb", null);
+
+        SpecComparison result = service.compare(
+                owned, cleared, candidate, List.of(), List.of(), null, null, "SGD");
+
+        assertTrue(result.skippedSpecs().contains("storage_gb"));
+        assertTrue(result.scored().stream().noneMatch(s -> s.spec().equals("storage_gb")));
+        assertNull(result.specDeltas().get("storage_gb").current());
+        assertEquals(256.0, result.specDeltas().get("storage_gb").candidate());
+    }
+
+    @Test
+    void textOverridesReplaceOrClearTheCatalogueText() {
+        Phone owned = Phone.builder(1L).chipset("Snapdragon 8 Gen 2").os("Android 13").ipRating("IP68").build();
+        Phone candidate = Phone.builder(2L).chipset("Snapdragon 8 Elite").os("Android 15").ipRating("IP68").build();
+        Map<String, Object> overrides = new HashMap<>();
+        overrides.put("chipset", "Snapdragon 8 Gen 3"); // the owner's actual variant
+        overrides.put("os", null);                       // cleared as wrong or unknown
+
+        SpecComparison result = service.compare(
+                owned, overrides, candidate, List.of(), List.of(), null, null, "SGD");
+
+        assertEquals("Snapdragon 8 Gen 3", result.specDeltas().get("chipset").current());
+        assertNull(result.specDeltas().get("os").current());
+        assertEquals("Android 15", result.specDeltas().get("os").candidate());
+        // No override: still the catalogue value.
+        assertEquals("IP68", result.specDeltas().get("ip_rating").current());
     }
 
     @Test

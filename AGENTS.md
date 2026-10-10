@@ -2477,7 +2477,11 @@ Decisions worth not re-litigating:
   Python-side `float | str | None` union exists for.
 - **`spec_overrides` win over the catalogue** and are applied as an overlay rather
   than by mutating the shared `Phone` row (§14.3). A malformed override costs that
-  one spec and is logged, not the whole assessment.
+  one spec and is logged, not the whole assessment. This covers text specs too:
+  an owner's `chipset`, `camera_specs`, `ip_rating` or `os` override is what the
+  model is told the owned phone has. An explicit `null` override (the owner
+  cleared a catalogue value in the device form) makes that spec unknown: it is
+  skipped and reported, never replaced by the catalogue value.
 
 Persistence: unchanged schema, **no migration**. The tier is `verdict`, the
 breakdown is `factor_analysis.deterministic`, and `upgrade_score` plus

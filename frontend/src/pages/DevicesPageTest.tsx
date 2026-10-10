@@ -1,8 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { signIn, signOut } from "../api/auth";
 import { ApiError } from "../api/client";
-import { createDevice, listDevices } from "../api/devices";
+import {
+  createDevice,
+  deleteDevice,
+  listDevices,
+  updateDevice,
+} from "../api/devices";
 import { getSession } from "../api/session";
 import type { Session } from "../api/session";
 import { SignInModal } from "../components/auth/SignInModal";
@@ -17,9 +22,12 @@ import { useToasts } from "../components/ui/useToasts";
 import { DeviceFormModal } from "../components/devices/DeviceFormModal";
 import { DeviceGrid } from "../components/devices/DeviceGrid";
 import { UpgradePreferencesModal } from "../components/devices/UpgradePreferencesModal";
+import { withCatalogue } from "../components/devices/catalogue";
 import { deviceFromApi, deviceToRequest } from "../components/devices/deviceApi";
+import type { DeviceResponse } from "../components/devices/deviceApi";
 import { DEMO_DEVICES, DEMO_USER } from "../components/devices/demoData";
 import type { Device } from "../components/devices/types";
+import { useSmartphoneCatalogue } from "../components/devices/useSmartphoneCatalogue";
 import {
   DASHBOARD_PATH,
   DEVICES_PATH,
@@ -29,8 +37,11 @@ import {
  * My Devices — remake of the prototype's "My devices" page.
  *
  * Signed out: local demo devices. Signed in: devices load from
- * `GET /api/devices` and new devices are saved with `POST /api/devices`.
- * Editing, removing and upgrade preferences are still local-only.
+ * `GET /api/devices`, new devices are saved with `POST /api/devices`, edits
+ * with `PUT /api/devices/{id}` and removals with `DELETE /api/devices/{id}`.
+ * Upgrade preferences are still local-only. Signed in,
+ * the device form suggests smartphones from `GET /api/catalogue/smartphones`
+ * and prefills their specs.
  */
 export default function DevicesPageTest() {
   const navigate = useNavigate();
@@ -43,11 +54,19 @@ export default function DevicesPageTest() {
     null
   );
   const { toasts, pushToast } = useToasts();
+  const catalogue = useSmartphoneCatalogue(account !== null);
+  // Linked devices get their specs from the catalogue list.
+  const shownDevices = useMemo(() => {
+    const byId = new Map(catalogue.items.map((item) => [item.id, item]));
+    return devices.map((d) =>
+      d.productId ? withCatalogue(d, byId.get(d.productId)) : d
+    );
+  }, [devices, catalogue.items]);
 
   const name = (d: Device) => `${d.brand} ${d.model}`.trim();
   const replace = (next: Device) =>
     setDevices((all) => all.map((d) => (d.id === next.id ? next : d)));
-  const prefsDevice = prefs && devices.find((d) => d.id === prefs.id);
+  const prefsDevice = prefs && shownDevices.find((d) => d.id === prefs.id);
   const localOnly = account ? " (this page only — not saved to your account yet)" : "";
 
   useEffect(() => {
@@ -90,23 +109,32 @@ export default function DevicesPageTest() {
 
   /** Throws on API failure so `DeviceFormModal` stays open and shows it. */
   const saveDevice = async (draft: Device, isNew: boolean) => {
+    // The saved row, plus what the backend doesn't store yet.
+    const fromSaved = (saved: DeviceResponse): Device => ({
+      ...deviceFromApi(saved, {
+        preferences: draft.upgradePreferences,
+        primary: draft.primary,
+        image: draft.image,
+      }),
+      type: draft.type, // not stored by the backend; keep it for this session
+    });
+
     if (!isNew) {
-      replace(draft);
+      const device = account
+        ? fromSaved(await updateDevice(draft.id, deviceToRequest(draft)))
+        : draft;
+      replace(device);
       setEditing(null);
-      pushToast("Device updated", `${name(draft)} was updated${localOnly}.`);
+      pushToast(
+        "Device updated",
+        `${name(device)} was updated${account ? " in your account" : ""}.`
+      );
       return;
     }
 
     let device = draft;
     if (account) {
-      const saved = await createDevice(deviceToRequest(draft));
-      device = {
-        ...deviceFromApi(saved, {
-          preferences: draft.upgradePreferences,
-          primary: draft.primary,
-        }),
-        type: draft.type, // not stored by the backend; keep it for this session
-      };
+      device = fromSaved(await createDevice(deviceToRequest(draft)));
       pushToast("Device saved", `${name(device)} was added to your account.`);
     }
     setEditing(null);
@@ -114,12 +142,24 @@ export default function DevicesPageTest() {
     setPrefs({ id: device.id, isNew: true }); // straight into step 2
   };
 
-  const removeDevice = (device: Device) => {
+  const removeDevice = async (device: Device) => {
     if (!window.confirm(`Remove ${name(device)}?`)) return;
+    if (account) {
+      try {
+        await deleteDevice(device.id);
+      } catch (err) {
+        // 404: already gone from the account, so dropping it here is right.
+        if (!(err instanceof ApiError && err.status === 404)) {
+          const message = err instanceof Error ? err.message : "Please try again.";
+          pushToast(`Couldn't remove ${name(device)}`, message, "!");
+          return;
+        }
+      }
+    }
     setDevices((all) => all.filter((d) => d.id !== device.id));
     pushToast(
       "Device removed",
-      `It will no longer be considered in recommendations${localOnly}.`,
+      "It will no longer be considered in recommendations.",
       "−"
     );
   };
@@ -172,11 +212,11 @@ export default function DevicesPageTest() {
         <LoadingBlock label="Loading your devices…" />
       ) : (
         <DeviceGrid
-          devices={devices}
+          devices={shownDevices}
           onAdd={() => setEditing("new")}
           onEdit={setEditing}
           onEditPreferences={(d) => setPrefs({ id: d.id, isNew: false })}
-          onRemove={removeDevice}
+          onRemove={(d) => void removeDevice(d)}
         />
       )}
 
@@ -191,6 +231,7 @@ export default function DevicesPageTest() {
         <DeviceFormModal
           device={editing === "new" ? null : editing}
           isFirst={devices.length === 0}
+          catalogue={account ? catalogue : undefined}
           onClose={() => setEditing(null)}
           onSave={saveDevice}
         />
