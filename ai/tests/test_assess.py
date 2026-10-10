@@ -123,9 +123,8 @@ async def test_mostly_irrelevant_passages_produce_no_grade(
     settings, store, assess_request
 ):
     """Code decides whether there is enough evidence, never the model."""
-    llm = FakeLlm(
-        [valid_model_response(refs=["P1"], irrelevant=["P1", "P2", "P3", "P4"])]
-    )
+    settings.irrelevant_ref_limit = 0.5
+    llm = FakeLlm([valid_model_response(refs=["P1"], irrelevant=["P2", "P3", "P4"])])
     response = await make_assessor(settings, store, llm).assess(assess_request)
 
     assert response.evidence_grade == "-"
@@ -138,8 +137,58 @@ async def test_meta_records_retrieval_parameters(settings, store, assess_request
 
     assert response.meta.prompt_version == "v1"
     assert response.meta.ai_model == "fake-model"
-    assert response.meta.retrieval["chunk_char_cap"] == settings.chunk_char_cap
-    assert response.meta.retrieval["vector_store"] == "local"
+    assert response.meta.retrieval.chunk_char_cap == settings.chunk_char_cap
+    assert response.meta.retrieval.vector_store == "local"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("summary", 42), ("summary", {"text": "wrong type"}),
+    ("summary", None), ("note", ["wrong type"]), ("note", True),
+    ("supporting_refs", []), ("verdict", "BUY_NOW"),
+])
+@pytest.mark.parametrize("recovery", [False, True])
+async def test_schema_failures_retry_or_return_unavailable(
+    settings, store, assess_request, field, value, recovery
+):
+    payload = json.loads(valid_model_response())
+    target = payload["evidence_findings"][0] if field in {"note", "supporting_refs"} else payload
+    target[field] = value
+    bad = json.dumps(payload)
+    llm = FakeLlm([bad, valid_model_response() if recovery else bad])
+
+    response = await make_assessor(settings, store, llm).assess(assess_request)
+
+    assert len(llm.calls) == 2
+    assert llm.calls[0]["schema"] == llm.calls[1]["schema"]
+    assert field in llm.calls[1]["messages"][-1]["content"]
+    assert response.meta.retry_count == 1
+    assert response.meta.degraded is not recovery
+    if recovery:
+        assert response.evidence_grade == "C"
+        assert response.system_log is None
+    else:
+        assert response.evidence_grade == "-"
+        assert response.evidence_findings == []
+        assert response.summary is None
+        assert response.meta.degraded_reason == "VALIDATION_FAILED"
+        assert response.system_log["status"] == "FAILURE"
+
+
+async def test_retry_can_be_disabled(settings, store, assess_request):
+    settings.max_retries = 0
+    llm = FakeLlm(["not JSON"])
+    response = await make_assessor(settings, store, llm).assess(assess_request)
+    assert len(llm.calls) == 1
+    assert response.meta.retry_count == 0
+    assert response.meta.degraded_reason == "VALIDATION_FAILED"
+
+
+async def test_retrieval_metadata_records_the_request_override(settings, store, assess_request):
+    assess_request.retrieval.k = 2
+    llm = FakeLlm([valid_model_response()])
+    response = await make_assessor(settings, store, llm).assess(assess_request)
+    assert len(response.meta.retrieved_chunk_ids) == 2
+    assert response.meta.retrieval.k == 2
 
 
 async def test_retrieval_failure_degrades_rather_than_500(settings, assess_request):

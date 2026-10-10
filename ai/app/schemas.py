@@ -4,9 +4,9 @@ Spring Boot owns every number in the request; nothing here is recomputed.
 """
 
 from datetime import date
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from app.factors import (
     BRAND_FLEXIBILITIES,
@@ -28,6 +28,35 @@ Verdict = Literal[VERDICTS]  # type: ignore[valid-type]
 
 class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class StrictOutput(Strict):
+    model_config = ConfigDict(strict=True)
+
+
+def _non_blank(value: str) -> str:
+    if not value.strip():
+        raise ValueError("must contain non-whitespace text")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError("must contain valid Unicode text") from exc
+    return value
+
+
+# Claude's raw schema API rejects minLength. Keep the constraint in the shared
+# runtime model and describe it to providers, rather than causing a format 400.
+NonBlankText = Annotated[
+    str, Field(description="Non-blank text."), AfterValidator(_non_blank)
+]
+ChunkId = Annotated[int, Field(gt=0)]
+DegradedReason = Literal[
+    "RETRIEVAL_FAILED",
+    "NO_PASSAGES_RETRIEVED",
+    "INSUFFICIENT_RELEVANT_PASSAGES",
+    "LLM_CALL_FAILED",
+    "VALIDATION_FAILED",
+]
 
 
 # --- Request -------------------------------------------------------------
@@ -104,16 +133,16 @@ class Analysis(Strict):
     """
 
     verdict: Verdict
-    upgrade_score: float = Field(ge=0, le=1)
+    upgrade_score: float = Field(strict=True, ge=0, le=1)
     deciding_factors: list[Factor] = []
 
 
 class RetrievalOptions(Strict):
-    k: int | None = None
+    k: int | None = Field(default=None, strict=True, gt=0)
 
 
 class AssessRequest(Strict):
-    request_id: str
+    request_id: NonBlankText
     user_context: UserContext
     candidate: Candidate
     computed: Computed = Computed()
@@ -124,36 +153,87 @@ class AssessRequest(Strict):
 # --- Response ------------------------------------------------------------
 
 
-class EvidenceFinding(Strict):
+class ModelEvidenceFinding(StrictOutput):
     factor: Factor
     stance: Stance
-    supporting_refs: list[str]
+    supporting_refs: list[str] = Field(min_length=1)
+    note: NonBlankText
+
+
+class ModelAssessment(StrictOutput):
+    """The model's entire output, shared by provider schema and validation.
+
+    The verdict remains in the Java-owned request. Confidence maps to
+    evidence_grade (A-F); reasoning maps to summary. No defaults may fill in
+    missing model fields, and '-' is reserved for the service's fallback.
+    """
+
+    evidence_grade: Grade
+    evidence_findings: list[ModelEvidenceFinding] = Field(min_length=1)
+    irrelevant_refs: list[str]
+    summary: NonBlankText
+
+
+class EvidenceFinding(ModelEvidenceFinding):
     #: `supporting_refs` resolved back to `review_chunks.id`. Spring persists
     #: these, never the refs, which are meaningless outside one request.
-    supporting_chunk_ids: list[int] = []
-    note: str
+    supporting_chunk_ids: list[ChunkId]
 
 
-class ResponseMeta(Strict):
-    ai_model: str
-    prompt_version: str
-    retrieved_chunk_ids: list[int]
-    retry_count: int
+class RetrievalMeta(StrictOutput):
+    k: int = Field(gt=0)
+    chunk_char_cap: int = Field(gt=0)
+    vector_store: Literal["local", "pgvector"]
+    embedding_dim: int = Field(gt=0)
+
+
+class ResponseMeta(StrictOutput):
+    ai_model: NonBlankText
+    prompt_version: NonBlankText
+    retrieved_chunk_ids: list[ChunkId]
+    retry_count: int = Field(ge=0, le=1)
     #: Retrieval parameters, for `input_snapshot`. Two recommendations sharing
     #: a prompt_version must also share these or reproducibility is lost.
-    retrieval: dict[str, Any] = {}
+    retrieval: RetrievalMeta
     #: True when no usable grade was produced and '-' is being returned.
     degraded: bool = False
-    degraded_reason: str | None = None
+    degraded_reason: DegradedReason | None = None
+
+    @model_validator(mode="after")
+    def validate_degraded_reason(self) -> "ResponseMeta":
+        if self.degraded != (self.degraded_reason is not None):
+            raise ValueError("degraded must agree with degraded_reason")
+        return self
 
 
-class AssessResponse(Strict):
-    request_id: str
+class AssessResponse(StrictOutput):
+    request_id: NonBlankText
     evidence_grade: ReturnedGrade
     evidence_findings: list[EvidenceFinding] = []
     irrelevant_refs: list[str] = []
-    irrelevant_chunk_ids: list[int] = []
-    summary: str | None = None
+    irrelevant_chunk_ids: list[ChunkId] = []
+    summary: NonBlankText | None = None
     meta: ResponseMeta
     #: Ready-formed `system_log` row for Spring to persist. Section 10.
     system_log: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_assessment_state(self) -> "AssessResponse":
+        if self.meta.degraded:
+            if (
+                self.evidence_grade != GRADE_INSUFFICIENT
+                or self.summary is not None
+                or self.evidence_findings
+                or self.irrelevant_refs
+                or self.irrelevant_chunk_ids
+                or self.system_log is None
+            ):
+                raise ValueError("degraded assessments must contain only the unavailable result and failure log")
+        elif (
+            self.evidence_grade == GRADE_INSUFFICIENT
+            or self.summary is None
+            or not self.evidence_findings
+            or self.system_log is not None
+        ):
+            raise ValueError("successful assessments require a grade, findings and summary, with no failure log")
+        return self

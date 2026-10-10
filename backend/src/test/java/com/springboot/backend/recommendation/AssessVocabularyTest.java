@@ -26,6 +26,9 @@ class AssessVocabularyTest {
         String source = Files.readString(FACTORS_PY);
 
         assertEquals(tuple(source, "FACTORS"), Factors.ALL);
+        assertEquals(tuple(source, "VERDICTS"), AssessVocabulary.VERDICTS);
+        assertEquals(tuple(source, "GRADES"), AssessVocabulary.GRADES);
+        assertEquals(tuple(source, "STANCES"), AssessVocabulary.STANCES);
         assertEquals(tuple(source, "CONDITIONS"), AssessVocabulary.CONDITIONS);
         assertEquals(tuple(source, "UPGRADE_URGENCIES"), AssessVocabulary.UPGRADE_URGENCIES);
         assertEquals(tuple(source, "BRAND_FLEXIBILITIES"), AssessVocabulary.BRAND_FLEXIBILITIES);

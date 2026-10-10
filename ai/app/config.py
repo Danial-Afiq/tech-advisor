@@ -12,6 +12,7 @@ environment only when you actually want to change one.
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Resolved from this file, not the working directory, so `uvicorn app.main:app`
@@ -69,8 +70,8 @@ class Settings(BaseSettings):
     # Section 11
     k: int = 12
     chunk_char_cap: int = 800
-    prompt_version: str = "v1"
-    max_retries: int = 1
+    prompt_version: str = "v2"
+    max_retries: int = Field(default=1, ge=0, le=1)
 
     # Model. `temperature` is deliberately absent: it is rejected with a 400
     # on Claude Opus 5. Depth is controlled with effort instead.

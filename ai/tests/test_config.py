@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from app.config import ENV_FILE, REPO_ROOT, Settings
 from app.llm import AnthropicLlm
@@ -107,3 +108,9 @@ def test_relative_vector_store_path_resolves_against_the_package_root() -> None:
 def test_absolute_vector_store_path_is_left_alone(tmp_path: Path) -> None:
     settings = Settings(_env_file=None, vector_store_path=str(tmp_path / "store"))
     assert settings.resolved_vector_store_path == tmp_path / "store"
+
+
+@pytest.mark.parametrize("retries", [-1, 2, 10])
+def test_configuration_cannot_enable_more_than_one_retry(retries):
+    with pytest.raises(ValidationError, match="max_retries"):
+        Settings(_env_file=None, max_retries=retries)
