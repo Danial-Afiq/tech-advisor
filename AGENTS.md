@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 6 October 2026
+> **Last consolidated:** 9 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -38,6 +38,7 @@ When something conflicts, use this order:
 - Final upgrade verdict: **deterministic Java/Spring Boot code owns it**.
   - The LLM does **not** decide whether the user should upgrade.
 - LLM model calls: **one reasoning call per recommendation that passes the gates**.
+  - A structurally invalid output permits at most one corrective retry (§12).
   - No ingestion-time reasoning/classification calls.
   - Embedding calls for retrieval do not count as reasoning calls.
 - Separate `evidence_grades` table: **do not build it**.
@@ -660,7 +661,8 @@ For each `(user_device, candidate_product)` recommendation evaluation:
 - Java computes verdict/scores/deltas first.
 - Java performs gates.
 - FastAPI retrieves evidence.
-- **Exactly one LLM reasoning call** is made if the request passes the gates.
+- **One LLM reasoning call** is made if the request passes the gates; an invalid
+  output permits at most one corrective retry (§12).
 - No separate ingestion-time reasoning/classification model calls.
 - Embedding calls are allowed and are not reasoning calls.
 
@@ -715,8 +717,8 @@ MIN_CHUNKS            = 8
 # Python-side, implemented as typed defaults in ai/app/config.py
 K                     = 12
 CHUNK_CHAR_CAP        = 800
-PROMPT_VERSION        = v1
-MAX_RETRIES           = 1
+PROMPT_VERSION        = v2
+MAX_RETRIES           = 1      # only 0 or 1 accepted
 IRRELEVANT_REF_LIMIT  = 0.75   # see §12
 ```
 
@@ -1082,20 +1084,56 @@ If the app adds a new preference factor, update:
 
 # 12. LLM output validation and failure handling
 
-Python validates before returning anything to Spring.
+Python validates before returning anything to Spring. Ticket 5.5 (SCRUM-12)
+uses `schemas.ModelAssessment` as the shared Pydantic definition for the provider
+JSON schema and local model-output validation. Required fields have no defaults,
+extra fields are forbidden at every level, and output types are strict.
+`prompt.output_schema()` derives the provider schema directly from that model;
+`validation.parse_response()` and `validation.validate()` check the returned
+answer, while `assess.Assessor` coordinates retrieval, the call and corrective retry.
+Non-blank prose is enforced by the model's local validators and described in
+the provider schema; raw Claude schema calls reject `minLength` constraints
+([provider limitations](https://platform.claude.com/docs/en/build-with-claude/structured-outputs#json-schema-limitations)).
+
+Ticket terminology follows the existing two-channel contract: `verdict` is the
+Java-owned `analysis.verdict`, validated against the four canonical values;
+`confidence` is `evidence_grade` (A–F, not a numeric probability), and `reasoning`
+is `summary`. The numeric `upgrade_score` remains in [0, 1] and rejects string or
+boolean coercion. The model cannot return a verdict or grade `-`.
 
 Checks:
-- valid JSON,
+- valid JSON object, without Markdown fences, duplicate keys or non-standard NaN/Infinity,
+- all four fields (`evidence_grade`, `evidence_findings`, `irrelevant_refs`,
+  `summary`) present, with the expected types and no extra fields,
 - evidence grade is one of `A,B,C,D,E,F`,
 - every factor is from the closed factor list,
 - every stance is valid,
-- every evidence ref exists in the sent ref map,
-- summary is non-empty.
+- at least one finding, each with a non-blank string note and supporting ref,
+- every evidence ref exists in the sent ref map; refs are unique within each
+  list and a supporting ref cannot also be irrelevant,
+- summary is a non-blank string.
+
+The response envelope validates model/prompt identifiers, positive chunk IDs,
+typed retrieval metadata, retry count (0–1), and consistent success/degraded
+state. `meta.retrieval.k` records the effective request override when supplied.
+The default prompt revision is `v2` for the stricter schema and instructions.
 
 On failure:
-1. retry once,
-2. include structural error feedback,
+1. retry at most once (`MAX_RETRIES` accepts only 0 or 1),
+2. include structural error feedback and the same expected schema,
 3. if second attempt fails, return graceful AI failure.
+
+All model schema failures enter that retry loop, including wrong prose types.
+On exhausted validation, `/assess` returns HTTP 200 with grade `-`, null summary,
+empty findings, `meta.degraded=true`, `VALIDATION_FAILED`, and a FAILURE log.
+
+Spring's `AssessmentValidation` checks the canonical verdict, numeric score,
+grade, required prose/evidence and metadata before `RecommendationRepository.save`.
+A malformed service response throws `AiServiceException` before any existing row
+is superseded or a new one is written. A valid unavailable result still persists
+the deterministic verdict with grade `-`, no model prose/evidence, and its failure
+log in the existing transaction; it is not a successful AI assessment.
+The feature uses the existing recommendation columns and requires no database migration.
 
 Never:
 - silently drop a hallucinated ref,
@@ -1139,6 +1177,47 @@ Every AI failure should be written to `system_log`, e.g.:
   }
 }
 ```
+
+### Output-validation regression checks (SCRUM-12)
+
+The implementation is covered without paid LLM calls by `FakeLlm`, Mockito and
+local HTTP stubs:
+
+| Behaviour | Tests |
+|---|---|
+| Required fields, strict types, grades, JSON parsing and passage references | `ai/tests/test_validation.py` |
+| Provider schema matches runtime validation | `ai/tests/test_prompt.py` |
+| Metadata and success/unavailable response consistency | `ai/tests/test_response_schema.py` |
+| Corrective retry, recovery, unavailable fallback and effective retrieval settings | `ai/tests/test_assess.py`, `ai/tests/test_api.py` |
+| Retry configuration accepts only 0 or 1 | `ai/tests/test_config.py` |
+| Canonical verdicts and Java/Python vocabulary agreement | `AssessVocabularyTest`, `RecommendationValidationTest` |
+| Invalid responses cannot reach persistence or replace an ACTIVE recommendation | `RecommendationValidationTest`, `RecommendationPersistenceTests` |
+
+Run the Python suite from `ai/`:
+
+```sh
+python -m pip install -e '.[dev]'
+python -m pytest -q
+```
+
+Run the database-free backend checks from `backend/` with Java 21:
+
+```sh
+./mvnw -Dtest=RecommendationValidationTest,AssessContractTests,AssessVocabularyTest test
+```
+
+For persistence tests, configure the backend database settings, including
+`POSTGRES_DB`, to use a dedicated pgvector PostgreSQL database ending `_test`.
+Then run from `backend/` with Java 21:
+
+```sh
+./mvnw -Dtest=RecommendationPersistenceTests,RecommendationTriggerIntegrationTest test
+```
+
+The AI CI job runs mocked tests without provider credentials. Optional Python
+pgvector tests require an explicit `TEST_DATABASE_URL` ending `_test`;
+`TEST_EMBEDDING_MODEL_PATH` can point to baked model weights. Backend CI supplies
+its own temporary pgvector database (§18.4).
 
 ---
 
@@ -2234,7 +2313,8 @@ Known files include:
 Jobs:
 1. Backend - Test and Build
 2. Frontend - Test and Build
-3. Repository Checks
+3. AI - Mocked Tests
+4. Repository Checks
 
 Backend CI:
 - Ubuntu
@@ -2248,6 +2328,11 @@ Frontend CI:
 - `npm ci` where lockfile exists
 - `npm test`
 - `npm run build`
+
+AI CI (SCRUM-12): Python 3.13, installs `ai[dev]`, runs `python -m pytest -q`
+under `ai/` with mocked LLMs. Optional pgvector tests skip without an explicit
+`TEST_DATABASE_URL` ending `_test`. Repository Checks depends on all three test
+jobs and includes AI failures in its existing CI-failure notification.
 
 Repo checks verify:
 - `README.md`
@@ -2393,6 +2478,12 @@ Deliberate boundaries:
   AI layer's ready-formed `system_log` row in the same transaction. A degraded
   response carrying no `system_log` is treated as a contract violation and throws,
   rather than silently losing the failure.
+- SCRUM-12 adds `AssessmentValidation` before persistence: invalid grades,
+  summaries, evidence references, retrieval/audit metadata or unavailable-state
+  combinations are rejected before `save`. `RecommendationValidationTest` covers
+  this without a database; `RecommendationPersistenceTests` also checks that
+  invalid re-assessments leave the previous ACTIVE row untouched and that
+  `VALIDATION_FAILED` stores only deterministic data plus the failure log.
 
 Config added: `ai.service-url` / `ai.service-token` / `ai.timeout` in
 `application.properties`, bound to `AI_SERVICE_URL` / `AI_SERVICE_TOKEN` / `AI_TIMEOUT`.

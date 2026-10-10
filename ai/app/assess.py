@@ -17,7 +17,13 @@ from app.prompt import SYSTEM_PROMPT, build_user_prompt, output_schema
 from app.retrieval.embedder import Embedder
 from app.retrieval.query import build_query
 from app.retrieval.store import Chunk, VectorStore
-from app.schemas import AssessRequest, AssessResponse, EvidenceFinding, ResponseMeta
+from app.schemas import (
+    AssessRequest,
+    AssessResponse,
+    DegradedReason,
+    EvidenceFinding,
+    ResponseMeta,
+)
 from app.validation import ValidationFailure, parse_response, validate
 
 log = logging.getLogger(__name__)
@@ -167,7 +173,7 @@ class Assessor:
             irrelevant_refs=irrelevant_refs,
             irrelevant_chunk_ids=[ref_to_chunk[ref] for ref in irrelevant_refs],
             summary=parsed["summary"],
-            meta=self._meta(retrieved_chunk_ids, retry_count, model_id),
+            meta=self._meta(retrieved_chunk_ids, retry_count, model_id, k),
         )
 
     def _retrieve(self, request: AssessRequest, k: int) -> list[Chunk]:
@@ -180,7 +186,12 @@ class Assessor:
         )
 
     def _meta(
-        self, retrieved_chunk_ids: list[int], retry_count: int, model_id: str
+        self,
+        retrieved_chunk_ids: list[int],
+        retry_count: int,
+        model_id: str,
+        k: int,
+        reason: DegradedReason | None = None,
     ) -> ResponseMeta:
         return ResponseMeta(
             ai_model=model_id,
@@ -188,17 +199,19 @@ class Assessor:
             retrieved_chunk_ids=retrieved_chunk_ids,
             retry_count=retry_count,
             retrieval={
-                "k": self.settings.k,
+                "k": k,
                 "chunk_char_cap": self.settings.chunk_char_cap,
                 "vector_store": self.settings.vector_store,
                 "embedding_dim": self.settings.embedding_dim,
             },
+            degraded=reason is not None,
+            degraded_reason=reason,
         )
 
     def _degraded(
         self,
         request: AssessRequest,
-        reason: str,
+        reason: DegradedReason,
         message: str,
         retrieved_chunk_ids: list[int],
         retry_count: int,
@@ -215,9 +228,13 @@ class Assessor:
             reason,
             message,
         )
-        meta = self._meta(retrieved_chunk_ids, retry_count, self.settings.llm_model)
-        meta.degraded = True
-        meta.degraded_reason = reason
+        meta = self._meta(
+            retrieved_chunk_ids,
+            retry_count,
+            self.settings.llm_model,
+            request.retrieval.k or self.settings.k,
+            reason,
+        )
         return AssessResponse(
             request_id=request.request_id,
             evidence_grade=GRADE_INSUFFICIENT,

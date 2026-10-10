@@ -14,7 +14,7 @@ import re
 from app.config import Settings
 from app.factors import FACTORS, GRADES
 from app.retrieval.store import Chunk
-from app.schemas import AssessRequest
+from app.schemas import AssessRequest, ModelAssessment
 
 DATA_START = "<<<<DATA_START>>>>"
 DATA_END = "<<<<DATA_END>>>>"
@@ -55,7 +55,10 @@ Grade scale:
   F  Substantial negative reports; widely reported defect
 
 Grade the factors the analysis block names as deciding. Report a finding for
-every factor you find evidence on, and at least one finding overall.""" % (
+every factor you find evidence on, and at least one finding overall. Each finding
+must cite at least one provided passage. Do not repeat a ref within a list or
+use an irrelevant passage to support a finding. All four top-level fields are
+required, with no additional fields; notes and summary must be non-empty strings.""" % (
     _GRADE_UNION,
     ", ".join(FACTORS),
 )
@@ -155,38 +158,4 @@ def output_schema() -> dict:
     `evidence_grade` is committed before any personalised prose is written.
     Do not reorder.
     """
-    return {
-        "type": "object",
-        "properties": {
-            "evidence_grade": {"type": "string", "enum": list(GRADES)},
-            "evidence_findings": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "factor": {"type": "string", "enum": list(FACTORS)},
-                        "stance": {
-                            "type": "string",
-                            "enum": ["POSITIVE", "NEGATIVE", "MIXED"],
-                        },
-                        "supporting_refs": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                        "note": {"type": "string"},
-                    },
-                    "required": ["factor", "stance", "supporting_refs", "note"],
-                    "additionalProperties": False,
-                },
-            },
-            "irrelevant_refs": {"type": "array", "items": {"type": "string"}},
-            "summary": {"type": "string"},
-        },
-        "required": [
-            "evidence_grade",
-            "evidence_findings",
-            "irrelevant_refs",
-            "summary",
-        ],
-        "additionalProperties": False,
-    }
+    return ModelAssessment.model_json_schema()

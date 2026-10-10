@@ -28,21 +28,12 @@ public class RecommendationService {
 
     public long assessAndPersist(RecommendationInput input) {
         AssessRequest request = withRequestId(input.request());
+        AssessmentValidation.validateAnalysis(request.analysis());
         AssessResponse response = aiClient.assess(request);
+        AssessmentValidation.validateResponse(response);
 
         Map<String, Object> degradedLog = null;
         if (response.meta().degraded()) {
-            if (response.systemLog() == null) {
-                // The AI service's own contract (AGENTS.md §10) is that a
-                // degraded meta always carries a ready-formed system_log row.
-                // If that's ever violated, the failure must not be silently
-                // dropped - fail loudly instead of persisting a recommendation
-                // with no record of why the grade is "-".
-                throw new AiServiceException(
-                        "Degraded assessment for request " + request.requestId()
-                                + " carried no system_log entry",
-                        null);
-            }
             degradedLog = response.systemLog();
         }
 

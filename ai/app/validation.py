@@ -15,7 +15,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.factors import FACTORS, GRADES, STANCES
+from pydantic import ValidationError
+
+from app.schemas import ModelAssessment
 
 
 class ValidationFailure(Exception):
@@ -25,9 +27,13 @@ class ValidationFailure(Exception):
 
 
 def parse_response(raw: str) -> dict[str, Any]:
+    if not isinstance(raw, str):
+        raise ValidationFailure("Response must be JSON text.")
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        parsed = json.loads(
+            raw, object_pairs_hook=_unique_object, parse_constant=_reject_constant
+        )
+    except (json.JSONDecodeError, RecursionError) as exc:
         raise ValidationFailure("Response was not valid JSON: %s" % exc) from exc
     if not isinstance(parsed, dict):
         raise ValidationFailure("Response must be a JSON object.")
@@ -35,60 +41,41 @@ def parse_response(raw: str) -> dict[str, Any]:
 
 
 def validate(parsed: dict[str, Any], known_refs: set[str]) -> dict[str, Any]:
-    grade = parsed.get("evidence_grade")
-    if grade not in GRADES:
-        raise ValidationFailure(
-            "evidence_grade was %r; it must be one of %s."
-            % (grade, ", ".join(GRADES))
+    try:
+        assessment = ModelAssessment.model_validate(parsed)
+    except ValidationError as exc:
+        # Feedback contains field paths and expected types, never rejected
+        # prose. Every schema failure stays inside the single-retry loop.
+        details = "; ".join(
+            "%s: %s" % (".".join(map(str, error["loc"])), error["msg"])
+            for error in exc.errors(include_input=False, include_url=False)
         )
+        raise ValidationFailure(details) from exc
 
-    findings = parsed.get("evidence_findings")
-    if not isinstance(findings, list):
-        raise ValidationFailure("evidence_findings must be a list.")
-    if not findings:
-        raise ValidationFailure(
-            "evidence_findings was empty. A grade must rest on at least one "
-            "finding; if no passage supports a finding, list the passages in "
-            "irrelevant_refs."
-        )
-
-    for index, finding in enumerate(findings):
-        if not isinstance(finding, dict):
-            raise ValidationFailure("evidence_findings[%d] must be an object." % index)
-        factor = finding.get("factor")
-        if factor not in FACTORS:
+    _check_refs(assessment.irrelevant_refs, known_refs, "irrelevant_refs")
+    irrelevant = set(assessment.irrelevant_refs)
+    for index, finding in enumerate(assessment.evidence_findings):
+        field = "evidence_findings[%d].supporting_refs" % index
+        _check_refs(finding.supporting_refs, known_refs, field)
+        if irrelevant.intersection(finding.supporting_refs):
             raise ValidationFailure(
-                "evidence_findings[%d].factor was %r; it must be one of %s."
-                % (index, factor, ", ".join(FACTORS))
+                "%s cannot cite a passage listed in irrelevant_refs." % field
             )
-        stance = finding.get("stance")
-        if stance not in STANCES:
-            raise ValidationFailure(
-                "evidence_findings[%d].stance was %r; it must be one of %s."
-                % (index, stance, ", ".join(STANCES))
-            )
-        if not str(finding.get("note") or "").strip():
-            raise ValidationFailure(
-                "evidence_findings[%d].note was empty." % index
-            )
-        refs = finding.get("supporting_refs")
-        if not isinstance(refs, list):
-            raise ValidationFailure(
-                "evidence_findings[%d].supporting_refs must be a list." % index
-            )
-        _check_refs(
-            refs, known_refs, "evidence_findings[%d].supporting_refs" % index
-        )
 
-    irrelevant = parsed.get("irrelevant_refs", [])
-    if not isinstance(irrelevant, list):
-        raise ValidationFailure("irrelevant_refs must be a list.")
-    _check_refs(irrelevant, known_refs, "irrelevant_refs")
+    return assessment.model_dump()
 
-    if not str(parsed.get("summary") or "").strip():
-        raise ValidationFailure("summary was empty.")
 
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    parsed: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in parsed:
+            raise ValidationFailure("Response contains duplicate JSON fields.")
+        parsed[key] = value
     return parsed
+
+
+def _reject_constant(value: str) -> None:
+    raise ValidationFailure("Response was not valid JSON: %s is not permitted." % value)
 
 
 def _check_refs(refs: list[Any], known_refs: set[str], field: str) -> None:
@@ -101,3 +88,5 @@ def _check_refs(refs: list[Any], known_refs: set[str], field: str) -> None:
                 "%s contains %r, which was not one of the passages provided. "
                 "Use only the refs shown in the owner reports block." % (field, ref)
             )
+    if len(refs) != len(set(refs)):
+        raise ValidationFailure("%s contains duplicate passage refs." % field)
