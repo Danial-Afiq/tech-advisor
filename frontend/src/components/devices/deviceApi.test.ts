@@ -75,6 +75,14 @@ describe("deviceFromApi", () => {
     });
   });
 
+  it("saves comma-separated use cases as distinct JSON array entries", () => {
+    const device = deviceFromApi(base);
+    expect(deviceToRequest({ ...device, use: " Gaming,  Photography, Social media ,, " }).useCases)
+      .toBe('["Gaming","Photography","Social media"]');
+    expect(deviceToRequest({ ...device, use: "   , ,  " }).useCases).toBe("[]");
+    expect(deviceToRequest({ ...device, use: "Gaming" }).useCases).toBe('["Gaming"]');
+  });
+
   it("leaves unknown values empty instead of inventing them", () => {
     const device = deviceFromApi({
       ...base,
