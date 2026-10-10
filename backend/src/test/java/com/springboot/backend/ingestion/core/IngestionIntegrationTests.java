@@ -59,7 +59,7 @@ class IngestionIntegrationTests {
                 private Payload specification(String externalId, String model, BigDecimal battery, Instant observedAt) {
                     return new Payload(sourceId(), externalId, observedAt, new Payload.Specifications(
                             externalId, "ValidationTest", model, "Test Chipset",
-                            Map.of("battery", battery), Map.of("battery", "mAh")));
+                            Map.of("battery", battery), Map.of("battery", "mAh"), List.of()));
                 }
             };
         }
