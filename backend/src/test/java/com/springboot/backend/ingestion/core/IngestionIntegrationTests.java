@@ -41,7 +41,7 @@ class IngestionIntegrationTests {
                 public boolean simulation() { return true; }
                 public void ingest(SourceContext context, java.util.function.Consumer<Payload> output) {
                     var valid = new Payload(sourceId(), "same-item", context.now(),
-                            new Payload.Price("phone", java.math.BigDecimal.ONE, "SGD"));
+                            new Payload.Price("phone", null, java.math.BigDecimal.ONE, "SGD"));
                     output.accept(valid); output.accept(valid);
                     output.accept(new Payload("wrong-source", "bad", context.now(), valid.body()));
                     throw new IllegalStateException("Do not expose this source message or secret");

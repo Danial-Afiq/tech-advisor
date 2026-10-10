@@ -158,7 +158,7 @@ class ReviewPersistenceTests {
     @Test void tokenCacheIsLocaleAndCanonicalIdentityScopedAndSelectionIsOrdered() {
         var p = new SearchApiRepository.Product(product, "SearchApiTest", "model");
         var s = new SearchApiSettings("", "sg", "en", "Singapore", 1);
-        mappings.cache(p, s, new ProductMatcher.Match("google-id", "cached", "Matched title"), now);
+        mappings.cache(p, s, new ProductMatcher.Match("google-id", "cached", "Matched title", null, null), now);
         assertEquals(Optional.of("cached"), mappings.token(p, s));
         assertTrue(mappings.token(new SearchApiRepository.Product(product, "SearchApiTest", "changed"), s).isEmpty());
         assertTrue(mappings.token(p, new SearchApiSettings("", "us", "en", "USA", 1)).isEmpty());
@@ -174,6 +174,24 @@ class ReviewPersistenceTests {
         db.update("UPDATE products SET status='VERIFIED',category='GPU' WHERE id=?", product);
         assertFalse(mappings.products(untried).stream().anyMatch(row -> row.id() == product));
     }
+    @Test void variantIdForResolvesAnUnambiguousStorageTierButNotAnAmbiguousOne() {
+        long single = db.queryForObject(
+                "INSERT INTO phone_variants(product_id, storage_gb) VALUES (?, 256) RETURNING id", Long.class, product);
+        assertEquals(Optional.of(single), mappings.variantIdFor(product, 256));
+        assertTrue(mappings.variantIdFor(product, 512).isEmpty(), "no 512GB row exists for this product");
+
+        // A second product, same storage figure - must not resolve to the other product's row.
+        long other = db.queryForObject("INSERT INTO products(brand,model_name) VALUES ('SearchApiTest',?) RETURNING id",
+                Long.class, UUID.randomUUID().toString());
+        db.update("INSERT INTO phone_variants(product_id, storage_gb) VALUES (?, 256)", other);
+        assertEquals(Optional.of(single), mappings.variantIdFor(product, 256));
+
+        // Two rows at the same storage figure for THIS product (e.g. a region/chipset split) -
+        // ambiguous, must not guess which one the price belongs to.
+        db.update("INSERT INTO phone_variants(product_id, storage_gb, region) VALUES (?, 256, 'US')", product);
+        assertTrue(mappings.variantIdFor(product, 256).isEmpty());
+    }
+
     // products() caps at 2 results (a real SearchAPI constraint, not a test artifact) and this
     // shared _test database accumulates other tests' eligible products - a LIMIT-bounded,
     // ORDER-BY-id result can't reliably prove inclusion/exclusion of one specific row. Checks the

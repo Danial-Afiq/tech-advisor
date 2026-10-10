@@ -20,6 +20,10 @@ import { UpgradePreferencesModal } from "../components/devices/UpgradePreference
 import { deviceFromApi, deviceToRequest } from "../components/devices/deviceApi";
 import { DEMO_DEVICES, DEMO_USER } from "../components/devices/demoData";
 import type { Device } from "../components/devices/types";
+import {
+  DASHBOARD_PATH,
+  DEVICES_PATH,
+} from "../routing/paths";
 
 /**
  * My Devices — remake of the prototype's "My devices" page.
@@ -124,6 +128,15 @@ export default function DevicesPageTest() {
     <AppShell
       active="devices"
       title="My devices"
+      onNavigate={(key) => {
+        if (key === "dashboard") {
+          void navigate(DASHBOARD_PATH);
+        }
+
+        if (key === "devices") {
+          void navigate(DEVICES_PATH);
+        }
+      }}
       user={
         account
           ? { name: account.email.split("@")[0], email: account.email }
@@ -143,23 +156,17 @@ export default function DevicesPageTest() {
         }
       />
 
-      <Callout className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <span>
-          {account ? (
-            <>
-              Signed in as <b>{account.email}</b>. New devices are saved to
-              your account.
-            </>
-          ) : (
-            "Demo mode: these devices aren't saved. Sign in to add devices to your account."
-          )}
-        </span>
-        {!account && (
+      {!account && (
+        <Callout className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <span>
+            Demo mode: these devices aren't saved. Sign in to add devices to
+            your account.
+          </span>
           <Button size="sm" variant="primary" onClick={() => setSigningIn(true)}>
             Sign in
           </Button>
-        )}
-      </Callout>
+        </Callout>
+      )}
 
       {loading ? (
         <LoadingBlock label="Loading your devices…" />

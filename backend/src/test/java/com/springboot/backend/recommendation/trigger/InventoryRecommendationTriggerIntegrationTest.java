@@ -1,4 +1,4 @@
-package com.springboot.backend.recommendation;
+package com.springboot.backend.recommendation.trigger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
