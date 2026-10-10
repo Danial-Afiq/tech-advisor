@@ -61,14 +61,14 @@ const snake = (key: string) =>
  */
 export function deviceToRequest(device: Device): DeviceRequest {
   const name = `${device.brand} ${device.model}`.trim();
-  const use = device.use.trim();
+  const useCases = device.use.split(",").map((use) => use.trim()).filter(Boolean);
   return {
     productId: device.productId ?? null,
     customName: device.productId ? null : name || null,
     purchaseDate: device.purchaseDate || null,
     condition: device.condition ?? null,
     satisfactionScore: device.satisfaction ?? null,
-    useCases: JSON.stringify(use ? [use] : []),
+    useCases: JSON.stringify(useCases),
     specOverrides: JSON.stringify(
       Object.fromEntries(
         Object.entries(device.specOverrides ?? {}).map(([k, v]) => [snake(k), v])
