@@ -127,7 +127,7 @@ def test_schema_commits_the_grade_before_the_prose():
 
 def test_schema_closes_the_factor_and_stance_vocabularies():
     schema = output_schema()
-    finding = schema["properties"]["evidence_findings"]["items"]
+    finding = schema["$defs"]["ModelEvidenceFinding"]
 
     assert "longevity" in finding["properties"]["factor"]["enum"]
     assert "portability" in finding["properties"]["factor"]["enum"]
@@ -139,3 +139,21 @@ def test_schema_closes_the_factor_and_stance_vocabularies():
     ]
     assert schema["properties"]["evidence_grade"]["enum"] == list("ABCDEF")
     assert schema["additionalProperties"] is False
+
+
+def test_provider_schema_is_the_runtime_model_schema():
+    from app.schemas import ModelAssessment
+
+    schema = output_schema()
+    assert schema == ModelAssessment.model_json_schema()
+    assert set(schema["required"]) == set(schema["properties"])
+    assert schema["properties"]["evidence_findings"]["minItems"] == 1
+    assert schema["$defs"]["ModelEvidenceFinding"]["properties"]["supporting_refs"]["minItems"] == 1
+
+
+def test_provider_schema_uses_supported_claude_constraints():
+    # Native raw-schema calls do not run the SDK's schema-transform helper.
+    # Claude supports minItems=1, but rejects minLength/maxLength on strings.
+    encoded = json.dumps(output_schema())
+    assert '"minLength"' not in encoded
+    assert '"maxLength"' not in encoded

@@ -332,8 +332,13 @@ class RecommendationTriggerIntegrationTest {
 
     private static AssessResponse success(AssessRequest request) {
         return new AssessResponse(
-                request.requestId(), "B", List.of(), List.of(), List.of(), "Owners are broadly positive.",
-                new AssessResponse.ResponseMeta("test-model", "v1", List.of(), 0, Map.of(), false, null),
+                request.requestId(), "B",
+                List.of(new AssessResponse.EvidenceFinding(
+                        "battery", "POSITIVE", List.of("P1"), List.of(4412L), "Owners report good endurance.")),
+                List.of(), List.of(), "Owners are broadly positive.",
+                new AssessResponse.ResponseMeta("test-model", "v1", List.of(4412L), 0,
+                        Map.of("k", 12, "chunk_char_cap", 800, "vector_store", "local", "embedding_dim", 512),
+                        false, null),
                 null);
     }
 
