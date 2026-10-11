@@ -8,6 +8,12 @@ primary_region = 'sin'
 
 [build]
 
+# Non-sensitive runtime configuration; API keys and database credentials stay in Fly secrets.
+[env]
+  LLM_PROVIDER = 'openai'
+  LLM_MODEL = 'gpt-5.4'
+  VECTOR_STORE = 'pgvector'
+
 [http_service]
   internal_port = 8000
   force_https = true
@@ -16,8 +22,15 @@ primary_region = 'sin'
   min_machines_running = 0
   processes = ['app']
 
+# HTTP readiness check used during deploys and by Fly Proxy.
+[[http_service.checks]]
+  grace_period = '60s'
+  interval = '30s'
+  method = 'GET'
+  timeout = '5s'
+  path = '/health'
+
 [[vm]]
-  memory = '1gb'
+  memory = '2gb'
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 2048
