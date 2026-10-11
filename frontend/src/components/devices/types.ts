@@ -33,4 +33,9 @@ export type Device = {
   upgradePreferences: UpgradePreferences;
   /** Phones only: catalogue specs with the user's overrides applied. */
   specs?: PhoneSpecs;
+  /**
+   * `user_devices.spec_overrides`: the specs that differ from the linked
+   * catalogue row, or every known spec when the device isn't linked.
+   */
+  specOverrides?: PhoneSpecs;
 };

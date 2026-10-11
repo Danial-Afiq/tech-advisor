@@ -334,6 +334,10 @@ Spring handles those responsibilities first, including cheap SQL filtering to de
 response shapes live in `ai/app/schemas.py`, which is authoritative; Swagger
 renders them at `/docs`.
 
+[AGENTS.md §12](AGENTS.md#12-llm-output-validation-and-failure-handling) documents
+the strict model schema, single corrective retry, unavailable response, Spring
+persistence checks, and regression test commands. The default prompt revision is `v2`.
+
 Three things the Java side owns before it may call this route:
 
 1. **The preference gate and the verdict.** If the gate fails outright, the

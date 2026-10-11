@@ -10,6 +10,8 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -133,7 +135,8 @@ class RecommendationPersistenceTests {
                 {"request_id":"generated","evidence_grade":"-","evidence_findings":[],
                  "irrelevant_refs":[],"irrelevant_chunk_ids":[],"summary":null,
                  "meta":{"ai_model":"claude-opus-5","prompt_version":"v1","retrieved_chunk_ids":[],
-                   "retry_count":0,"retrieval":{"k":12},"degraded":true,
+                   "retry_count":0,"retrieval":{"k":12,"chunk_char_cap":800,
+                     "vector_store":"local","embedding_dim":512},"degraded":true,
                    "degraded_reason":"NO_PASSAGES_RETRIEVED"},
                  "system_log":{"component":"recommendation_ai","status":"FAILURE",
                    "message":"No review passages retrieved for the candidate product",
@@ -260,5 +263,37 @@ class RecommendationPersistenceTests {
         assertEquals(
                 0, (int) db.queryForObject("SELECT count(*) FROM recommendations", Integer.class),
                 "a transport failure is not a degraded assessment and must not write a half-row");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"grade", "summary", "factor", "retry_count", "supporting_chunk_ids"})
+    void invalidAssessmentsDoNotReplaceAPreviousSuccessfulRecommendation(String field) {
+        RESPONSE.set(successBody());
+        long existing = service.assessAndPersist(input());
+        String invalid = switch (field) {
+            case "grade" -> successBody().replace("\"evidence_grade\":\"C\"", "\"evidence_grade\":\"Z\"");
+            case "summary" -> successBody().replace("Owners report weaker battery than the specs suggest.", "   ");
+            case "factor" -> successBody().replace("\"factor\":\"battery\"", "\"factor\":\"vibes\"");
+            case "retry_count" -> successBody().replace("\"retry_count\":0", "\"retry_count\":2");
+            default -> successBody().replace("\"supporting_chunk_ids\":[4412]", "\"supporting_chunk_ids\":[9999]");
+        };
+        RESPONSE.set(invalid);
+        assertThrows(AiServiceException.class, () -> service.assessAndPersist(input()));
+        assertEquals(1, db.queryForObject("SELECT count(*) FROM recommendations", Integer.class));
+        assertEquals("ACTIVE", db.queryForObject("SELECT status FROM recommendations WHERE id=?", String.class, existing));
+    }
+
+    @Test
+    void exhaustedValidationPersistsNoModelGradeOrReasoningAndLogsFailure() {
+        RESPONSE.set(degradedBody().replace("NO_PASSAGES_RETRIEVED", "VALIDATION_FAILED")
+                .replace("\"retry_count\":0", "\"retry_count\":1")
+                .replace("No review passages retrieved for the candidate product", "Schema validation failed after retry"));
+        long id = service.assessAndPersist(input());
+        var row = db.queryForMap("SELECT * FROM recommendations WHERE id=?", id);
+        assertEquals("WORTH_CONSIDERING", row.get("verdict"));
+        assertEquals("-", row.get("confidence"));
+        assertNull(row.get("reasoning"));
+        assertEquals(List.of(), jsonColumn(id, "factor_analysis").get("evidence"));
+        assertEquals("FAILURE", db.queryForMap("SELECT * FROM system_log WHERE component='recommendation_ai'").get("status"));
     }
 }

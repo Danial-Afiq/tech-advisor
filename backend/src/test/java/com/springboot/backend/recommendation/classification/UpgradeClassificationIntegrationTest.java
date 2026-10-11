@@ -154,6 +154,24 @@ class UpgradeClassificationIntegrationTest {
     }
 
     @Test
+    void aClearedSpecFromTheJsonbColumnIsUnknownNotTheCatalogueValue() {
+        Long candidate = product("Samsung", "Galaxy S25");
+        phone(candidate, 5000, 12, 120, 200, 256);
+        benchmark(candidate, "geekbench_multi", "8000", true, LATER);
+
+        // The owner cleared storage in the device form as wrong or unknown.
+        db.update("UPDATE user_devices SET spec_overrides = ?::jsonb WHERE id = ?",
+                "{\"storage_gb\": null}", userDeviceId);
+        entityManager.clear();
+
+        UpgradeClassification result =
+                service.classify(userDeviceId, candidate, new BigDecimal("1000.00"));
+
+        assertTrue(result.comparison().skippedSpecs().contains("storage_gb"));
+        assertNull(result.comparison().specDeltas().get("storage_gb").current());
+    }
+
+    @Test
     void aCandidateWithNoSpecSheetFailsClearlyRatherThanScoringZero() {
         Long candidate = product("Nothing", "Phone 3");
         // No phone row at all.

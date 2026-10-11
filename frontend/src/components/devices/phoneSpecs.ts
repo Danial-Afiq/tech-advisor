@@ -30,6 +30,8 @@ export type PhoneSpecField = {
   unit?: string;
   /** Custom formatting for numeric values; overrides `unit`. */
   format?: (value: number) => string;
+  /** Unit the raw value is entered in, when `format` hides it (e.g. "GB"). */
+  inputUnit?: string;
 };
 
 const watts = (v: number) => (v === 0 ? "Not supported" : `${v} W`);
@@ -49,6 +51,7 @@ export const PHONE_SPEC_GROUPS: { title: string; fields: PhoneSpecField[] }[] =
         {
           key: "storageGb",
           label: "Storage",
+          inputUnit: "GB",
           format: (v) => (v >= 1024 ? `${v / 1024} TB` : `${v} GB`),
         },
       ],
@@ -65,10 +68,16 @@ export const PHONE_SPEC_GROUPS: { title: string; fields: PhoneSpecField[] }[] =
       title: "Battery & charging",
       fields: [
         { key: "batteryMah", label: "Battery", unit: " mAh" },
-        { key: "wiredChargingWatts", label: "Wired charging", format: watts },
+        {
+          key: "wiredChargingWatts",
+          label: "Wired charging",
+          inputUnit: "W",
+          format: watts,
+        },
         {
           key: "wirelessChargingWatts",
           label: "Wireless charging",
+          inputUnit: "W",
           format: watts,
         },
       ],
@@ -88,6 +97,7 @@ export const PHONE_SPEC_GROUPS: { title: string; fields: PhoneSpecField[] }[] =
         {
           key: "softwareSupportYears",
           label: "Software support",
+          inputUnit: "years",
           format: (v) => `${v} year${v === 1 ? "" : "s"}`,
         },
       ],
@@ -97,6 +107,14 @@ export const PHONE_SPEC_GROUPS: { title: string; fields: PhoneSpecField[] }[] =
 export const PHONE_SPEC_KEYS: PhoneSpecKey[] = PHONE_SPEC_GROUPS.flatMap((g) =>
   g.fields.map((f) => f.key)
 );
+
+/** Specs stored as free text; every other column is numeric. */
+export const TEXT_SPEC_KEYS = new Set<PhoneSpecKey>([
+  "chipset",
+  "cameraSpecs",
+  "ipRating",
+  "os",
+]);
 
 /** Display text for one spec, or `null` when the value is unknown. */
 export function formatSpec(

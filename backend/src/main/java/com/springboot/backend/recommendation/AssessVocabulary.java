@@ -1,6 +1,7 @@
 package com.springboot.backend.recommendation;
 
 import java.util.List;
+import com.springboot.backend.recommendation.classification.TierMapper;
 
 /**
  * Java mirror of the request-side closed vocabularies in {@code ai/app/factors.py}
@@ -12,6 +13,14 @@ import java.util.List;
  * {@code AssessVocabularyTest} fails when they drift.
  */
 public final class AssessVocabulary {
+
+    public static final List<String> VERDICTS = List.of(
+            TierMapper.NO_MEANINGFUL_CHANGE, TierMapper.WORTH_WATCHING,
+            TierMapper.WORTH_CONSIDERING, TierMapper.STRONG_UPGRADE_CANDIDATE);
+
+    public static final List<String> GRADES = List.of("A", "B", "C", "D", "E", "F");
+
+    public static final List<String> STANCES = List.of("POSITIVE", "NEGATIVE", "MIXED");
 
     public static final List<String> CONDITIONS = List.of("EXCELLENT", "GOOD", "FAIR", "POOR");
 
