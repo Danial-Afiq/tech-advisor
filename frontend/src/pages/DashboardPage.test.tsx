@@ -1,6 +1,11 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DashboardPage from "./DashboardPage";
 import { ApiError } from "../api/client";
@@ -15,7 +20,8 @@ vi.mock("../api/session", () => ({
   getSession: mocks.getSession,
 }));
 
-vi.mock("../api/dashboard", () => ({
+vi.mock("../api/dashboard", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/dashboard")>()),
   listDashboardRecommendations:
     mocks.listDashboardRecommendations,
 }));
@@ -24,9 +30,14 @@ vi.mock("../api/auth", () => ({
   signOut: mocks.signOut,
 }));
 
-function renderPage() {
+function CurrentSearch() {
+  return <output data-testid="search">{useLocation().search}</output>;
+}
+
+function renderPage(entry = "/dashboard") {
   return render(
-    <MemoryRouter initialEntries={["/dashboard"]}>
+    <MemoryRouter initialEntries={[entry]}>
+      <CurrentSearch />
       <Routes>
         <Route
           path="/dashboard"
@@ -281,5 +292,91 @@ describe("DashboardPage", () => {
     expect(
       await screen.findByText("login route")
     ).toBeInTheDocument();
+  });
+
+  describe("sorting", () => {
+    beforeEach(() => {
+      mocks.listDashboardRecommendations.mockResolvedValue([
+        recommended,
+        notRecommended,
+      ]);
+    });
+
+    it("defaults to most relevant and requests the default sort", async () => {
+      renderPage();
+
+      expect(
+        await screen.findByRole("combobox", { name: "Sort by" })
+      ).toHaveValue("Most relevant");
+
+      expect(
+        mocks.listDashboardRecommendations
+      ).toHaveBeenCalledWith("relevance");
+    });
+
+    it("shows the sort from the URL and requests it", async () => {
+      renderPage("/dashboard?sort=price_desc");
+
+      expect(
+        await screen.findByRole("combobox", { name: "Sort by" })
+      ).toHaveValue("Price: high to low");
+
+      expect(
+        mocks.listDashboardRecommendations
+      ).toHaveBeenCalledWith("price_desc");
+    });
+
+    it("keeps filters and resets the page when the sort changes", async () => {
+      const user = userEvent.setup();
+
+      renderPage("/dashboard?verdict=WORTH_CONSIDERING&page=3");
+
+      await user.selectOptions(
+        await screen.findByRole("combobox", { name: "Sort by" }),
+        "Price: low to high"
+      );
+
+      const search = new URLSearchParams(
+        screen.getByTestId("search").textContent ?? ""
+      );
+
+      expect(search.get("sort")).toBe("price_asc");
+      expect(search.get("verdict")).toBe("WORTH_CONSIDERING");
+      expect(search.has("page")).toBe(false);
+
+      expect(
+        mocks.listDashboardRecommendations
+      ).toHaveBeenLastCalledWith("price_asc");
+    });
+
+    it("drops the sort parameter when returning to the default", async () => {
+      const user = userEvent.setup();
+
+      renderPage("/dashboard?sort=recency&verdict=WORTH_WATCHING");
+
+      await user.selectOptions(
+        await screen.findByRole("combobox", { name: "Sort by" }),
+        "Most relevant"
+      );
+
+      const search = new URLSearchParams(
+        screen.getByTestId("search").textContent ?? ""
+      );
+
+      expect(search.has("sort")).toBe(false);
+      expect(search.get("verdict")).toBe("WORTH_WATCHING");
+    });
+
+    it("falls back to the default for an unknown sort in the URL", async () => {
+      renderPage("/dashboard?sort=banana");
+
+      expect(
+        await screen.findByRole("combobox", { name: "Sort by" })
+      ).toHaveValue("Most relevant");
+
+      expect(
+        mocks.listDashboardRecommendations
+      ).toHaveBeenCalledWith("relevance");
+    });
   });
 });

@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
+  DEFAULT_SORT,
+  SORT_OPTIONS,
   listDashboardRecommendations,
+  parseSort,
   type DashboardRecommendation,
+  type SortOption,
 } from "../api/dashboard";
 import { signOut } from "../api/auth";
 import { ApiError } from "../api/client";
@@ -13,6 +17,7 @@ import { NotificationButton } from "../components/layout/NotificationButton";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Callout } from "../components/ui/Callout";
+import { Select } from "../components/ui/Form";
 import { LoadingBlock } from "../components/ui/LoadingBlock";
 import { PageHeader } from "../components/ui/PageHeader";
 import {
@@ -70,7 +75,7 @@ function formatPrice(
   currency: string | null
 ) {
   if (price === null) {
-    return "Price unavailable";
+    return "No price yet";
   }
 
   return new Intl.NumberFormat("en-SG", {
@@ -83,6 +88,13 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const session = getSession();
 
+  /*
+   * Sort lives in the URL next to any filters so the two cannot reset
+   * each other, and a refresh or shared link keeps the same view.
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sort = parseSort(searchParams.get("sort"));
+
   const [recommendations, setRecommendations] = useState<
     DashboardRecommendation[]
   >([]);
@@ -93,7 +105,7 @@ export default function DashboardPage() {
   useEffect(() => {
     let cancelled = false;
 
-    listDashboardRecommendations()
+    listDashboardRecommendations(sort)
       .then((rows) => {
         if (!cancelled) {
           setRecommendations(rows);
@@ -121,7 +133,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [navigate]);
+  }, [navigate, sort]);
 
   if (!session) {
     return null;
@@ -156,6 +168,22 @@ export default function DashboardPage() {
   ).filter(Boolean).length;
 
   const noUpgradeCount = deviceCount - attentionCount;
+
+  const handleSortChange = (newSort: SortOption) => {
+    // Copy every existing parameter (filters included) and change only `sort`.
+    const next = new URLSearchParams(searchParams);
+
+    if (newSort === DEFAULT_SORT) {
+      next.delete("sort");
+    } else {
+      next.set("sort", newSort);
+    }
+
+    // Page N of a different order is meaningless; filters are untouched.
+    next.delete("page");
+
+    setSearchParams(next);
+  };
 
   const handleNavigate = (key: NavKey) => {
     if (key === "dashboard") {
@@ -279,6 +307,36 @@ export default function DashboardPage() {
             </Button>
           </Card>
         )}
+
+      {!error && (loading || recommendations.length > 0) && (
+        <div className="mb-4 flex items-center justify-end gap-2">
+          <label
+            htmlFor="dashboard-sort"
+            className="text-[13px] font-semibold text-[#c6d1df]"
+          >
+            Sort by
+          </label>
+
+          <Select
+            id="dashboard-sort"
+            className="w-auto"
+            options={SORT_OPTIONS.map((option) => option.label)}
+            value={
+              SORT_OPTIONS.find((option) => option.value === sort)
+                ?.label
+            }
+            onChange={(event) => {
+              const chosen = SORT_OPTIONS.find(
+                (option) => option.label === event.target.value
+              );
+
+              if (chosen) {
+                handleSortChange(chosen.value);
+              }
+            }}
+          />
+        </div>
+      )}
 
       {!loading &&
         !error &&

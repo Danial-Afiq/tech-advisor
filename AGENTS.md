@@ -3187,6 +3187,35 @@ Current UI concept should show:
 
 Do not merge verdict and evidence grade into one misleading score.
 
+### Dashboard sort — IMPLEMENTED (ticket 4.3.2)
+
+`GET /api/dashboard/recommendations?sort=` accepts `relevance` (default),
+`price_asc`, `price_desc` or `recency`, case-insensitive. Anything else returns
+**400** listing the allowed values.
+
+- Sorting is server-side `ORDER BY` in `RecommendationRepository`. The
+  `RecommendationSort` enum owns one fixed SQL fragment per option; request text
+  only selects a fragment and is never concatenated into SQL.
+- `relevance` = verdict tier (STRONG > CONSIDERING > WATCHING > NO_MEANINGFUL_CHANGE,
+  unknown values last) then `factor_analysis->'deterministic'->>'upgrade_score'`
+  (there is no `upgrade_score` column). The tier ranks are generated into the SQL
+  `CASE` from one list; `RecommendationSortTest` fails if a verdict is added to
+  `AssessVocabulary.VERDICTS` without a rank. Tier deliberately beats score, since
+  old rows keep the verdict from older thresholds.
+- Price sorts use the same latest-`price_history` lookup as the card's
+  `latestPrice`; missing prices are `NULLS LAST` in **both** directions.
+- Every option ends `created_at DESC, id DESC` so ties are reproducible.
+- Prices are compared as raw numbers: a mixed-currency catalogue would sort
+  incorrectly. Currently accepted as an SGD-only limitation (not yet decided
+  by the team).
+- Frontend keeps `sort` in the URL query string (`useSearchParams`); changing it
+  copies all other params (filters), deletes `page`, and omits `sort` for the
+  default. Unknown URL values fall back to the default. Cards show "No price yet"
+  when there is no price.
+- No dashboard filters (4.3.1) or pagination exist on this branch yet; the
+  frontend already preserves unknown query params so they will survive when added.
+- `DashboardSortIntegrationTest` needs real PostgreSQL (LATERAL, JSONB casts).
+
 ## 23.5 Epic 05 — Infrastructure & DevSecOps Guardrails
 `SCRUM-31`
 
