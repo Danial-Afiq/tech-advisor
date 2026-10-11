@@ -3191,14 +3191,17 @@ Do not merge verdict and evidence grade into one misleading score.
 
 `GET /api/dashboard/recommendations?sort=` accepts `relevance` (default),
 `price_asc`, `price_desc` or `recency`, case-insensitive. Anything else returns
-**400** listing the allowed values.
+**400** listing the allowed values (`InvalidSortException`, which has its own
+handler — the generic `IllegalArgumentException` mapping in
+`GlobalExceptionHandler` is 409 and must not be used for request validation).
 
 - Sorting is server-side `ORDER BY` in `RecommendationRepository`. The
   `RecommendationSort` enum owns one fixed SQL fragment per option; request text
   only selects a fragment and is never concatenated into SQL.
 - `relevance` = verdict tier (STRONG > CONSIDERING > WATCHING > NO_MEANINGFUL_CHANGE,
   unknown values last) then `factor_analysis->'deterministic'->>'upgrade_score'`
-  (there is no `upgrade_score` column). The tier ranks are generated into the SQL
+  (there is no `upgrade_score` column; the cast is guarded with `jsonb_typeof`, so a
+  malformed stored score sorts last instead of failing the whole list). The tier ranks are generated into the SQL
   `CASE` from one list; `RecommendationSortTest` fails if a verdict is added to
   `AssessVocabulary.VERDICTS` without a rank. Tier deliberately beats score, since
   old rows keep the verdict from older thresholds.

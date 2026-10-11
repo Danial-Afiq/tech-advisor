@@ -29,9 +29,9 @@ import org.springframework.web.context.WebApplicationContext;
  *
  * <pre>
  * Rec | Verdict                  | Score | Latest price | Created
- *  A  | WORTH_WATCHING           | 0.80  | 899 (999 earlier) | Oct 10
- *  B  | STRONG_UPGRADE_CANDIDATE | 0.88  | 1299         | Oct 1
- *  C  | STRONG_UPGRADE_CANDIDATE | 0.95  | none         | Oct 5
+ *  A  | WORTH_WATCHING           | 0.80  | 899 (500 earlier) | Oct 10
+ *  B  | STRONG_UPGRADE_CANDIDATE | 0.88  | 1299         | Oct 5
+ *  C  | STRONG_UPGRADE_CANDIDATE | 0.95  | none         | Oct 1
  *  D  | WORTH_CONSIDERING        | 0.75  | 649          | Oct 8
  *  E  | WORTH_CONSIDERING        | 0.75  | 749          | Oct 9
  *  F  | other user, STRONG, 0.99, price 1 - must never appear
@@ -77,16 +77,16 @@ class DashboardSortIntegrationTest {
         long otherDevice = device(otherUser, ownedProduct);
 
         long a = product(unique, "A");
-        price(a, "999.00", "2026-09-20T00:00:00Z");
+        price(a, "500.00", "2026-09-20T00:00:00Z");
         price(a, "899.00", "2026-10-03T00:00:00Z");
         recommendation(owner, ownerDevice, a, "WORTH_WATCHING", "0.80", "2026-10-10T00:00:00Z");
 
         long b = product(unique, "B");
         price(b, "1299.00", "2026-10-01T00:00:00Z");
-        recommendation(owner, ownerDevice, b, "STRONG_UPGRADE_CANDIDATE", "0.88", "2026-10-01T00:00:00Z");
+        recommendation(owner, ownerDevice, b, "STRONG_UPGRADE_CANDIDATE", "0.88", "2026-10-05T00:00:00Z");
 
         long c = product(unique, "C");
-        recommendation(owner, ownerDevice, c, "STRONG_UPGRADE_CANDIDATE", "0.95", "2026-10-05T00:00:00Z");
+        recommendation(owner, ownerDevice, c, "STRONG_UPGRADE_CANDIDATE", "0.95", "2026-10-01T00:00:00Z");
 
         long d = product(unique, "D");
         price(d, "649.00", "2026-10-01T00:00:00Z");
@@ -103,8 +103,12 @@ class DashboardSortIntegrationTest {
 
     @AfterEach
     void cleanUp() {
-        userRepository.deleteById(owner.getId());
-        userRepository.deleteById(otherUser.getId());
+        if (owner != null) {
+            userRepository.deleteById(owner.getId());
+        }
+        if (otherUser != null) {
+            userRepository.deleteById(otherUser.getId());
+        }
         productIds.forEach(id -> db.update("DELETE FROM products WHERE id = ?", id));
     }
 
@@ -115,6 +119,7 @@ class DashboardSortIntegrationTest {
 
     @Test
     void relevanceRanksTierAboveScoreAndBreaksTiesByNewest() throws Exception {
+        // C outranks B on score alone (C is the older row, so recency can't explain it).
         // A has a higher score (0.80) than D/E (0.75) but a lower tier, so it is last.
         // D and E tie on tier and score, so the newer E comes first.
         get("relevance").andExpect(status().isOk()).andExpect(models("C", "B", "E", "D", "A"));
@@ -139,7 +144,7 @@ class DashboardSortIntegrationTest {
 
     @Test
     void recencyListsNewestFirst() throws Exception {
-        get("recency").andExpect(status().isOk()).andExpect(models("A", "E", "D", "C", "B"));
+        get("recency").andExpect(status().isOk()).andExpect(models("A", "E", "D", "B", "C"));
     }
 
     @Test
@@ -149,7 +154,10 @@ class DashboardSortIntegrationTest {
 
     @Test
     void unknownSortIsRejectedWithBadRequest() throws Exception {
-        get("banana").andExpect(status().isBadRequest());
+        get("banana")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(
+                        org.hamcrest.Matchers.containsString("relevance, price_asc, price_desc, recency")));
         get("relevance;DROP TABLE users").andExpect(status().isBadRequest());
     }
 

@@ -28,8 +28,10 @@ export const DEFAULT_SORT: SortOption = "relevance";
 
 /** Falls back to the default for a missing or hand-edited `sort` in the URL. */
 export function parseSort(value: string | null): SortOption {
+  const normalised = value?.trim().toLowerCase();
+
   return (
-    SORT_OPTIONS.find((option) => option.value === value)?.value ??
+    SORT_OPTIONS.find((option) => option.value === normalised)?.value ??
     DEFAULT_SORT
   );
 }

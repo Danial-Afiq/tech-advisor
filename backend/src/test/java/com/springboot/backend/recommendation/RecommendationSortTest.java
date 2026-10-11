@@ -3,6 +3,7 @@ package com.springboot.backend.recommendation;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.springboot.backend.exception.InvalidSortException;
 import org.junit.jupiter.api.Test;
 
 class RecommendationSortTest {
@@ -55,7 +56,7 @@ class RecommendationSortTest {
     @Test
     void unknownValuesAreRejectedListingTheAllowedOnes() {
         assertThatThrownBy(() -> RecommendationSort.parse("banana"))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(InvalidSortException.class)
                 .hasMessageContaining("relevance, price_asc, price_desc, recency");
 
         assertThatThrownBy(() -> RecommendationSort.parse("relevance; DROP TABLE users"))

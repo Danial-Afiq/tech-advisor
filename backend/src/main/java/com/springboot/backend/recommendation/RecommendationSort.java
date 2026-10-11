@@ -1,5 +1,6 @@
 package com.springboot.backend.recommendation;
 
+import com.springboot.backend.exception.InvalidSortException;
 import com.springboot.backend.recommendation.classification.TierMapper;
 import java.util.Arrays;
 import java.util.List;
@@ -21,7 +22,9 @@ import java.util.stream.Collectors;
 public enum RecommendationSort {
 
     RELEVANCE("relevance", verdictRankCase("r.verdict") + " DESC, "
-            + "(r.factor_analysis -> 'deterministic' ->> 'upgrade_score')::numeric DESC NULLS LAST, "
+            // Guarded cast: one malformed stored score must sort last, not 500 the whole list.
+            + "CASE WHEN jsonb_typeof(r.factor_analysis -> 'deterministic' -> 'upgrade_score') = 'number' "
+            + "THEN (r.factor_analysis -> 'deterministic' ->> 'upgrade_score')::numeric END DESC NULLS LAST, "
             + "r.created_at DESC, r.id DESC"),
 
     PRICE_ASC("price_asc", "latest_price.price ASC NULLS LAST, r.created_at DESC, r.id DESC"),
@@ -59,7 +62,7 @@ public enum RecommendationSort {
         return Arrays.stream(values())
                 .filter(sort -> sort.param.equals(normalised))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException(
+                .orElseThrow(() -> new InvalidSortException(
                         "Invalid sort '" + value + "'. Allowed values: "
                                 + Arrays.stream(values())
                                         .map(RecommendationSort::param)
