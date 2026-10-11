@@ -144,3 +144,101 @@ jobs:
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "message_thread_id=${TELEGRAM_MESSAGE_THREAD_ID}" \
             --data-urlencode "text=${message}"
+
+  deploy-ai:
+    name: Deploy AI to Fly.io
+    runs-on: ubuntu-latest
+    # Keep this independent from the backend: both deploy only after successful main CI.
+    if: github.event.workflow_run.conclusion == 'success'
+    concurrency:
+      group: fly-ai-deployment
+      cancel-in-progress: false
+    env:
+      # App-scoped Fly token for tech-advisor-ai, separate from the backend token.
+      FLY_API_TOKEN: ${{ secrets.FLY_AI_API_TOKEN }}
+
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Fly CLI
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Verify AI deploy token
+        shell: bash
+        run: |
+          if [ -z "${FLY_API_TOKEN:-}" ]; then
+            echo "::error::FLY_AI_API_TOKEN GitHub Actions secret is required for AI deployment."
+            exit 1
+          fi
+
+      - name: Verify AI Fly secrets
+        working-directory: ai
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret_metadata="$(flyctl secrets list --app tech-advisor-ai --json)"
+          # The AI service uses the local baked embedding model; external model calls
+          # require the OpenAI key and the backend must share AI_SERVICE_TOKEN.
+          required_secrets=(DATABASE_URL OPENAI_API_KEY AI_SERVICE_TOKEN)
+          for required_secret in "${required_secrets[@]}"; do
+            if ! jq -e --arg name "$required_secret" \
+              'any(.[]; .name == $name)' <<<"$secret_metadata" >/dev/null; then
+              echo "::error::Missing required AI Fly secret: $required_secret"
+              exit 1
+            fi
+          done
+
+      - name: Deploy FastAPI service
+        working-directory: ai
+        run: flyctl deploy --remote-only --app tech-advisor-ai --ha=false
+
+      - name: Smoke test deployed AI
+        shell: bash
+        run: |
+          set -euo pipefail
+          health_url="https://tech-advisor-ai.fly.dev/health"
+          for attempt in $(seq 1 12); do
+            response_file="$(mktemp)"
+            http_status="$(curl --silent --show-error \
+              --output "$response_file" --write-out '%{http_code}' \
+              --max-time 15 "$health_url" || true)"
+            if [[ "$http_status" =~ ^2[0-9][0-9]$ ]] \
+              && jq -e '.status == "ok"' "$response_file" >/dev/null 2>&1; then
+              rm -f "$response_file"
+              echo "AI health check passed (HTTP $http_status)."
+              exit 0
+            fi
+            rm -f "$response_file"
+            echo "AI health check attempt ${attempt}/12 failed (HTTP ${http_status:-unreachable})."
+            if [ "$attempt" -lt 12 ]; then sleep 10; fi
+          done
+          echo "::error::Deployed FastAPI did not pass /health"
+          exit 1
+
+      - name: Notify Telegram on AI CD failure
+        if: failure()
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: '-1004379768998'
+          TELEGRAM_MESSAGE_THREAD_ID: '14'
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN repository secret is required."
+            exit 1
+          fi
+          short_sha="${SOURCE_SHA:0:7}"
+          run_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          message="$(printf '❌ AI CD FAILED\n\nRepository: %s\nCommit: %s\n\n%s' \
+            "$GITHUB_REPOSITORY" "$short_sha" "$run_url")"
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "message_thread_id=${TELEGRAM_MESSAGE_THREAD_ID}" \
+            --data-urlencode "text=$message"
