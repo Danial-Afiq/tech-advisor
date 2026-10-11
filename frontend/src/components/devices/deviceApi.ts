@@ -1,4 +1,4 @@
-import { CONDITIONS, defaultPrefs } from "./deviceOptions";
+import { CONDITIONS, DEFAULT_CURRENCY, defaultPrefs } from "./deviceOptions";
 import { PHONE_SPEC_KEYS, TEXT_SPEC_KEYS } from "./phoneSpecs";
 import type { PhoneSpecKey, PhoneSpecs } from "./phoneSpecs";
 import type { Condition, Device, UpgradePreferences } from "./types";
@@ -25,6 +25,10 @@ export type DeviceResponse = {
   satisfactionScore: number | null;
   useCases: string;
   specOverrides: string;
+  /** `device_preferences.budget`; null when the device has no preferences row. */
+  budget: number | null;
+  /** `device_preferences.currency`; null when there is no budget. */
+  currency: string | null;
   current: boolean;
   createdAt: string;
   updatedAt: string;
@@ -42,6 +46,13 @@ export type DeviceRequest = {
   satisfactionScore: number | null;
   useCases: string;
   specOverrides: string;
+  /**
+   * Upgrade budget, saved to `device_preferences`. Null leaves any saved
+   * budget unchanged (the backend never clears it).
+   */
+  budget: number | null;
+  /** ISO 4217 code for `budget`; null when no budget is sent. */
+  currency: string | null;
 };
 
 const snake = (key: string) =>
@@ -58,10 +69,15 @@ const snake = (key: string) =>
  * sending it would copy catalogue values into overrides.
  * A cleared spec is sent as `null`, which the backend reads as "unknown"
  * rather than falling back to the catalogue value.
+ *
+ * The budget and its currency come from `device.upgradePreferences`. A device
+ * with no budget sends null for both, which leaves the saved budget alone.
+ * Other upgrade preferences (priorities, urgency, …) have no API yet.
  */
 export function deviceToRequest(device: Device): DeviceRequest {
   const name = `${device.brand} ${device.model}`.trim();
   const useCases = device.use.split(",").map((use) => use.trim()).filter(Boolean);
+  const budget = device.upgradePreferences?.budget ?? null;
   return {
     productId: device.productId ?? null,
     customName: device.productId ? null : name || null,
@@ -74,6 +90,11 @@ export function deviceToRequest(device: Device): DeviceRequest {
         Object.entries(device.specOverrides ?? {}).map(([k, v]) => [snake(k), v])
       )
     ),
+    budget,
+    currency:
+      budget == null
+        ? null
+        : (device.upgradePreferences.currency ?? DEFAULT_CURRENCY),
   };
 }
 
@@ -83,6 +104,10 @@ export type DeviceExtras = {
   category?: string | null;
   /** The catalogue `phone` row for this product — camelCase or snake_case. */
   phone?: Record<string, unknown> | null;
+  /**
+   * Preferences the endpoint does not return yet (priorities, urgency, …).
+   * The budget and currency always come from the response.
+   */
   preferences?: UpgradePreferences | null;
   image?: string;
   primary?: boolean;
@@ -172,7 +197,11 @@ export function deviceFromApi(
     use: parseUseCases(response.useCases),
     purchaseDate: response.purchaseDate ?? "",
     satisfaction: response.satisfactionScore ?? undefined,
-    upgradePreferences: extras.preferences ?? defaultPrefs(),
+    upgradePreferences: {
+      ...(extras.preferences ?? defaultPrefs()),
+      budget: response.budget == null ? null : Number(response.budget),
+      currency: response.budget == null ? null : response.currency,
+    },
     specs:
       type === "Phone"
         ? { ...normalizePhoneSpecs(extras.phone), ...overrides }

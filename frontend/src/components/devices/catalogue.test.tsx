@@ -170,6 +170,8 @@ describe("clearing a prefilled spec", () => {
       satisfactionScore: null,
       useCases: "[]",
       specOverrides: request.specOverrides,
+      budget: null,
+      currency: null,
       current: true,
       createdAt: "",
       updatedAt: "",

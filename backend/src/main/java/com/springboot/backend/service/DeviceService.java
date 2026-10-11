@@ -18,6 +18,9 @@ import com.springboot.backend.exception.InvalidDeviceRequestException;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class DeviceService {
@@ -71,13 +74,14 @@ public class DeviceService {
         UserDevice savedDevice =
                 userDeviceRepository.save(device);
 
-        applyBudget(savedDevice.getId(), request);
+        DevicePreference preference =
+                applyBudget(savedDevice.getId(), request);
 
         eventPublisher.publishEvent(
                 new DeviceInventoryChanged(savedDevice.getId(), DeviceInventoryChanged.Change.ADDED)
         );
 
-        return new DeviceResponse(savedDevice);
+        return new DeviceResponse(savedDevice, preference);
     }
 
     @Transactional(readOnly = true)
@@ -86,12 +90,27 @@ public class DeviceService {
 
         User user = findUser(email);
 
-        return userDeviceRepository
+        List<UserDevice> devices = userDeviceRepository
                 .findAllByUserIdAndIsCurrentTrueOrderByCreatedAtDesc(
                         user.getId()
+                );
+
+        // One query for every device's preferences, not one per device.
+        Map<Long, DevicePreference> preferences = devicePreferenceRepository
+                .findAllById(
+                        devices.stream().map(UserDevice::getId).toList()
                 )
                 .stream()
-                .map(DeviceResponse::new)
+                .collect(Collectors.toMap(
+                        DevicePreference::getUserDeviceId,
+                        Function.identity()
+                ));
+
+        return devices.stream()
+                .map(device -> new DeviceResponse(
+                        device,
+                        preferences.get(device.getId())
+                ))
                 .toList();
     }
 
@@ -107,7 +126,10 @@ public class DeviceService {
                 user.getId()
         );
 
-        return new DeviceResponse(device);
+        return new DeviceResponse(
+                device,
+                findPreference(device.getId())
+        );
     }
 
     @Transactional
@@ -139,13 +161,14 @@ public class DeviceService {
         UserDevice savedDevice =
                 userDeviceRepository.save(device);
 
-        applyBudget(savedDevice.getId(), request);
+        DevicePreference preference =
+                applyBudget(savedDevice.getId(), request);
 
         eventPublisher.publishEvent(
                 new DeviceInventoryChanged(savedDevice.getId(), DeviceInventoryChanged.Change.UPDATED)
         );
 
-        return new DeviceResponse(savedDevice);
+        return new DeviceResponse(savedDevice, preference);
     }
 
     @Transactional
@@ -266,13 +289,15 @@ public class DeviceService {
      * Creates or updates the device's preferences when the request carries a
      * budget. A null budget leaves existing preferences as they are, so an edit
      * that does not mention the budget does not wipe it.
+     *
+     * @return the device's preferences after the change, or null if it has none
      */
-    private void applyBudget(
+    private DevicePreference applyBudget(
             Long deviceId,
             DeviceRequest request) {
 
         if (request.getBudget() == null) {
-            return;
+            return findPreference(deviceId);
         }
 
         DevicePreference preference = devicePreferenceRepository
@@ -290,6 +315,18 @@ public class DeviceService {
         }
 
         devicePreferenceRepository.save(preference);
+        return preference;
+    }
+
+    private DevicePreference findPreference(Long deviceId) {
+
+        if (deviceId == null) {
+            return null;
+        }
+
+        return devicePreferenceRepository
+                .findById(deviceId)
+                .orElse(null);
     }
 
     private void validateJsonFields(DeviceRequest request) {

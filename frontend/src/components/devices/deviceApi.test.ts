@@ -5,6 +5,7 @@ import {
   normalizePhoneSpecs,
 } from "./deviceApi";
 import type { DeviceResponse } from "./deviceApi";
+import { defaultPrefs } from "./deviceOptions";
 
 const base: DeviceResponse = {
   id: 7,
@@ -17,6 +18,8 @@ const base: DeviceResponse = {
   satisfactionScore: 80,
   useCases: '["photos", "gaming"]',
   specOverrides: "{}",
+  budget: null,
+  currency: null,
   current: true,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
@@ -72,7 +75,49 @@ describe("deviceFromApi", () => {
       satisfactionScore: 80,
       useCases: '["photos and gaming"]',
       specOverrides: "{}",
+      budget: null,
+      currency: null,
     });
+  });
+
+  it("reads the saved budget and sends it back with its currency", () => {
+    const device = deviceFromApi(
+      { ...base, budget: 1500, currency: "USD" },
+      { preferences: { ...defaultPrefs(), budget: 999, priorities: ["Camera"] } }
+    );
+
+    // The response's budget wins; other preferences come from extras.
+    expect(device.upgradePreferences).toMatchObject({
+      budget: 1500,
+      currency: "USD",
+      priorities: ["Camera"],
+    });
+    expect(deviceToRequest(device)).toMatchObject({ budget: 1500, currency: "USD" });
+  });
+
+  it("accepts a NUMERIC budget that arrives as a string", () => {
+    const device = deviceFromApi({
+      ...base,
+      budget: "1200.00" as unknown as number,
+      currency: "SGD",
+    });
+    expect(device.upgradePreferences.budget).toBe(1200);
+  });
+
+  it("has no budget when none is saved, and doesn't invent one", () => {
+    const device = deviceFromApi(base);
+    expect(device.upgradePreferences.budget).toBeNull();
+    expect(device.upgradePreferences.currency).toBeNull();
+    expect(deviceToRequest(device)).toMatchObject({ budget: null, currency: null });
+  });
+
+  it("defaults the currency to SGD when a new budget is sent", () => {
+    const device = deviceFromApi(base);
+    const request = deviceToRequest({
+      ...device,
+      upgradePreferences: { ...device.upgradePreferences, budget: 800 },
+    });
+    expect(request).toMatchObject({ budget: 800, currency: "SGD" });
   });
 
   it("saves comma-separated use cases as distinct JSON array entries", () => {

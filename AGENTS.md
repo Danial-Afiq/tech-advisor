@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 9 October 2026
+> **Last consolidated:** 11 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -2766,9 +2766,19 @@ Known limits, deliberately not addressed here:
 create/update upserts `device_preferences` (currency defaults to `SGD` on create and is
 kept on update when omitted). Without one, existing preferences are left untouched.
 Only `budget`/`currency` are writable; `priorities`, `pain_points`, urgency, brand
-flexibility and notes still have no API. `DeviceResponse` does not return the budget yet.
-Without a budget a device is never evaluable (§27.10), so a frontend add-device form
-must send one for the demo to show anything.
+flexibility and notes still have no API. Without a budget a device is never evaluable
+(§27.10).
+
+**Budget round-trip (11 Oct, `feat/device-budget-wiring`).** `DeviceResponse` (every
+`/api/devices` create/update/get/list response) now returns `budget` and `currency` from
+`device_preferences`, both null when the device has no preferences row; the list reads all
+rows' preferences in one query. The `/devices` page sends them: the add-device form sends
+`budget: null` (it does not collect one, so nothing is invented), and saving the
+"upgrade profile" modal (step 2 of add, or "Upgrade preferences" on a card) calls
+`PUT /api/devices/{id}` with the whole device plus `budget` and `currency` (the device's
+saved currency, else `SGD`; there is no currency picker - see §27.9). That PUT publishes
+`DeviceInventoryChanged(UPDATED)`, so saving a budget is what makes a newly added device
+evaluable. The other upgrade-profile fields stay page-local until they get an API.
 
 `AssessVocabulary` mirrors the non-factor closed vocabularies of `ai/app/factors.py`;
 `AssessVocabularyTest` reads `factors.py` and fails on drift (it also checks `Factors`).
@@ -3435,8 +3445,10 @@ Resolved by SCRUM-34: the budget ceiling is the entire basis of candidate
 shortlisting, so a preferences row without one cannot be evaluated.
 
 **Flag for SCRUM-20 (device inventory management):** the preferences UI must
-always collect a budget. The backend now accepts `budget`/`currency` on
-`POST`/`PUT /api/devices` (§18.12); the frontend does not send them yet. The AI step
+always collect a budget. The backend accepts `budget`/`currency` on
+`POST`/`PUT /api/devices` and returns them on every device response (§18.12); the
+`/devices` upgrade-profile modal saves them via `PUT`. A device whose step-2 profile
+is skipped has no budget and is not evaluated. The AI step
 of the triggers additionally needs `condition`, `satisfaction_score`, `purchase_date`,
 `upgrade_urgency` and `brand_flexibility`; the last two have no API yet, so until
 they do, user-created devices get deterministic verdicts only. If the product decides a budget should be optional,

@@ -37,8 +37,19 @@ export const BRAND_FLEX = [
 
 export const deviceIcon = (type: string) => DEVICE_ICONS[type] ?? "🔌";
 
+/** Where the budget slider starts for a device that has no saved budget. */
+export const SUGGESTED_BUDGET = 1200;
+
+/** The budget currency used when none is saved (backend default too). */
+export const DEFAULT_CURRENCY = "SGD";
+
+/**
+ * Starting values for a device's upgrade profile. The budget is null: nothing
+ * is saved until the user picks one in the upgrade-preferences modal.
+ */
 export const defaultPrefs = (): UpgradePreferences => ({
-  budget: 1200,
+  budget: null,
+  currency: null,
   priorities: ["Value for money", "Performance", "Longevity"],
   urgency: "Only when worthwhile",
   brandFlex: "Open to alternatives",
@@ -46,7 +57,17 @@ export const defaultPrefs = (): UpgradePreferences => ({
   notes: "",
 });
 
-export const money = (n: number) => `S$${Number(n).toLocaleString()}`;
+/** Formats an amount; SGD (the default) shows as `S$1,000`, others as `USD 1,000`. */
+export const money = (n: number, currency?: string | null) => {
+  const amount = Number(n).toLocaleString();
+  return !currency || currency === DEFAULT_CURRENCY
+    ? `S$${amount}`
+    : `${currency} ${amount}`;
+};
+
+/** A device's budget for display, or "No budget set". */
+export const budgetLabel = (prefs: UpgradePreferences) =>
+  prefs.budget == null ? "No budget set" : money(prefs.budget, prefs.currency);
 
 export function formatDate(date: string) {
   if (!date) return "—";

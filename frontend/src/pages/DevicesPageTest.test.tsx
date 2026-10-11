@@ -58,6 +58,8 @@ const apiDevice = {
   satisfactionScore: 75,
   useCases: "[]",
   specOverrides: "{}",
+  budget: null as number | null,
+  currency: null as string | null,
   current: true,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
@@ -146,11 +148,80 @@ describe("DevicesPageTest", () => {
     await user.click(screen.getByRole("button", { name: /Continue to upgrade preferences/ }));
 
     await waitFor(() => expect(mocks.createDevice).toHaveBeenCalled());
+    // The device form doesn't collect a budget, so none is invented.
+    expect(mocks.createDevice).toHaveBeenCalledWith(
+      expect.objectContaining({ budget: null, currency: null })
+    );
     expect(await screen.findByText("Device saved")).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Test Laptop" })).toBeInTheDocument();
 
+    // Step 2 saves the budget to the new device.
+    mocks.updateDevice.mockResolvedValue({ ...apiDevice, budget: 2500, currency: "SGD" });
+    fireEvent.change(screen.getByLabelText("Maximum budget"), { target: { value: "2500" } });
     await user.click(screen.getByRole("button", { name: "Save upgrade profile" }));
     expect(await screen.findByText("Upgrade profile saved")).toBeInTheDocument();
+    expect(mocks.updateDevice).toHaveBeenCalledWith(
+      "9",
+      expect.objectContaining({ customName: "Test Laptop", budget: 2500, currency: "SGD" })
+    );
+    expect(screen.getByText("S$2,500")).toBeInTheDocument();
+  });
+
+  it("shows the saved budget after a reload and saves a change through the backend", async () => {
+    const user = userEvent.setup();
+    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
+    mocks.listDevices.mockResolvedValue([{ ...apiDevice, budget: 1800, currency: "SGD" }]);
+    mocks.updateDevice.mockResolvedValue({ ...apiDevice, budget: 3000, currency: "SGD" });
+    renderPage();
+
+    // The card and the modal start from the saved value, not a default.
+    expect(await screen.findByText("S$1,800")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Upgrade preferences" }));
+    expect(screen.getByLabelText("Maximum budget")).toHaveValue("1800");
+
+    fireEvent.change(screen.getByLabelText("Maximum budget"), { target: { value: "3000" } });
+    await user.click(screen.getByRole("button", { name: "Save upgrade profile" }));
+
+    await waitFor(() =>
+      expect(mocks.updateDevice).toHaveBeenCalledWith(
+        "9",
+        expect.objectContaining({
+          customName: "Test Laptop",
+          condition: "Good",
+          satisfactionScore: 75,
+          budget: 3000,
+          currency: "SGD",
+        })
+      )
+    );
+    expect(await screen.findByText(/budget for Test Laptop was saved to your account/)).toBeInTheDocument();
+    expect(screen.getByText("S$3,000")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows a device without a saved budget as having none", async () => {
+    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
+    mocks.listDevices.mockResolvedValue([apiDevice]);
+    renderPage();
+
+    expect(await screen.findByText("No budget set")).toBeInTheDocument();
+  });
+
+  it("keeps the upgrade profile open when the backend rejects the budget", async () => {
+    const user = userEvent.setup();
+    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
+    mocks.listDevices.mockResolvedValue([apiDevice]);
+    mocks.updateDevice.mockRejectedValue(new ApiError(400, "Budget must not be negative"));
+    renderPage();
+
+    await screen.findByRole("heading", { name: /Test Laptop/ });
+    await user.click(screen.getByRole("button", { name: "Upgrade preferences" }));
+    await user.click(screen.getByRole("button", { name: "Save upgrade profile" }));
+
+    expect(await screen.findByText("Budget must not be negative")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save upgrade profile" })).toBeInTheDocument();
+    expect(screen.queryByText("Upgrade profile saved")).not.toBeInTheDocument();
+    expect(screen.getByText("No budget set")).toBeInTheDocument();
   });
 
   it("adds a catalogue phone and shows catalogue specs on linked devices", async () => {
@@ -176,6 +247,13 @@ describe("DevicesPageTest", () => {
     mocks.listDevices.mockResolvedValue([linked]);
     mocks.listSmartphones.mockResolvedValue([pixel]);
     mocks.createDevice.mockResolvedValue({ ...linked, id: 4, specOverrides: "{}" });
+    mocks.updateDevice.mockResolvedValue({
+      ...linked,
+      id: 4,
+      specOverrides: "{}",
+      budget: 1200,
+      currency: "SGD",
+    });
     renderPage();
 
     await screen.findByRole("heading", { name: /Google Pixel 9/ });

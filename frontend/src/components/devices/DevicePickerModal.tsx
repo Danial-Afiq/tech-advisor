@@ -1,6 +1,6 @@
 import { Modal } from "../ui/Modal";
 import { DeviceThumb } from "./DeviceThumb";
-import { money } from "./deviceOptions";
+import { budgetLabel } from "./deviceOptions";
 import type { Device } from "./types";
 
 /** "Which owned device is affected?" chooser for a simulated market event. */
@@ -37,7 +37,7 @@ export function DevicePickerModal({
               {d.brand} {d.model}
             </strong>
             <span className="mt-[3px] block text-[11px] text-[#8fa0b8]">
-              {money(d.upgradePreferences.budget)} ·{" "}
+              {budgetLabel(d.upgradePreferences)} ·{" "}
               {d.upgradePreferences.priorities.slice(0, 3).join(" · ") ||
                 "No priorities"}
             </span>
