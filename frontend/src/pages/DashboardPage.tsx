@@ -15,6 +15,12 @@ import { Card } from "../components/ui/Card";
 import { Callout } from "../components/ui/Callout";
 import { LoadingBlock } from "../components/ui/LoadingBlock";
 import { PageHeader } from "../components/ui/PageHeader";
+import { EmptyState } from "../components/ui/EmptyState";
+import { RecommendationFilterDropdown } from "../components/recommendations/RecommendationFilterDropdown";
+import {
+  emptyRecommendationFilters,
+  filterRecommendations,
+} from "../components/recommendations/recommendationOptions";
 import {
   DASHBOARD_PATH,
   DEVICES_PATH,
@@ -89,6 +95,7 @@ export default function DashboardPage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [filters, setFilters] = useState(emptyRecommendationFilters);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,6 +163,7 @@ export default function DashboardPage() {
   ).filter(Boolean).length;
 
   const noUpgradeCount = deviceCount - attentionCount;
+  const filteredRecommendations = filterRecommendations(recommendations, filters);
 
   const handleNavigate = (key: NavKey) => {
     if (key === "dashboard") {
@@ -190,6 +198,13 @@ export default function DashboardPage() {
         eyebrow="Upgrade overview"
         title="Your recommendations"
         description="See which registered devices require your attention and review their latest upgrade outcomes."
+        action={!loading && !error && recommendations.length > 0 ? (
+          <RecommendationFilterDropdown
+            recommendations={recommendations}
+            filters={filters}
+            onChange={setFilters}
+          />
+        ) : undefined}
       />
 
       {!loading &&
@@ -256,38 +271,45 @@ export default function DashboardPage() {
       {!loading &&
         !error &&
         recommendations.length === 0 && (
-          <Card className="grid place-items-center gap-3 p-10 text-center">
-            <div className="text-[30px]">✦</div>
-
-            <div>
-              <h2 className="m-0 text-[20px]! text-[#eef5ff]!">
-                No active recommendations yet
-              </h2>
-
-              <p className="mt-2 mb-0 max-w-[520px] text-[14px] leading-[1.6] text-[#8fa0b8]">
-                Recommendations will appear here when an upgrade
-                outcome is available for one of your registered
-                devices.
-              </p>
-            </div>
-
-            <Button
-              variant="primary"
-              onClick={() => void navigate(DEVICES_PATH)}
-            >
-              View my devices
-            </Button>
-          </Card>
+          <EmptyState
+            icon="✦"
+            title="No active recommendations yet"
+            description="Recommendations will appear here when an upgrade outcome is available for one of your registered devices."
+            action={
+              <Button variant="primary" onClick={() => void navigate(DEVICES_PATH)}>
+                View my devices
+              </Button>
+            }
+          />
         )}
+
+      {!loading && !error && recommendations.length > 0 && (
+        <p role="status" className="mb-[14px] text-[13px] text-[#8fa0b8]">
+          Showing {filteredRecommendations.length} of {recommendations.length} recommendations
+        </p>
+      )}
+
+      {!loading && !error && recommendations.length > 0 && filteredRecommendations.length === 0 && (
+        <EmptyState
+          icon="✦"
+          title="No recommendations match your filters"
+          description="Try another device, verdict or evidence grade, or clear your filters to see all recommendations."
+          action={
+            <Button variant="primary" onClick={() => setFilters(emptyRecommendationFilters())}>
+              Clear filters
+            </Button>
+          }
+        />
+      )}
 
       {!loading &&
         !error &&
-        recommendations.length > 0 && (
+        filteredRecommendations.length > 0 && (
           <section
             aria-label="Device recommendations"
             className="grid grid-cols-2 gap-4 max-[1000px]:grid-cols-1"
           >
-            {recommendations.map((recommendation) => {
+            {filteredRecommendations.map((recommendation) => {
               const verdict = verdictDetails(
                 recommendation.verdict
               );
@@ -303,9 +325,9 @@ export default function DashboardPage() {
                         Current device
                       </p>
 
-                      <h2 className="mt-1 mb-0 text-[20px] font-bold text-[#eef5ff]">
+                      <h3 className="mt-1 mb-0 text-[16px] font-extrabold text-[#eef5ff]">
                         {recommendation.currentDeviceName}
-                      </h2>
+                      </h3>
                     </div>
 
                     <span
@@ -334,7 +356,7 @@ export default function DashboardPage() {
                   </div>
 
                   <div className="mt-4 flex items-center gap-2 text-[13px] text-[#bdc7d7]">
-                    <span>Evidence confidence:</span>
+                    <span>Evidence grade:</span>
 
                     <b className="text-[#eef5ff]">
                       {recommendation.confidence ??

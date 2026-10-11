@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 9 October 2026
+> **Last consolidated:** 11 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -2302,6 +2302,8 @@ Known files include:
 - `IngestionAdmin.tsx`
 - `IngestionAdmin.test.tsx`
 - `pages/AdminCatalogue.tsx`
+- `pages/DashboardPage.tsx` (`/dashboard`): authenticated USER recommendation
+  overview with device, verdict and evidence-grade dropdown filters (§26.4).
 - `config.ts`
 - Vite setup
 - CSS
@@ -3289,6 +3291,31 @@ Recommendation rows have a `status` such as:
 - expired
 
 Exact recommendation-expiry/decay policy remains a product decision unless a current ticket resolves it.
+
+## 26.4 Dashboard recommendation filters — IMPLEMENTED (SCRUM-21 / 4.3.1)
+
+The authenticated USER dashboard (`/dashboard`) loads
+`GET /api/dashboard/recommendations`. The backend derives the user from the JWT
+and returns only that user's `ACTIVE` recommendations for current owned devices;
+the device join also checks ownership. Filtering operates in React over this
+already scoped result, without sending a user ID or making extra API requests.
+
+The **Filters** dropdown provides one owned-device selection (by ID, with
+options deduplicated from the full active recommendation list), multiple verdict
+checkboxes and multiple evidence-grade checkboxes. The square evidence-grade
+checkboxes offer only `A`–`F`, matching the existing `confidence` response field.
+Recommendations with `-` (insufficient evidence) or `null` (not available) remain
+visible when no evidence grade is selected. Selected values within a group
+combine with OR; groups combine
+with AND. An unselected group imposes no restriction. Clear filters restores
+every returned recommendation.
+
+The list shows a filtered/total count and an empty state with a clear-filters
+action when nothing matches. No active recommendations has a separate empty
+state linking to devices. Summary cards and notification counts always describe
+all active recommendations, independently of the filters. Selections persist
+while opening/closing the dropdown and reset when the page unmounts. The dropdown
+supports keyboard opening, Escape, focus return, and outside-click dismissal.
 
 ---
 
