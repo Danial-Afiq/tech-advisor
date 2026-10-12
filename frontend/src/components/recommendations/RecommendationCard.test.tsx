@@ -51,6 +51,10 @@ describe("RecommendationCard", () => {
     expect(
       screen.getByText(/1,299\.00/)
     ).toBeInTheDocument();
+
+    expect(
+      screen.getByText("Latest price")
+    ).toBeInTheDocument();
   });
 
   it("shows the main reasoning directly in the card", () => {

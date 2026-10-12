@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 11 October 2026
+> **Last consolidated:** 12 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -2302,8 +2302,9 @@ Known files include:
 - `IngestionAdmin.tsx`
 - `IngestionAdmin.test.tsx`
 - `pages/AdminCatalogue.tsx`
-- `pages/DashboardPage.tsx` (`/dashboard`): authenticated USER recommendation
-  overview with device, verdict and evidence-grade dropdown filters (§26.4).
+- `pages/DashboardPage.tsx` (`/dashboard`): the authenticated USER's single
+  recommendation overview/browsing page, using reusable cards, server-side sort
+  and device/verdict/evidence-grade filters (§23.4, §26.4).
 - `config.ts`
 - Vite setup
 - CSS
@@ -3191,6 +3192,13 @@ Do not merge verdict and evidence grade into one misleading score.
 
 ### Dashboard sort — IMPLEMENTED (ticket 4.3.2)
 
+`/dashboard` is the single USER recommendation interface. The former
+Recommendations sidebar item is removed, and `/recommendations` is an
+authenticated compatibility redirect to `/dashboard`; do not introduce a
+second recommendation page. Dashboard cards are rendered only through the
+reusable frontend `RecommendationCard`, with verdict metadata/attention rules
+centralised in `recommendationPresentation.ts`.
+
 `GET /api/dashboard/recommendations?sort=` accepts `relevance` (default),
 `price_asc`, `price_desc` or `recency`, case-insensitive. Anything else returns
 **400** listing the allowed values (`InvalidSortException`, which has its own
@@ -3214,11 +3222,12 @@ handler — the generic `IllegalArgumentException` mapping in
   incorrectly. Currently accepted as an SGD-only limitation (not yet decided
   by the team).
 - Frontend keeps `sort` in the URL query string (`useSearchParams`); changing it
-  copies all other params (filters), deletes `page`, and omits `sort` for the
-  default. Unknown URL values fall back to the default. Cards show "No price yet"
+  copies all other query parameters, deletes `page`, and omits `sort` for the
+  default. Unknown URL values fall back to the default. Active client-side
+  filters remain selected while the server refetches the chosen order, then run
+  over the returned rows without changing their relative order. A cancelled
+  effect cannot replace a newer sort response. Cards show "Price unavailable"
   when there is no price.
-- No dashboard filters (4.3.1) or pagination exist on this branch yet; the
-  frontend already preserves unknown query params so they will survive when added.
 - `DashboardSortIntegrationTest` needs real PostgreSQL (LATERAL, JSONB casts).
 
 ## 23.5 Epic 05 — Infrastructure & DevSecOps Guardrails
@@ -3324,13 +3333,15 @@ Recommendation rows have a `status` such as:
 
 Exact recommendation-expiry/decay policy remains a product decision unless a current ticket resolves it.
 
-## 26.4 Dashboard recommendation filters — IMPLEMENTED (SCRUM-21 / 4.3.1)
+## 26.4 One-page recommendation dashboard — IMPLEMENTED (4.2.1 / 4.3.1 / 4.3.2)
 
 The authenticated USER dashboard (`/dashboard`) loads
 `GET /api/dashboard/recommendations`. The backend derives the user from the JWT
 and returns only that user's `ACTIVE` recommendations for current owned devices;
 the device join also checks ownership. Filtering operates in React over this
 already scoped result, without sending a user ID or making extra API requests.
+Server-side sorting is selected with the `sort` query parameter described in
+§23.4 and defaults to **Most relevant**.
 
 The **Filters** dropdown provides one owned-device selection (by ID, with
 options deduplicated from the full active recommendation list), multiple verdict
@@ -3348,6 +3359,18 @@ state linking to devices. Summary cards and notification counts always describe
 all active recommendations, independently of the filters. Selections persist
 while opening/closing the dropdown and reset when the page unmounts. The dropdown
 supports keyboard opening, Escape, focus return, and outside-click dismissal.
+
+The result count, Filters button and Sort by select share one responsive toolbar.
+The overview continues to describe the full active set. `RecommendationCard`
+owns the standard card presentation: owned device, suggested product, Latest
+price, deterministic verdict, explanation and the separate owner evidence grade,
+including explicit fallbacks for missing price/reasoning and `-`/`null` evidence.
+
+Star/bookmark behaviour remains future work. Do not add placeholder columns,
+fake controls or star-first ranking. A later Star filter should extend the
+existing `RecommendationFilters` state/helper and the reusable card, while
+leaving server relevance sorting unchanged unless a separate product decision
+explicitly changes it.
 
 ---
 

@@ -1,23 +1,10 @@
 import { Card } from "../ui/Card";
 import {
   evidenceGradeText,
+  formatRecommendationPrice,
   verdictPresentation,
 } from "./recommendationPresentation";
 import type { DashboardRecommendation } from "./types";
-
-function formatPrice(
-  price: number | null,
-  currency: string | null
-): string {
-  if (price === null) {
-    return "Price unavailable";
-  }
-
-  return new Intl.NumberFormat("en-SG", {
-    style: "currency",
-    currency: currency ?? "SGD",
-  }).format(price);
-}
 
 export function RecommendationCard({
   recommendation,
@@ -68,8 +55,12 @@ export function RecommendationCard({
             {candidateName}
           </p>
 
-          <p className="mt-2 mb-0 text-[18px] font-bold text-[#a998ff]">
-            {formatPrice(
+          <p className="mt-3 mb-0 text-[11px] font-bold tracking-[0.12em] text-[#9fb1c9] uppercase">
+            Latest price
+          </p>
+
+          <p className="mt-1 mb-0 text-[18px] font-bold text-[#a998ff]">
+            {formatRecommendationPrice(
               recommendation.latestPrice,
               recommendation.currency
             )}

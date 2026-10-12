@@ -38,6 +38,13 @@ const VERDICT_PRESENTATIONS: Record<
   },
 };
 
+export const RECOMMENDATION_VERDICTS: readonly RecommendationVerdict[] = [
+  "STRONG_UPGRADE_CANDIDATE",
+  "WORTH_CONSIDERING",
+  "WORTH_WATCHING",
+  "NO_MEANINGFUL_CHANGE",
+];
+
 export function verdictPresentation(
   verdict: RecommendationVerdict
 ): VerdictPresentation {
@@ -56,4 +63,18 @@ export function evidenceGradeText(
   }
 
   return `Owner evidence: ${grade}`;
+}
+
+export function formatRecommendationPrice(
+  price: number | null,
+  currency: string | null
+): string {
+  if (price === null) {
+    return "Price unavailable";
+  }
+
+  return new Intl.NumberFormat("en-SG", {
+    style: "currency",
+    currency: currency ?? "SGD",
+  }).format(price);
 }

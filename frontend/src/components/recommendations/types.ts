@@ -14,6 +14,8 @@ export type EvidenceGrade =
   | "-"
   | null;
 
+export type FilterEvidenceGrade = Exclude<EvidenceGrade, "-" | null>;
+
 export type DashboardRecommendation = {
   recommendationId: number;
   currentDeviceId: number;
@@ -32,5 +34,5 @@ export type DashboardRecommendation = {
 export type RecommendationFilters = {
   deviceId: number | null;
   verdicts: RecommendationVerdict[];
-  evidenceGrades: Exclude<EvidenceGrade, "-" | null>[];
+  evidenceGrades: FilterEvidenceGrade[];
 };

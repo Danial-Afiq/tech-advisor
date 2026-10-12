@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   MemoryRouter,
@@ -32,7 +32,7 @@ vi.mock("../api/auth", () => ({
 }));
 
 function CurrentSearch() {
-  return <output data-testid="search">{useLocation().search}</output>;
+  return <span data-testid="search">{useLocation().search}</span>;
 }
 
 function renderPage(entry = "/dashboard") {
@@ -59,7 +59,7 @@ function renderPage(entry = "/dashboard") {
   );
 }
 
-const recommended = {
+const recommended: DashboardRecommendation = {
   recommendationId: 1,
   currentDeviceId: 10,
   currentDeviceName: "My current phone",
@@ -74,7 +74,7 @@ const recommended = {
   createdAt: "2026-10-07T00:00:00Z",
 };
 
-const notRecommended = {
+const notRecommended: DashboardRecommendation = {
   recommendationId: 2,
   currentDeviceId: 10,
   currentDeviceName: "My current phone",
@@ -89,7 +89,7 @@ const notRecommended = {
   createdAt: "2026-10-07T00:00:00Z",
 };
 
-const worthConsidering = {
+const worthConsidering: DashboardRecommendation = {
   recommendationId: 3,
   currentDeviceId: 11,
   currentDeviceName: "Second phone",
@@ -104,7 +104,7 @@ const worthConsidering = {
   createdAt: "2026-10-07T00:00:00Z",
 };
 
-const worthWatching = {
+const worthWatching: DashboardRecommendation = {
   recommendationId: 4,
   currentDeviceId: 12,
   currentDeviceName: "Third phone",
@@ -131,8 +131,30 @@ async function renderWithFilters(rows = allRecommendations) {
 }
 
 function visibleCandidates() {
-  const region = screen.queryByRole("region", { name: "Device recommendations" });
+  const region = recommendationList();
   return region ? within(region) : null;
+}
+
+function recommendationList() {
+  return screen.queryByRole("region", { name: "Device recommendations" });
+}
+
+function expectCandidateOrder(...names: string[]) {
+  const text = recommendationList()?.textContent ?? "";
+  const positions = names.map((name) => text.indexOf(name));
+
+  positions.forEach((position) => expect(position).toBeGreaterThanOrEqual(0));
+  positions.slice(1).forEach((position, index) => {
+    expect(position).toBeGreaterThan(positions[index]);
+  });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
 }
 
 beforeEach(() => {
@@ -209,7 +231,7 @@ describe("DashboardPage", () => {
     expect(visibleCandidates()?.queryByText("Samsung Galaxy S26")).not.toBeInTheDocument();
   });
 
-  it.each(["A", "B", "C", "D", "E", "F"])("filters evidence grade %s", async (grade) => {
+  it.each(["A", "B", "C", "D", "E", "F"] as const)("filters evidence grade %s", async (grade) => {
     const { user, controls } = await renderWithFilters([
       { ...recommended, confidence: grade },
       { ...worthConsidering, confidence: "-" },
@@ -346,6 +368,18 @@ describe("DashboardPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not show a separate Recommendations sidebar item", async () => {
+    renderPage();
+
+    await screen.findByRole("heading", {
+      name: "No active recommendations yet",
+    });
+
+    expect(
+      screen.queryByRole("button", { name: "Recommendations" })
+    ).not.toBeInTheDocument();
+  });
+
   it("signs out from the sidebar and returns to login", async () => {
     const user = userEvent.setup();
 
@@ -478,9 +512,9 @@ describe("DashboardPage", () => {
     it("defaults to most relevant and requests the default sort", async () => {
       renderPage();
 
-      expect(
-        await screen.findByRole("combobox", { name: "Sort by" })
-      ).toHaveValue("Most relevant");
+      const select = await screen.findByRole("combobox", { name: "Sort by" });
+      expect(select).toHaveValue("relevance");
+      expect(select).toHaveDisplayValue("Most relevant");
 
       expect(
         mocks.listDashboardRecommendations
@@ -490,9 +524,9 @@ describe("DashboardPage", () => {
     it("shows the sort from the URL and requests it", async () => {
       renderPage("/dashboard?sort=price_desc");
 
-      expect(
-        await screen.findByRole("combobox", { name: "Sort by" })
-      ).toHaveValue("Price: high to low");
+      const select = await screen.findByRole("combobox", { name: "Sort by" });
+      expect(select).toHaveValue("price_desc");
+      expect(select).toHaveDisplayValue("Price: high to low");
 
       expect(
         mocks.listDashboardRecommendations
@@ -506,7 +540,7 @@ describe("DashboardPage", () => {
 
       await user.selectOptions(
         await screen.findByRole("combobox", { name: "Sort by" }),
-        "Price: low to high"
+        "price_asc"
       );
 
       const search = new URLSearchParams(
@@ -529,7 +563,7 @@ describe("DashboardPage", () => {
 
       await user.selectOptions(
         await screen.findByRole("combobox", { name: "Sort by" }),
-        "Most relevant"
+        "relevance"
       );
 
       const search = new URLSearchParams(
@@ -543,13 +577,155 @@ describe("DashboardPage", () => {
     it("falls back to the default for an unknown sort in the URL", async () => {
       renderPage("/dashboard?sort=banana");
 
-      expect(
-        await screen.findByRole("combobox", { name: "Sort by" })
-      ).toHaveValue("Most relevant");
+      const select = await screen.findByRole("combobox", { name: "Sort by" });
+      expect(select).toHaveValue("relevance");
+      expect(select).toHaveDisplayValue("Most relevant");
 
       expect(
         mocks.listDashboardRecommendations
       ).toHaveBeenCalledWith("relevance");
+    });
+
+    it("keeps active filters while server results are re-sorted", async () => {
+      const relevance = [
+        recommended,
+        worthConsidering,
+        worthWatching,
+        notRecommended,
+      ];
+      const priceDescending = [
+        notRecommended,
+        recommended,
+        worthConsidering,
+        worthWatching,
+      ];
+      mocks.listDashboardRecommendations.mockImplementation((selectedSort) =>
+        Promise.resolve(
+          selectedSort === "price_desc" ? priceDescending : relevance
+        )
+      );
+      const user = userEvent.setup();
+      renderPage();
+
+      await user.click(await screen.findByRole("button", { name: "Filters" }));
+      await user.click(screen.getByRole("checkbox", { name: "B" }));
+      expectCandidateOrder("Google Pixel 11", "Apple iPhone 18");
+
+      await user.selectOptions(
+        screen.getByRole("combobox", { name: "Sort by" }),
+        "price_desc"
+      );
+
+      await waitFor(() => {
+        expect(mocks.listDashboardRecommendations).toHaveBeenLastCalledWith(
+          "price_desc"
+        );
+        expectCandidateOrder("Apple iPhone 18", "Google Pixel 11");
+      });
+      expect(screen.getByRole("button", { name: "Filters (1)" })).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Showing 2 of 4 recommendations"
+      );
+    });
+
+    it("filters an already sorted result without changing its order", async () => {
+      mocks.listDashboardRecommendations.mockResolvedValue([
+        worthWatching,
+        worthConsidering,
+        recommended,
+        notRecommended,
+      ]);
+      const user = userEvent.setup();
+      renderPage("/dashboard?sort=price_asc");
+
+      await user.click(await screen.findByRole("button", { name: "Filters" }));
+      await user.click(screen.getByRole("checkbox", { name: "B" }));
+
+      expectCandidateOrder("Google Pixel 11", "Apple iPhone 18");
+      expect(screen.getByRole("combobox", { name: "Sort by" })).toHaveValue(
+        "price_asc"
+      );
+      expect(mocks.listDashboardRecommendations).toHaveBeenCalledOnce();
+    });
+
+    it("clears filters without resetting the selected sort", async () => {
+      mocks.listDashboardRecommendations.mockResolvedValue([
+        notRecommended,
+        recommended,
+        worthConsidering,
+        worthWatching,
+      ]);
+      const user = userEvent.setup();
+      renderPage("/dashboard?sort=price_desc");
+
+      await user.click(await screen.findByRole("button", { name: "Filters" }));
+      const dropdown = screen.getByRole("dialog", {
+        name: "Filter recommendations",
+      });
+      await user.click(within(dropdown).getByRole("checkbox", { name: "B" }));
+      await user.click(within(dropdown).getByRole("button", { name: "Clear filters" }));
+
+      expect(screen.getByRole("combobox", { name: "Sort by" })).toHaveValue(
+        "price_desc"
+      );
+      expect(screen.getByTestId("search")).toHaveTextContent("sort=price_desc");
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Showing 4 of 4 recommendations"
+      );
+      expect(mocks.listDashboardRecommendations).toHaveBeenCalledOnce();
+    });
+
+    it("ignores an older response after the sort changes again", async () => {
+      const priceAscending = deferred<DashboardRecommendation[]>();
+      const priceDescending = deferred<DashboardRecommendation[]>();
+      mocks.listDashboardRecommendations.mockImplementation((selectedSort) => {
+        if (selectedSort === "price_asc") return priceAscending.promise;
+        if (selectedSort === "price_desc") return priceDescending.promise;
+        return Promise.resolve([recommended, notRecommended]);
+      });
+      const user = userEvent.setup();
+      renderPage();
+      const sortSelect = await screen.findByRole("combobox", { name: "Sort by" });
+
+      await user.selectOptions(sortSelect, "price_asc");
+      await waitFor(() => {
+        expect(mocks.listDashboardRecommendations).toHaveBeenLastCalledWith(
+          "price_asc"
+        );
+      });
+      await user.selectOptions(sortSelect, "price_desc");
+      await waitFor(() => {
+        expect(mocks.listDashboardRecommendations).toHaveBeenLastCalledWith(
+          "price_desc"
+        );
+      });
+
+      await act(async () => {
+        priceDescending.resolve([notRecommended, recommended]);
+        await priceDescending.promise;
+      });
+      await waitFor(() => {
+        expectCandidateOrder("Apple iPhone 18", "Samsung Galaxy S26");
+      });
+
+      await act(async () => {
+        priceAscending.resolve([worthConsidering]);
+        await priceAscending.promise;
+      });
+      expectCandidateOrder("Apple iPhone 18", "Samsung Galaxy S26");
+      expect(screen.queryByText("Google Pixel 11")).not.toBeInTheDocument();
+    });
+
+    it("keeps result count, filters and sort in one responsive toolbar", async () => {
+      renderPage();
+
+      const controls = await screen.findByRole("region", {
+        name: "Recommendation controls",
+      });
+      expect(within(controls).getByRole("status")).toBeInTheDocument();
+      expect(within(controls).getByRole("button", { name: "Filters" })).toBeInTheDocument();
+      expect(within(controls).getByRole("combobox", { name: "Sort by" })).toBeInTheDocument();
+      expect(controls).toHaveClass("flex-wrap");
     });
   });
 });

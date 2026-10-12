@@ -39,8 +39,8 @@ export default function DashboardPage() {
   const session = getSession();
 
   /*
-   * Sort lives in the URL next to any filters so the two cannot reset
-   * each other, and a refresh or shared link keeps the same view.
+   * Sort lives in the URL independently from the local filters, so changing
+   * either control does not reset the other and refreshes keep the same order.
    */
   const [searchParams, setSearchParams] = useSearchParams();
   const sort = parseSort(searchParams.get("sort"));
@@ -50,6 +50,7 @@ export default function DashboardPage() {
   >([]);
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState(emptyRecommendationFilters);
 
@@ -78,6 +79,7 @@ export default function DashboardPage() {
       .finally(() => {
         if (!cancelled) {
           setLoading(false);
+          setRefreshing(false);
         }
       });
 
@@ -121,10 +123,13 @@ export default function DashboardPage() {
   ).filter(Boolean).length;
 
   const noUpgradeCount = deviceCount - attentionCount;
-  const filteredRecommendations = filterRecommendations(recommendations, filters);
+  const filteredRecommendations = filterRecommendations(
+    recommendations,
+    filters
+  );
 
   const handleSortChange = (newSort: SortOption) => {
-    // Copy every existing parameter (filters included) and change only `sort`.
+    // Copy every existing query parameter and change only `sort`.
     const next = new URLSearchParams(searchParams);
 
     if (newSort === DEFAULT_SORT) {
@@ -136,6 +141,7 @@ export default function DashboardPage() {
     // Page N of a different order is meaningless; filters are untouched.
     next.delete("page");
 
+    setRefreshing(true);
     setSearchParams(next);
   };
 
@@ -251,7 +257,11 @@ export default function DashboardPage() {
         )}
 
       {!loading && !error && recommendations.length > 0 && (
-        <div className="mb-[14px] flex flex-wrap items-center justify-between gap-[10px]">
+        <section
+          aria-label="Recommendation controls"
+          aria-busy={refreshing}
+          className="mb-[14px] flex flex-wrap items-center justify-between gap-[10px]"
+        >
           <p role="status" className="m-0 text-[13px] text-[#8fa0b8]">
             Showing {filteredRecommendations.length} of {recommendations.length} recommendations
           </p>
@@ -274,7 +284,7 @@ export default function DashboardPage() {
               />
             </label>
           </div>
-        </div>
+        </section>
       )}
 
       {!loading && !error && recommendations.length > 0 && filteredRecommendations.length === 0 && (

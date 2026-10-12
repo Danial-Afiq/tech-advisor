@@ -1,15 +1,29 @@
-import type { DashboardRecommendation } from "../../api/dashboard";
-import type { RecommendationFilters } from "./types";
+import type {
+  DashboardRecommendation,
+  FilterEvidenceGrade,
+  RecommendationFilters,
+} from "./types";
+import {
+  RECOMMENDATION_VERDICTS,
+  verdictPresentation,
+} from "./recommendationPresentation";
 
-export const VERDICT_OPTIONS = [
-  { value: "STRONG_UPGRADE_CANDIDATE", label: "Strong upgrade candidate" },
-  { value: "WORTH_CONSIDERING", label: "Worth considering" },
-  { value: "WORTH_WATCHING", label: "Worth watching" },
-  { value: "NO_MEANINGFUL_CHANGE", label: "No meaningful change" },
-] as const;
+export const VERDICT_OPTIONS = RECOMMENDATION_VERDICTS.map((value) => ({
+  value,
+  label: verdictPresentation(value).label,
+}));
 
-export const EVIDENCE_GRADE_OPTIONS = ["A", "B", "C", "D", "E", "F"]
-  .map((grade) => ({ value: grade, label: grade }));
+export const EVIDENCE_GRADE_OPTIONS = [
+  { value: "A", label: "A" },
+  { value: "B", label: "B" },
+  { value: "C", label: "C" },
+  { value: "D", label: "D" },
+  { value: "E", label: "E" },
+  { value: "F", label: "F" },
+] as const satisfies readonly {
+  value: FilterEvidenceGrade;
+  label: string;
+}[];
 
 export function emptyRecommendationFilters(): RecommendationFilters {
   return { deviceId: null, verdicts: [], evidenceGrades: [] };
@@ -23,7 +37,9 @@ export function filterRecommendations(
     (filters.deviceId === null || recommendation.currentDeviceId === filters.deviceId)
     && (filters.verdicts.length === 0 || filters.verdicts.includes(recommendation.verdict))
     && (filters.evidenceGrades.length === 0
-      || (recommendation.confidence !== null && filters.evidenceGrades.includes(recommendation.confidence))),
+      || (recommendation.confidence !== null
+        && recommendation.confidence !== "-"
+        && filters.evidenceGrades.includes(recommendation.confidence))),
   );
 }
 
@@ -45,4 +61,3 @@ export function recommendationDeviceOptions(recommendations: readonly DashboardR
 export function selectedFilterCount(filters: RecommendationFilters) {
   return Number(filters.deviceId !== null) + filters.verdicts.length + filters.evidenceGrades.length;
 }
-

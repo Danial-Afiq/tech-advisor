@@ -139,10 +139,11 @@ and helpers file, then components.
 ### `components/recommendations/` — recommendation domain
 
 `RecommendationCard` presents one persisted recommendation in the standard
-dashboard format: owned device, suggested product, price, deterministic verdict,
+dashboard format: owned device, suggested product, Latest price, deterministic verdict,
 owner evidence grade and reasoning. `recommendationPresentation.ts` owns the
 readable labels, themed badge styles and attention behaviour for the four
-canonical verdicts. `types.ts` defines the API-aligned recommendation, verdict
+canonical verdicts, plus currency-aware latest-price formatting. `types.ts`
+defines the API-aligned recommendation, verdict
 and evidence-grade types. Keep verdict and evidence grade visually separate;
 display `-` as "Not enough evidence yet" and `null` as no available evidence
 grade.
@@ -154,6 +155,10 @@ AND/OR matching helper. Devices come from the full active recommendation list
 and use IDs, so identical display names stay separate. The dropdown uses the
 shared `Button` (including a trigger ref for focus return), `Card`, `Field`,
 `Select`, `Checkbox` and `FieldHint`. `EmptyState` titles are semantic headings.
+The dashboard API module owns the four sort options and URL parsing; sorting is
+server-side, then `filterRecommendations` narrows the returned order without
+re-sorting it. Star/bookmark controls are intentionally absent; extend these
+types/helpers and the reusable card when that separate feature is implemented.
 
 ---
 
@@ -250,8 +255,9 @@ as one deliberate change across all components, not piecemeal.
 
 - **Sentence case** for everything: headings, buttons and labels ("Add device",
   not "Add Device").
-- **Money** always goes through `money()` → `S$1,000`. Do not format currency
-  inline.
+- **Money** uses a domain formatter, never inline formatting: device-domain SGD
+  amounts go through `money()` → `S$1,000`; recommendation API prices go through
+  `formatRecommendationPrice()` because each row carries its own currency.
 - **Dates** go through `formatDate()`.
 - Buttons: one `primary` action per area; `ghost` for cancel/back/secondary
   navigation; `danger` only for destructive actions. Icon glyphs in labels use
@@ -283,14 +289,21 @@ as one deliberate change across all components, not piecemeal.
   name in the model field.
 - `pages/DashboardPage.tsx` is the authenticated USER `/dashboard` route. It
   loads only the user's active recommendations from
-  `GET /api/dashboard/recommendations`. The Filters dropdown narrows the list
+  `GET /api/dashboard/recommendations`. It is the only recommendation-browsing
+  page: the duplicate Recommendations sidebar item is removed and the protected
+  `/recommendations` compatibility path redirects to `/dashboard`. The Filters
+  dropdown narrows the list
   immediately by one device and any number of verdicts/evidence grades, with
   AND between groups and OR within each group. Empty selections show all results;
   a no-match selection shows `EmptyState` with Clear filters. `confidence`
   is labelled Evidence grade and offers only A–F as square checkboxes.
   Insufficient evidence (`-`) and unavailable (`null`) recommendations remain
-  visible when no grade is selected. The result count follows filters; overview cards and
-  notifications retain totals for all active recommendations. See root §26.4.
+  visible when no grade is selected. Most relevant is the default server-side
+  sort; price ascending, price descending and newest-first are also available.
+  Sort is URL-backed, survives refreshes and does not reset the local filters;
+  filters preserve the server order. The result count, Filters and Sort controls
+  share one responsive toolbar. Overview cards and notifications retain totals
+  for all active recommendations. See root §23.4 and §26.4.
 - Signed in, the device form suggests smartphones from the catalogue as the
   user types a model name. Picking one sends its `productId` and prefills the
   spec fields. Only specs the user changes are saved as `specOverrides`,
@@ -314,10 +327,11 @@ as one deliberate change across all components, not piecemeal.
   The token-storage decision is still open. Change `session.ts` when it's
   decided.
 - `components/auth/SessionRoute.tsx` applies route-level session/role guards.
-  `/` and `/login` redirect an existing session to `/devices` for USER or
+  `/` and `/login` redirect an existing session to `/dashboard` for USER or
   `/admin/ingestion` for ADMIN. The two protected routes redirect signed-out
   visitors to `/login` and redirect the wrong role to its own home route.
-  `/DevicesPageTest` and `/IngestionAdmin` remain compatibility redirects.
+  `/DevicesPageTest`, `/IngestionAdmin` and USER `/recommendations` remain
+  compatibility redirects.
 - `pages/Login.tsx` (`/login`, `/login?mode=signup`) is built to this system.
   Sign up calls `POST /api/auth/register`, then logs in. Log in calls
   `POST /api/auth/login` for USER and ADMIN accounts, then routes by the returned

@@ -1,5 +1,4 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { DashboardRecommendation } from "../../api/dashboard";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { Checkbox, Field, FieldHint, Select } from "../ui/Form";
@@ -10,7 +9,12 @@ import {
   recommendationDeviceOptions,
   selectedFilterCount,
 } from "./recommendationOptions";
-import type { RecommendationFilters } from "./types";
+import type {
+  DashboardRecommendation,
+  FilterEvidenceGrade,
+  RecommendationFilters,
+  RecommendationVerdict,
+} from "./types";
 
 export function RecommendationFilterDropdown({
   recommendations,
@@ -60,11 +64,21 @@ export function RecommendationFilterDropdown({
     };
   }, [open]);
 
-  function toggle(group: "verdicts" | "evidenceGrades", value: string) {
-    const selected = filters[group];
+  function toggleVerdict(value: RecommendationVerdict) {
+    const selected = filters.verdicts;
     onChange({
       ...filters,
-      [group]: selected.includes(value)
+      verdicts: selected.includes(value)
+        ? selected.filter((item) => item !== value)
+        : [...selected, value],
+    });
+  }
+
+  function toggleEvidenceGrade(value: FilterEvidenceGrade) {
+    const selected = filters.evidenceGrades;
+    onChange({
+      ...filters,
+      evidenceGrades: selected.includes(value)
         ? selected.filter((item) => item !== value)
         : [...selected, value],
     });
@@ -131,7 +145,7 @@ export function RecommendationFilterDropdown({
                   <Checkbox
                     key={value}
                     checked={filters.verdicts.includes(value)}
-                    onChange={() => toggle("verdicts", value)}
+                    onChange={() => toggleVerdict(value)}
                   >
                     {label}
                   </Checkbox>
@@ -144,7 +158,7 @@ export function RecommendationFilterDropdown({
                   <Checkbox
                     key={value}
                     checked={filters.evidenceGrades.includes(value)}
-                    onChange={() => toggle("evidenceGrades", value)}
+                    onChange={() => toggleEvidenceGrade(value)}
                   >
                     {label}
                   </Checkbox>

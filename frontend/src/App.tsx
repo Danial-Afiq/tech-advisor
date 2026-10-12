@@ -17,6 +17,7 @@ import {
   DASHBOARD_PATH,
   DEVICES_PATH,
   LOGIN_PATH,
+  RECOMMENDATIONS_PATH,
 } from "./routing/paths";
 
 function App() {
@@ -31,6 +32,10 @@ function App() {
 
         <Route element={<RequireRole role="USER" />}>
           <Route path={DASHBOARD_PATH} element={<DashboardPage />} />
+          <Route
+            path={RECOMMENDATIONS_PATH}
+            element={<Navigate to={DASHBOARD_PATH} replace />}
+          />
           <Route path={DEVICES_PATH} element={<DevicesPageTest />} />
         </Route>
 
