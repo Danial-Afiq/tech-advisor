@@ -20,6 +20,12 @@ import { Callout } from "../components/ui/Callout";
 import { Select } from "../components/ui/Form";
 import { LoadingBlock } from "../components/ui/LoadingBlock";
 import { PageHeader } from "../components/ui/PageHeader";
+import { EmptyState } from "../components/ui/EmptyState";
+import { RecommendationFilterDropdown } from "../components/recommendations/RecommendationFilterDropdown";
+import {
+  emptyRecommendationFilters,
+  filterRecommendations,
+} from "../components/recommendations/recommendationOptions";
 import {
   DASHBOARD_PATH,
   DEVICES_PATH,
@@ -45,6 +51,7 @@ export default function DashboardPage() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [filters, setFilters] = useState(emptyRecommendationFilters);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,6 +121,7 @@ export default function DashboardPage() {
   ).filter(Boolean).length;
 
   const noUpgradeCount = deviceCount - attentionCount;
+  const filteredRecommendations = filterRecommendations(recommendations, filters);
 
   const handleSortChange = (newSort: SortOption) => {
     // Copy every existing parameter (filters included) and change only `sort`.
@@ -230,68 +238,66 @@ export default function DashboardPage() {
       {!loading &&
         !error &&
         recommendations.length === 0 && (
-          <Card className="grid place-items-center gap-3 p-10 text-center">
-            <div className="text-[30px]">✦</div>
-
-            <div>
-              <h2 className="m-0 text-[20px]! text-[#eef5ff]!">
-                No active recommendations yet
-              </h2>
-
-              <p className="mt-2 mb-0 max-w-[520px] text-[14px] leading-[1.6] text-[#8fa0b8]">
-                Recommendations will appear here when an upgrade
-                outcome is available for one of your registered
-                devices.
-              </p>
-            </div>
-
-            <Button
-              variant="primary"
-              onClick={() => void navigate(DEVICES_PATH)}
-            >
-              View my devices
-            </Button>
-          </Card>
+          <EmptyState
+            icon="✦"
+            title="No active recommendations yet"
+            description="Recommendations will appear here when an upgrade outcome is available for one of your registered devices."
+            action={
+              <Button variant="primary" onClick={() => void navigate(DEVICES_PATH)}>
+                View my devices
+              </Button>
+            }
+          />
         )}
 
-      {!error && (loading || recommendations.length > 0) && (
-        <div className="mb-4 flex items-center justify-end gap-2">
-          <label
-            htmlFor="dashboard-sort"
-            className="text-[13px] font-semibold text-[#c6d1df]"
-          >
-            Sort by
-          </label>
+      {!loading && !error && recommendations.length > 0 && (
+        <div className="mb-[14px] flex flex-wrap items-center justify-between gap-[10px]">
+          <p role="status" className="m-0 text-[13px] text-[#8fa0b8]">
+            Showing {filteredRecommendations.length} of {recommendations.length} recommendations
+          </p>
 
-          <Select
-            id="dashboard-sort"
-            className="w-auto"
-            options={SORT_OPTIONS.map((option) => option.label)}
-            value={
-              SORT_OPTIONS.find((option) => option.value === sort)
-                ?.label
-            }
-            onChange={(event) => {
-              const chosen = SORT_OPTIONS.find(
-                (option) => option.label === event.target.value
-              );
+          <div className="flex flex-wrap items-center justify-end gap-[10px] max-[620px]:w-full max-[620px]:justify-stretch">
+            <RecommendationFilterDropdown
+              recommendations={recommendations}
+              filters={filters}
+              onChange={setFilters}
+            />
 
-              if (chosen) {
-                handleSortChange(chosen.value);
-              }
-            }}
-          />
+            <label className="flex items-center gap-[8px] text-[13px] font-semibold text-[#c6d1df] max-[620px]:w-full">
+              <span className="shrink-0">Sort by</span>
+              <Select
+                aria-label="Sort by"
+                className="w-auto max-[620px]:min-w-0 max-[620px]:flex-1"
+                options={SORT_OPTIONS}
+                value={sort}
+                onChange={(event) => handleSortChange(parseSort(event.target.value))}
+              />
+            </label>
+          </div>
         </div>
+      )}
+
+      {!loading && !error && recommendations.length > 0 && filteredRecommendations.length === 0 && (
+        <EmptyState
+          icon="✦"
+          title="No recommendations match your filters"
+          description="Try another device, verdict or evidence grade, or clear your filters to see all recommendations."
+          action={
+            <Button variant="primary" onClick={() => setFilters(emptyRecommendationFilters())}>
+              Clear filters
+            </Button>
+          }
+        />
       )}
 
       {!loading &&
         !error &&
-        recommendations.length > 0 && (
+        filteredRecommendations.length > 0 && (
           <section
             aria-label="Device recommendations"
             className="grid grid-cols-2 gap-4 max-[1000px]:grid-cols-1"
           >
-            {recommendations.map((recommendation) => (
+            {filteredRecommendations.map((recommendation) => (
               <RecommendationCard
                 key={recommendation.recommendationId}
                 recommendation={recommendation}

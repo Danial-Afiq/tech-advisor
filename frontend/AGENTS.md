@@ -78,7 +78,7 @@ Reach for these first. All are named exports.
 | Dialog | `Modal` + `ModalActions` for the footer buttons |
 | Form layout | `FormGrid` (2 columns → 1 on phones) and `Field` (label + control, `span2` for full width; pass `htmlFor` when the field holds more than the control, e.g. a suggestion list) |
 | Muted note under a control | `FieldHint` |
-| Form controls | `Input`, `Select` (pass `options`), `Textarea`, `Range` |
+| Form controls | `Input`, `Select` (pass string options or `{ value, label }` options), labelled square `Checkbox`, `Textarea`, `Range` |
 | Feedback after an action | `useToasts()` + `ToastStack` |
 
 ### `components/layout/` — app frame
@@ -147,6 +147,14 @@ and evidence-grade types. Keep verdict and evidence grade visually separate;
 display `-` as "Not enough evidence yet" and `null` as no available evidence
 grade.
 
+`RecommendationFilterDropdown` supplies the dashboard's owned-device select,
+verdict checkboxes and evidence-grade checkboxes. `types.ts` defines filter
+state; `recommendationOptions.ts` holds option lists, device options and the
+AND/OR matching helper. Devices come from the full active recommendation list
+and use IDs, so identical display names stay separate. The dropdown uses the
+shared `Button` (including a trigger ref for focus return), `Card`, `Field`,
+`Select`, `Checkbox` and `FieldHint`. `EmptyState` titles are semantic headings.
+
 ---
 
 ## 4. Design tokens
@@ -187,6 +195,7 @@ For status colours prefer daisyUI modifiers (`badge-success`, `badge-soft`,
 | Input, select, md button | 12px |
 | sm button | 10px |
 | Pills, tags, badges | full |
+| Checkbox | 0px (square) |
 
 Borders are 1px `white/[0.09]` almost everywhere. Card shadow is
 `0_12px_34px_rgba(0,0,0,.14)`; modal and toast shadow is
@@ -272,6 +281,16 @@ as one deliberate change across all components, not piecemeal.
   device preferences. Brand is required only when adding a
   device: a saved device without a catalogue link comes back with its whole
   name in the model field.
+- `pages/DashboardPage.tsx` is the authenticated USER `/dashboard` route. It
+  loads only the user's active recommendations from
+  `GET /api/dashboard/recommendations`. The Filters dropdown narrows the list
+  immediately by one device and any number of verdicts/evidence grades, with
+  AND between groups and OR within each group. Empty selections show all results;
+  a no-match selection shows `EmptyState` with Clear filters. `confidence`
+  is labelled Evidence grade and offers only A–F as square checkboxes.
+  Insufficient evidence (`-`) and unavailable (`null`) recommendations remain
+  visible when no grade is selected. The result count follows filters; overview cards and
+  notifications retain totals for all active recommendations. See root §26.4.
 - Signed in, the device form suggests smartphones from the catalogue as the
   user types a model name. Picking one sends its `productId` and prefills the
   spec fields. Only specs the user changes are saved as `specOverrides`,

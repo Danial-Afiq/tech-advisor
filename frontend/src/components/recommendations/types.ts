@@ -28,3 +28,9 @@ export type DashboardRecommendation = {
   reasoning: string | null;
   createdAt: string;
 };
+
+export type RecommendationFilters = {
+  deviceId: number | null;
+  verdicts: RecommendationVerdict[];
+  evidenceGrades: Exclude<EvidenceGrade, "-" | null>[];
+};

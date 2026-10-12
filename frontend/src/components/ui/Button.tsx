@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from "react";
+import type { ComponentProps } from "react";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 export type ButtonSize = "md" | "sm";
@@ -19,7 +19,7 @@ const VARIANTS: Record<ButtonVariant, string> = {
     "border-[#ff6d7a]/25 bg-[#ff6d7a]/12 text-[#ff9aa4] shadow-none hover:bg-[#ff6d7a]/18",
 };
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+type ButtonProps = ComponentProps<"button"> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
   /** Shows a spinner and disables the button, e.g. while a request runs. */
