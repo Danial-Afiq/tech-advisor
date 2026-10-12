@@ -136,6 +136,17 @@ When you add a new domain (for example recommendations), create
 `components/recommendations/` following the same pattern: types file, options
 and helpers file, then components.
 
+### `components/recommendations/` — recommendation domain
+
+`RecommendationCard` presents one persisted recommendation in the standard
+dashboard format: owned device, suggested product, price, deterministic verdict,
+owner evidence grade and reasoning. `recommendationPresentation.ts` owns the
+readable labels, themed badge styles and attention behaviour for the four
+canonical verdicts. `types.ts` defines the API-aligned recommendation, verdict
+and evidence-grade types. Keep verdict and evidence grade visually separate;
+display `-` as "Not enough evidence yet" and `null` as no available evidence
+grade.
+
 ---
 
 ## 4. Design tokens

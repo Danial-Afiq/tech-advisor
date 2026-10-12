@@ -20,64 +20,8 @@ import {
   DEVICES_PATH,
   LOGIN_PATH,
 } from "../routing/paths";
-
-function verdictDetails(verdict: string) {
-  switch (verdict) {
-    case "STRONG_UPGRADE_CANDIDATE":
-      return {
-        label: "Strong upgrade candidate",
-        colour:
-          "border-[#ff8a65]/35 bg-[#ff8a65]/10 text-[#ffb199]",
-        requiresAttention: true,
-      };
-
-    case "WORTH_CONSIDERING":
-      return {
-        label: "Worth considering",
-        colour:
-          "border-[#f5c451]/35 bg-[#f5c451]/10 text-[#f8d77d]",
-        requiresAttention: true,
-      };
-
-    case "WORTH_WATCHING":
-      return {
-        label: "Worth watching",
-        colour:
-          "border-[#28c0ff]/35 bg-[#28c0ff]/10 text-[#7ddcff]",
-        requiresAttention: false,
-      };
-
-    case "NO_MEANINGFUL_CHANGE":
-      return {
-        label: "No meaningful change",
-        colour:
-          "border-[#58d6a9]/35 bg-[#58d6a9]/10 text-[#83e4c1]",
-        requiresAttention: false,
-      };
-
-    default:
-      return {
-        label: verdict.replaceAll("_", " "),
-        colour:
-          "border-white/15 bg-white/[0.06] text-[#bdc7d7]",
-        requiresAttention: false,
-      };
-  }
-}
-
-function formatPrice(
-  price: number | null,
-  currency: string | null
-) {
-  if (price === null) {
-    return "Price unavailable";
-  }
-
-  return new Intl.NumberFormat("en-SG", {
-    style: "currency",
-    currency: currency ?? "SGD",
-  }).format(price);
-}
+import { RecommendationCard } from "../components/recommendations/RecommendationCard";
+import { verdictPresentation } from "../components/recommendations/recommendationPresentation";
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -138,7 +82,9 @@ export default function DashboardPage() {
 
   recommendations.forEach((recommendation) => {
     const requiresAttention =
-      verdictDetails(recommendation.verdict).requiresAttention;
+      verdictPresentation(
+        recommendation.verdict
+      ).requiresAttention;
 
     const existingOutcome =
       deviceAttention.get(recommendation.currentDeviceId) ?? false;
@@ -287,69 +233,12 @@ export default function DashboardPage() {
             aria-label="Device recommendations"
             className="grid grid-cols-2 gap-4 max-[1000px]:grid-cols-1"
           >
-            {recommendations.map((recommendation) => {
-              const verdict = verdictDetails(
-                recommendation.verdict
-              );
-
-              return (
-                <Card
-                  key={recommendation.recommendationId}
-                  className="p-5"
-                >
-                  <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="m-0 text-[12px] font-semibold tracking-[0.08em] text-[#8fa0b8] uppercase">
-                        Current device
-                      </p>
-
-                      <h2 className="mt-1 mb-0 text-[20px] font-bold text-[#eef5ff]">
-                        {recommendation.currentDeviceName}
-                      </h2>
-                    </div>
-
-                    <span
-                      className={`rounded-full border px-3 py-1 text-[12px] font-semibold ${verdict.colour}`}
-                    >
-                      {verdict.label}
-                    </span>
-                  </div>
-
-                  <div className="rounded-[14px] border border-white/[0.08] bg-white/[0.035] p-4">
-                    <p className="m-0 text-[12px] text-[#8fa0b8]">
-                      Suggested product
-                    </p>
-
-                    <p className="mt-1 mb-0 text-[17px] font-semibold text-[#eef5ff]">
-                      {recommendation.candidateBrand}{" "}
-                      {recommendation.candidateModelName}
-                    </p>
-
-                    <p className="mt-2 mb-0 text-[19px] font-bold text-[#a998ff]">
-                      {formatPrice(
-                        recommendation.latestPrice,
-                        recommendation.currency
-                      )}
-                    </p>
-                  </div>
-
-                  <div className="mt-4 flex items-center gap-2 text-[13px] text-[#bdc7d7]">
-                    <span>Evidence confidence:</span>
-
-                    <b className="text-[#eef5ff]">
-                      {recommendation.confidence ??
-                        "Not available"}
-                    </b>
-                  </div>
-
-                  {recommendation.reasoning && (
-                    <p className="mt-3 mb-0 text-[14px] leading-[1.6] text-[#9eacc0]">
-                      {recommendation.reasoning}
-                    </p>
-                  )}
-                </Card>
-              );
-            })}
+            {recommendations.map((recommendation) => (
+              <RecommendationCard
+                key={recommendation.recommendationId}
+                recommendation={recommendation}
+              />
+            ))}
           </section>
         )}
     </AppShell>
