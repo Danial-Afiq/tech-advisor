@@ -15,7 +15,10 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -111,5 +114,87 @@ public class DashboardController {
                 );
 
         return ResponseEntity.ok(recommendations);
+    }
+
+    @PutMapping("/recommendations/{recommendationId}/star")
+    @Operation(
+            summary = "Star a dashboard recommendation",
+            description =
+                    "Saves one of the authenticated user's "
+                            + "active recommendations. Starring an "
+                            + "already starred recommendation "
+                            + "succeeds without change."
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "204",
+                    description = "Recommendation starred"
+            ),
+            @ApiResponse(
+                    responseCode = "401",
+                    description =
+                            "Bearer token is missing or invalid",
+                    content = @Content
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description =
+                            "No active recommendation with this "
+                                    + "ID belongs to the user",
+                    content = @Content
+            )
+    })
+    public ResponseEntity<Void> starRecommendation(
+            Authentication authentication,
+            @PathVariable long recommendationId) {
+
+        dashboardService.setStarred(
+                authentication.getName(),
+                recommendationId,
+                true
+        );
+
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/recommendations/{recommendationId}/star")
+    @Operation(
+            summary = "Unstar a dashboard recommendation",
+            description =
+                    "Removes one of the authenticated user's "
+                            + "active recommendations from their "
+                            + "saved recommendations. The "
+                            + "recommendation itself is kept."
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "204",
+                    description = "Recommendation unstarred"
+            ),
+            @ApiResponse(
+                    responseCode = "401",
+                    description =
+                            "Bearer token is missing or invalid",
+                    content = @Content
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description =
+                            "No active recommendation with this "
+                                    + "ID belongs to the user",
+                    content = @Content
+            )
+    })
+    public ResponseEntity<Void> unstarRecommendation(
+            Authentication authentication,
+            @PathVariable long recommendationId) {
+
+        dashboardService.setStarred(
+                authentication.getName(),
+                recommendationId,
+                false
+        );
+
+        return ResponseEntity.noContent().build();
     }
 }

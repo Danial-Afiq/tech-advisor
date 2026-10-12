@@ -34,3 +34,14 @@ export function listDashboardRecommendations(
     `/api/dashboard/recommendations${query}`
   );
 }
+
+/** `PUT`/`DELETE /api/dashboard/recommendations/{id}/star` — saves or unsaves one recommendation. */
+export function setRecommendationStarred(
+  recommendationId: number,
+  starred: boolean
+) {
+  return apiFetch<void>(
+    `/api/dashboard/recommendations/${encodeURIComponent(recommendationId)}/star`,
+    { method: starred ? "PUT" : "DELETE" }
+  );
+}

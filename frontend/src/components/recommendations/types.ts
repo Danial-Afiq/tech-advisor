@@ -28,6 +28,8 @@ export type DashboardRecommendation = {
   verdict: RecommendationVerdict;
   confidence: EvidenceGrade;
   reasoning: string | null;
+  /** The user starred (saved) this recommendation. */
+  starred: boolean;
   createdAt: string;
 };
 
@@ -35,4 +37,6 @@ export type RecommendationFilters = {
   deviceId: number | null;
   verdicts: RecommendationVerdict[];
   evidenceGrades: FilterEvidenceGrade[];
+  /** Show only starred (saved) recommendations. Set by the toolbar toggle, not the dropdown. */
+  savedOnly: boolean;
 };

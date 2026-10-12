@@ -5,6 +5,7 @@ import {
   SORT_OPTIONS,
   listDashboardRecommendations,
   parseSort,
+  setRecommendationStarred,
   type DashboardRecommendation,
   type SortOption,
 } from "../api/dashboard";
@@ -19,6 +20,9 @@ import { Card } from "../components/ui/Card";
 import { Callout } from "../components/ui/Callout";
 import { Select } from "../components/ui/Form";
 import { LoadingBlock } from "../components/ui/LoadingBlock";
+import { Modal, ModalActions } from "../components/ui/Modal";
+import { ToastStack } from "../components/ui/ToastStack";
+import { useToasts } from "../components/ui/useToasts";
 import { PageHeader } from "../components/ui/PageHeader";
 import { EmptyState } from "../components/ui/EmptyState";
 import { RecommendationFilterDropdown } from "../components/recommendations/RecommendationFilterDropdown";
@@ -53,6 +57,12 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState(emptyRecommendationFilters);
+  const [pendingUnstar, setPendingUnstar] =
+    useState<DashboardRecommendation | null>(null);
+  const [starPendingIds, setStarPendingIds] = useState<ReadonlySet<number>>(
+    () => new Set()
+  );
+  const { toasts, pushToast } = useToasts();
 
   useEffect(() => {
     let cancelled = false;
@@ -127,6 +137,73 @@ export default function DashboardPage() {
     recommendations,
     filters
   );
+
+  const savedCount = recommendations.filter(
+    (recommendation) => recommendation.starred
+  ).length;
+
+  const candidateName = (recommendation: DashboardRecommendation) =>
+    [recommendation.candidateBrand, recommendation.candidateModelName]
+      .filter(Boolean)
+      .join(" ");
+
+  const saveStar = async (
+    recommendation: DashboardRecommendation,
+    starred: boolean
+  ) => {
+    const id = recommendation.recommendationId;
+    setStarPendingIds((current) => new Set(current).add(id));
+
+    try {
+      await setRecommendationStarred(id, starred);
+      setRecommendations((current) =>
+        current.map((row) =>
+          row.recommendationId === id ? { ...row, starred } : row
+        )
+      );
+      pushToast(
+        starred ? "Recommendation saved" : "Removed from saved",
+        `${candidateName(recommendation)} for ${recommendation.currentDeviceName}.`,
+        starred ? "★" : "✓"
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        void navigate(LOGIN_PATH, { replace: true });
+        return;
+      }
+
+      pushToast(
+        starred
+          ? "Couldn’t save recommendation"
+          : "Couldn’t remove saved recommendation",
+        err instanceof Error ? err.message : "Please try again.",
+        "!"
+      );
+    } finally {
+      setStarPendingIds((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  // Saving is immediate; removing a saved recommendation is confirmed first.
+  const handleToggleStar = (recommendation: DashboardRecommendation) => {
+    if (recommendation.starred) {
+      setPendingUnstar(recommendation);
+    } else {
+      void saveStar(recommendation, true);
+    }
+  };
+
+  const confirmUnstar = () => {
+    if (pendingUnstar) {
+      void saveStar(pendingUnstar, false);
+    }
+
+    setPendingUnstar(null);
+  };
 
   const handleSortChange = (newSort: SortOption) => {
     // Copy every existing query parameter and change only `sort`.
@@ -267,6 +344,17 @@ export default function DashboardPage() {
           </p>
 
           <div className="flex flex-wrap items-center justify-end gap-[10px] max-[620px]:w-full max-[620px]:justify-stretch">
+            <Button
+              aria-pressed={filters.savedOnly}
+              variant={filters.savedOnly ? "primary" : "secondary"}
+              onClick={() =>
+                setFilters({ ...filters, savedOnly: !filters.savedOnly })
+              }
+            >
+              <span aria-hidden="true">{filters.savedOnly ? "★" : "☆"}</span>
+              Saved ({savedCount})
+            </Button>
+
             <RecommendationFilterDropdown
               recommendations={recommendations}
               filters={filters}
@@ -291,7 +379,20 @@ export default function DashboardPage() {
         </section>
       )}
 
-      {!loading && !error && recommendations.length > 0 && filteredRecommendations.length === 0 && (
+      {!loading && !error && filteredRecommendations.length === 0 && filters.savedOnly && savedCount === 0 && (
+        <EmptyState
+          icon="☆"
+          title="No saved recommendations yet"
+          description="Select the star on a recommendation to save it here for quick access."
+          action={
+            <Button variant="primary" onClick={() => setFilters({ ...filters, savedOnly: false })}>
+              Show all recommendations
+            </Button>
+          }
+        />
+      )}
+
+      {!loading && !error && recommendations.length > 0 && filteredRecommendations.length === 0 && !(filters.savedOnly && savedCount === 0) && (
         <EmptyState
           icon="✦"
           title="No recommendations match your filters"
@@ -315,10 +416,40 @@ export default function DashboardPage() {
               <RecommendationCard
                 key={recommendation.recommendationId}
                 recommendation={recommendation}
+                onToggleStar={handleToggleStar}
+                starPending={starPendingIds.has(
+                  recommendation.recommendationId
+                )}
               />
             ))}
           </section>
         )}
+
+      {pendingUnstar && (
+        <Modal
+          eyebrow="Saved recommendations"
+          title="Remove saved recommendation?"
+          width="max-w-[460px]"
+          onClose={() => setPendingUnstar(null)}
+        >
+          <p className="mt-0 mb-[14px] text-[13px] leading-[1.6] text-[#8fa0b8]">
+            {candidateName(pendingUnstar)} for {pendingUnstar.currentDeviceName}{" "}
+            will be removed from your saved recommendations. The recommendation
+            itself stays on your dashboard.
+          </p>
+
+          <ModalActions>
+            <Button variant="ghost" onClick={() => setPendingUnstar(null)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={confirmUnstar}>
+              Remove
+            </Button>
+          </ModalActions>
+        </Modal>
+      )}
+
+      <ToastStack toasts={toasts} />
     </AppShell>
   );
 }

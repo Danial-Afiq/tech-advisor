@@ -1,3 +1,4 @@
+import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import {
   evidenceGradeText,
@@ -8,8 +9,14 @@ import type { DashboardRecommendation } from "./types";
 
 export function RecommendationCard({
   recommendation,
+  onToggleStar,
+  starPending = false,
 }: {
   recommendation: DashboardRecommendation;
+  /** Shows the star toggle. The caller decides whether unstarring needs confirming. */
+  onToggleStar?: (recommendation: DashboardRecommendation) => void;
+  /** Disables the star while its save/remove request runs. */
+  starPending?: boolean;
 }) {
   const verdict = verdictPresentation(
     recommendation.verdict
@@ -39,11 +46,30 @@ export function RecommendationCard({
             </h3>
           </div>
 
-          <span
-            className={`badge rounded-full px-3 py-[14px] text-[11px] font-semibold ${verdict.badgeClass}`}
-          >
-            {verdict.label}
-          </span>
+          <div className="flex items-center gap-2">
+            <span
+              className={`badge rounded-full px-3 py-[14px] text-[11px] font-semibold ${verdict.badgeClass}`}
+            >
+              {verdict.label}
+            </span>
+
+            {onToggleStar && (
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-pressed={recommendation.starred}
+                aria-label={`${recommendation.starred ? "Remove" : "Save"} ${candidateName} for ${recommendation.currentDeviceName}`}
+                title={recommendation.starred ? "Remove from saved" : "Save recommendation"}
+                loading={starPending}
+                className={`text-[16px] leading-none ${recommendation.starred ? "text-[#f6b84b]" : ""}`}
+                onClick={() => onToggleStar(recommendation)}
+              >
+                {!starPending && (
+                  <span aria-hidden="true">{recommendation.starred ? "★" : "☆"}</span>
+                )}
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="mt-4 rounded-[14px] border border-white/[0.09] bg-[#0a1423] p-[16px]">

@@ -118,6 +118,7 @@ public class RecommendationRepository {
                 r.verdict,
                 r.confidence,
                 r.reasoning,
+                r.starred,
                 r.created_at
             FROM recommendations r
             JOIN user_devices ud
@@ -181,6 +182,9 @@ public class RecommendationRepository {
                             resultSet.getString(
                                     "reasoning"
                             ),
+                            resultSet.getBoolean(
+                                    "starred"
+                            ),
                             resultSet.getObject(
                                     "created_at",
                                     java.time.OffsetDateTime.class
@@ -214,21 +218,43 @@ public class RecommendationRepository {
     }
 
     /**
+     * Stars or unstars one of the user's ACTIVE recommendations for a current
+     * owned device - exactly the rows the dashboard shows. Ownership is part of
+     * the WHERE clause, so another user's id behaves like an unknown one.
+     *
+     * @return false when no such recommendation exists for this user
+     */
+    public boolean setStarred(long userId, long recommendationId, boolean starred) {
+        return db.update(
+                "UPDATE recommendations r SET starred=? "
+                        + "FROM user_devices ud "
+                        + "WHERE r.id=? AND r.user_id=? AND r.status='ACTIVE' "
+                        + "AND ud.id=r.current_device_id AND ud.user_id=r.user_id AND ud.is_current=TRUE",
+                starred, recommendationId, userId) > 0;
+    }
+
+    /**
      * Supersedes the previous ACTIVE row for the same (user, candidate) pair,
      * if any, then inserts the new one: this is "per-user/per-product"
-     * persistence, one current answer per pair. Callers own the transaction.
+     * persistence, one current answer per pair. The user's star is carried
+     * onto the new row, so re-assessment never silently unsaves it. Callers
+     * own the transaction.
      */
     private long supersedeAndInsert(RecommendationRecord rec) {
-        db.update(
+        boolean starred = db.queryForList(
                 "UPDATE recommendations SET status='SUPERSEDED' "
-                        + "WHERE user_id=? AND candidate_product_id=? AND status='ACTIVE'",
-                rec.userId(), rec.candidateProductId());
+                        + "WHERE user_id=? AND candidate_product_id=? AND status='ACTIVE' "
+                        + "RETURNING starred",
+                Boolean.class,
+                rec.userId(), rec.candidateProductId())
+                .contains(Boolean.TRUE);
 
         return db.queryForObject(
                 "INSERT INTO recommendations "
                         + "(user_id, current_device_id, candidate_product_id, trigger_event_id, verdict, "
-                        + "confidence, input_snapshot, factor_analysis, reasoning, ai_model, prompt_version) "
-                        + "VALUES (?,?,?,?,?,?,?::jsonb,?::jsonb,?,?,?) RETURNING id",
+                        + "confidence, input_snapshot, factor_analysis, reasoning, ai_model, prompt_version, "
+                        + "starred) "
+                        + "VALUES (?,?,?,?,?,?,?::jsonb,?::jsonb,?,?,?,?) RETURNING id",
                 Long.class,
                 rec.userId(),
                 rec.currentDeviceId(),
@@ -240,7 +266,8 @@ public class RecommendationRepository {
                 json.writeValueAsString(rec.factorAnalysis()),
                 rec.reasoning(),
                 rec.aiModel(),
-                rec.promptVersion());
+                rec.promptVersion(),
+                starred);
     }
 
     private int deleteDropped(long currentDeviceId, Collection<Long> shortlistedProductIds) {
