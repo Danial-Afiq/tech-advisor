@@ -139,14 +139,16 @@ and helpers file, then components.
 ### `components/recommendations/` — recommendation domain
 
 `RecommendationCard` presents one persisted recommendation in the standard
-dashboard format: owned device, suggested product, Latest price, deterministic verdict,
+dashboard format: owned device, suggested product, Indicative price, deterministic verdict,
 owner evidence grade and reasoning. `recommendationPresentation.ts` owns the
 readable labels, themed badge styles and attention behaviour for the four
-canonical verdicts, plus currency-aware latest-price formatting. `types.ts`
+canonical verdicts, plus stored-currency-aware indicative-price formatting. `types.ts`
 defines the API-aligned recommendation, verdict
 and evidence-grade types. Keep verdict and evidence grade visually separate;
 display `-` as "Not enough evidence yet" and `null` as no available evidence
-grade.
+grade. The dashboard renders the pricing limitation once near the recommendation
+controls, never once per card: "Prices are indicative and may vary by storage
+configuration, retailer, region and availability."
 
 `RecommendationFilterDropdown` supplies the dashboard's owned-device select,
 verdict checkboxes and evidence-grade checkboxes. `types.ts` defines filter
@@ -257,7 +259,9 @@ as one deliberate change across all components, not piecemeal.
   not "Add Device").
 - **Money** uses a domain formatter, never inline formatting: device-domain SGD
   amounts go through `money()` → `S$1,000`; recommendation API prices go through
-  `formatRecommendationPrice()` because each row carries its own currency.
+  `formatRecommendationPrice()` because each row carries its own stored currency.
+  This formatting is not currency conversion: SGD normalization is planned
+  separately and the UI must not relabel foreign-currency values as SGD.
 - **Dates** go through `formatDate()`.
 - Buttons: one `primary` action per area; `ghost` for cancel/back/secondary
   navigation; `danger` only for destructive actions. Icon glyphs in labels use
@@ -302,8 +306,11 @@ as one deliberate change across all components, not piecemeal.
   sort; price ascending, price descending and newest-first are also available.
   Sort is URL-backed, survives refreshes and does not reset the local filters;
   filters preserve the server order. The result count, Filters and Sort controls
-  share one responsive toolbar. Overview cards and notifications retain totals
-  for all active recommendations. See root §23.4 and §26.4.
+  share one responsive toolbar. Recommendation cards label the representative
+  model-level amount "Indicative price", preserve "Price unavailable", and the
+  toolbar displays the pricing disclaimer once per populated page. Overview
+  cards and notifications retain totals for all active recommendations. See
+  root §23.4, §26.4 and §27.9.
 - Signed in, the device form suggests smartphones from the catalogue as the
   user types a model name. Picking one sends its `productId` and prefills the
   spec fields. Only specs the user changes are saved as `specOverrides`,

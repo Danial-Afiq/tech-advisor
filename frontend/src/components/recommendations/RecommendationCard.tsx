@@ -56,7 +56,7 @@ export function RecommendationCard({
           </p>
 
           <p className="mt-3 mb-0 text-[11px] font-bold tracking-[0.12em] text-[#9fb1c9] uppercase">
-            Latest price
+            Indicative price
           </p>
 
           <p className="mt-1 mb-0 text-[18px] font-bold text-[#a998ff]">

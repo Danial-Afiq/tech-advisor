@@ -445,6 +445,18 @@ describe("DashboardPage", () => {
         screen.getByText(/1,299\.00/)
     ).toBeInTheDocument();
 
+    const priceDisclaimer =
+      "Prices are indicative and may vary by storage configuration, retailer, region and availability.";
+
+    expect(screen.getAllByText(priceDisclaimer)).toHaveLength(1);
+    expect(
+      within(
+        screen.getByRole("region", {
+          name: "Recommendation controls",
+        })
+      ).getByText(priceDisclaimer)
+    ).toBeInTheDocument();
+
     const summary = screen.getByRole("region", {
       name: "Recommendation summary",
     });

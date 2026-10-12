@@ -53,7 +53,7 @@ describe("RecommendationCard", () => {
     ).toBeInTheDocument();
 
     expect(
-      screen.getByText("Latest price")
+      screen.getByText("Indicative price")
     ).toBeInTheDocument();
   });
 

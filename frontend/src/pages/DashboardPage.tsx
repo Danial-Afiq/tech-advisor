@@ -284,6 +284,10 @@ export default function DashboardPage() {
               />
             </label>
           </div>
+
+          <p className="m-0 basis-full text-[11px] leading-[1.5] text-[#8fa0b8]">
+            Prices are indicative and may vary by storage configuration, retailer, region and availability.
+          </p>
         </section>
       )}
 
