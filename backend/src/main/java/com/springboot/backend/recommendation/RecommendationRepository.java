@@ -89,8 +89,10 @@ public class RecommendationRepository {
 
     public List<DashboardRecommendationResponse>
         findActiveDashboardRecommendationsByUserId(
-                long userId) {
+                long userId, RecommendationSort sort) {
 
+    // sort.orderBy() is a fixed whitelisted fragment (never request text), so
+    // concatenating it is safe; ORDER BY cannot take bound parameters.
     String sql = """
             SELECT
                 r.id AS recommendation_id,
@@ -140,10 +142,7 @@ public class RecommendationRepository {
             ) latest_price ON TRUE
             WHERE r.user_id = ?
                 AND r.status = 'ACTIVE'
-            ORDER BY
-                r.created_at DESC,
-                r.id DESC
-            """;
+            ORDER BY\s""" + sort.orderBy();
 
     return db.query(
             sql,

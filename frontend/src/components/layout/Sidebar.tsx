@@ -5,7 +5,6 @@ import type { ShellUser } from "./ProfileCard";
 export type NavKey =
   | "dashboard"
   | "devices"
-  | "recommendations"
   | "activity"
   | "settings"
   | "ingestion"
@@ -16,7 +15,6 @@ export type NavItem = { key: NavKey; icon: string; label: string };
 const USER_NAV_ITEMS: NavItem[] = [
   { key: "dashboard", icon: "⌂", label: "Dashboard" },
   { key: "devices", icon: "▣", label: "My devices" },
-  { key: "recommendations", icon: "✦", label: "Recommendations" },
   { key: "activity", icon: "↺", label: "Activity" },
   { key: "settings", icon: "⚙", label: "Settings" },
 ];

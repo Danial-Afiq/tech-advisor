@@ -86,13 +86,36 @@ export function Select({
   options,
   className = "",
   ...rest
-}: SelectHTMLAttributes<HTMLSelectElement> & { options: readonly string[] }) {
+}: SelectHTMLAttributes<HTMLSelectElement> & {
+  options: readonly (string | { value: string; label: string })[];
+}) {
   return (
     <select className={`select ${fieldClass} ${className}`} {...rest}>
-      {options.map((option) => (
-        <option key={option}>{option}</option>
-      ))}
+      {options.map((option) => {
+        const { value, label } = typeof option === "string"
+          ? { value: option, label: option }
+          : option;
+        return <option key={value} value={value}>{label}</option>;
+      })}
     </select>
+  );
+}
+
+/** Labelled square checkbox for selecting independent options. */
+export function Checkbox({
+  children,
+  className = "",
+  ...rest
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "type">) {
+  return (
+    <label className="flex cursor-pointer items-center gap-[10px] text-[13px] text-[#c6d1df]">
+      <input
+        type="checkbox"
+        className={`checkbox checkbox-primary size-[18px] shrink-0 rounded-none ${className}`}
+        {...rest}
+      />
+      {children}
+    </label>
   );
 }
 
