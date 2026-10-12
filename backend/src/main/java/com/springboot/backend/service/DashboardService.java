@@ -4,6 +4,7 @@ import com.springboot.backend.dto.DashboardRecommendationResponse;
 import com.springboot.backend.exception.ResourceNotFoundException;
 import com.springboot.backend.model.User;
 import com.springboot.backend.recommendation.RecommendationRepository;
+import com.springboot.backend.recommendation.RecommendationSort;
 import com.springboot.backend.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,7 +30,8 @@ public class DashboardService {
 
     @Transactional(readOnly = true)
     public List<DashboardRecommendationResponse>
-            getRecommendations(String email) {
+            getRecommendations(
+                    String email, RecommendationSort sort) {
 
         User user = userRepository
                 .findByEmailIgnoreCase(email)
@@ -41,7 +43,8 @@ public class DashboardService {
 
         return recommendationRepository
                 .findActiveDashboardRecommendationsByUserId(
-                        user.getId()
+                        user.getId(),
+                        sort
                 );
     }
 }

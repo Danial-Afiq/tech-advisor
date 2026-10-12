@@ -3,7 +3,9 @@ package com.springboot.backend.controller;
 import com.springboot.backend.config.OpenApiConfig;
 import com.springboot.backend.dto.DashboardRecommendationResponse;
 import com.springboot.backend.service.DashboardService;
+import com.springboot.backend.recommendation.RecommendationSort;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.ArraySchema;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -15,6 +17,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -67,17 +70,44 @@ public class DashboardController {
                     description =
                             "Bearer token is missing or invalid",
                     content = @Content
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description =
+                            "Unknown sort value",
+                    content = @Content
             )
     })
     public ResponseEntity<
             List<DashboardRecommendationResponse>>
             getRecommendations(
-                    Authentication authentication) {
+                    Authentication authentication,
+                    @Parameter(
+                            description =
+                                    "Sort order. Defaults to "
+                                            + "relevance (verdict tier, "
+                                            + "then upgrade score). "
+                                            + "Items without a price "
+                                            + "sort last in both "
+                                            + "price orders.",
+                            schema = @Schema(
+                                    allowableValues = {
+                                            "relevance",
+                                            "price_asc",
+                                            "price_desc",
+                                            "recency"
+                                    },
+                                    defaultValue = "relevance"
+                            )
+                    )
+                    @RequestParam(required = false)
+                    String sort) {
 
         List<DashboardRecommendationResponse>
                 recommendations =
                 dashboardService.getRecommendations(
-                        authentication.getName()
+                        authentication.getName(),
+                        RecommendationSort.parse(sort)
                 );
 
         return ResponseEntity.ok(recommendations);
