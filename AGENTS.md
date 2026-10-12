@@ -2048,6 +2048,27 @@ never being provisioned, not a missing sink anymore.
   `camera`, `name`, `manufacturer_name`) are confirmed against a real
   captured API response, not guessed — see `mobileapi-response.json` on the
   ticket's branch history.
+- **`hardware`/`storage` text uses U+00A0 (non-breaking space) instead of a
+  plain space for a large share of real devices** — found via a Smartphone
+  DB Backfill snapshot run (~50% of a real 6,633-device pull had a corrupted
+  chipset and a null `ram_gb`/`storage_gb` from this, not from genuinely
+  blank source text as first assumed). Plain `\s` is ASCII-only in Java and
+  silently matches nothing against U+00A0, so `RAM_GB`/`STORAGE_GB` failed
+  to match at all. Fixed with `Pattern.UNICODE_CHARACTER_CLASS` on every
+  `MobileApiFieldExtractor` pattern that uses `\s` — the same fix already
+  proven here for `misc.price`'s U+2009 (thin space) case just below.
+  **Found, not fixed in the same pass:** `chipset()` only strips one RAM
+  mention; a device whose hardware text lists multiple RAM configurations
+  (e.g. "3GB, 4GB RAM, Unisoc Tiger T312" — ships in both) still leaves a
+  malformed chipset value. Confirmed real but low-prevalence (19/6,633 in
+  the same snapshot, ~0.3%) — a `ramOptionsGb()` analogous to
+  `storageOptionsGb()` is the likely real fix, not attempted here.
+- **`releaseDate()` is fully implemented (parses the real `description`
+  field's "Announced Sep 2025" text) but never called** — neither
+  `MobileApiSmartphoneSource.toPayload()` invokes it nor does
+  `Payload.Specifications` have a field to carry it, so `products
+  .release_date` is `NULL` on every row this source has ever written. Built,
+  tested, not wired in — found via the same snapshot run, not fixed here.
 - MobileAPI.dev isn't in the candidate list below (this section predates
   that decision) — added here for traceability, not because §17.1's "not
   fully confirmed" status has changed.

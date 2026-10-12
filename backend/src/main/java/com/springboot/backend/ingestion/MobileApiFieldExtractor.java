@@ -25,11 +25,30 @@ import java.util.regex.Pattern;
 public final class MobileApiFieldExtractor {
     private MobileApiFieldExtractor() {}
 
-    private static final Pattern RAM_GB = Pattern.compile("(\\d+)\\s*GB\\s*RAM", Pattern.CASE_INSENSITIVE);
-    private static final Pattern STORAGE_GB = Pattern.compile("(\\d+)\\s*GB", Pattern.CASE_INSENSITIVE);
-    private static final Pattern BATTERY_MAH = Pattern.compile("(\\d+)\\s*mAh", Pattern.CASE_INSENSITIVE);
-    private static final Pattern CAMERA_MP = Pattern.compile("(\\d+)\\s*MP", Pattern.CASE_INSENSITIVE);
-    private static final Pattern REFRESH_HZ = Pattern.compile("(\\d+)\\s*Hz", Pattern.CASE_INSENSITIVE);
+    // UNICODE_CHARACTER_CLASS on every pattern below that uses \s: a real, live-confirmed
+    // gap found via a Smartphone DB Backfill snapshot run, not hypothesized. MobileAPI's
+    // "hardware"/"storage" text uses U+00A0 (non-breaking space) instead of a plain space for
+    // a large share of real devices (confirmed: 19/50 devices on one real `by-year` page) -
+    // e.g. "8 GB RAM, Unisoc T7510". Plain \s is ASCII-only in Java and matches nothing
+    // against U+00A0, so RAM_GB/STORAGE_GB's match fails outright - not a partial/wrong match,
+    // no match at all, silently returning empty for ramGb()/storageGb() AND leaving the whole
+    // unstripped "8 GB RAM, Unisoc T7510" string behind as chipset(), since chipset()'s
+    // "remove whatever RAM_GB matched" logic has nothing to remove. Confirmed live against a
+    // real snapshot: ~50% of 6,633 pulled devices had a corrupted chipset value and a
+    // null ram_gb/storage_gb from this exact cause, not from genuinely blank source text as
+    // first assumed. The fix is the same one already proven for misc.price's U+2009 thin-space
+    // case below - UNICODE_CHARACTER_CLASS makes \s Unicode-aware (includes U+00A0), so this
+    // was always a known fix pattern for this file, just not yet applied to these.
+    private static final Pattern RAM_GB = Pattern.compile(
+            "(\\d+)\\s*GB\\s*RAM", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
+    private static final Pattern STORAGE_GB = Pattern.compile(
+            "(\\d+)\\s*GB", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
+    private static final Pattern BATTERY_MAH = Pattern.compile(
+            "(\\d+)\\s*mAh", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
+    private static final Pattern CAMERA_MP = Pattern.compile(
+            "(\\d+)\\s*MP", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
+    private static final Pattern REFRESH_HZ = Pattern.compile(
+            "(\\d+)\\s*Hz", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
     // UNICODE_CHARACTER_CLASS: real misc.price text uses U+2009 (thin space) between the
     // currency symbol and the amount (e.g. "£ 145.00 / € 167.00 / $ 121.87") -
     // plain \s is ASCII-only in Java and silently matches nothing against that, dropping a
@@ -63,16 +82,22 @@ public final class MobileApiFieldExtractor {
     // returned 299 (the digits after the comma only) because the old \d++ stopped there and
     // the lookbehind let find() retry from the first digit after the comma. Now shares AMOUNT.
     private static final Pattern PRICE_CODE = Pattern.compile(
-            "(?<!\\d)" + AMOUNT + "\\s*+(USD|EUR|GBP|INR)", Pattern.CASE_INSENSITIVE);
-    private static final Pattern CPU_GHZ = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*GHz", Pattern.CASE_INSENSITIVE);
-    private static final Pattern DISPLAY_INCHES = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*inches?", Pattern.CASE_INSENSITIVE);
-    private static final Pattern WEIGHT_G = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*g\\b", Pattern.CASE_INSENSITIVE);
-    private static final Pattern QUARTER_YEAR = Pattern.compile("([1-4])Q\\s*(\\d{4})");
+            "(?<!\\d)" + AMOUNT + "\\s*+(USD|EUR|GBP|INR)",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
+    private static final Pattern CPU_GHZ = Pattern.compile(
+            "(\\d+(?:\\.\\d+)?)\\s*GHz", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
+    private static final Pattern DISPLAY_INCHES = Pattern.compile(
+            "(\\d+(?:\\.\\d+)?)\\s*inches?", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
+    private static final Pattern WEIGHT_G = Pattern.compile(
+            "(\\d+(?:\\.\\d+)?)\\s*g\\b", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
+    private static final Pattern QUARTER_YEAR = Pattern.compile(
+            "([1-4])Q\\s*(\\d{4})", Pattern.UNICODE_CHARACTER_CLASS);
     private static final Pattern ANNOUNCED_MONTH_YEAR = Pattern.compile(
-            "Announced\\s+([A-Za-z]+)\\s+(\\d{4})", Pattern.CASE_INSENSITIVE);
+            "Announced\\s+([A-Za-z]+)\\s+(\\d{4})",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
     // Anchored at segment start (see storageOptionsGb) rather than scanning anywhere in it.
     private static final Pattern STORAGE_TOKEN = Pattern.compile(
-            "^(\\d+(?:\\.\\d+)?)\\s*(GB|TB)", Pattern.CASE_INSENSITIVE);
+            "^(\\d+(?:\\.\\d+)?)\\s*(GB|TB)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
 
     /** Base object's "hardware" field, e.g. "Snapdragon 8 Gen 3, 8GB RAM". */
     public static Optional<BigDecimal> ramGb(String hardwareText) { return firstMatch(hardwareText, RAM_GB); }

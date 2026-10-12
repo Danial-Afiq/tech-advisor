@@ -38,6 +38,32 @@ class MobileApiFieldExtractorTests {
         assertTrue(MobileApiFieldExtractor.chipset(null).isEmpty());
     }
 
+    // Real text pulled directly from a live GET /devices/by-year/ page (Smartphone DB Backfill
+    // ticket) - MobileAPI uses U+00A0 (non-breaking space) instead of a plain space between the
+    // RAM figure and "GB" for a large share of real devices (confirmed live: 19/50 on one real
+    // page). Plain \s is ASCII-only in Java and matches nothing against U+00A0, so RAM_GB's
+    // match failed outright - not a partial match, no match at all - silently returning empty
+    // for ramGb()/storageGb() and leaving the whole unstripped string as chipset(). Confirmed
+    // against a real 6,633-device snapshot: ~50% had a corrupted chipset and a null ram_gb from
+    // this exact cause, not from genuinely blank source text as first assumed.
+    @Test void ramGbMatchesAcrossARealNonBreakingSpaceNotJustAPlainOne() {
+        assertEquals(new BigDecimal("8"), MobileApiFieldExtractor.ramGb("8 GB RAM, Unisoc T7510").get());
+    }
+
+    @Test void storageGbMatchesAcrossARealNonBreakingSpaceNotJustAPlainOne() {
+        assertEquals(new BigDecimal("128"), MobileApiFieldExtractor.storageGb("128 GB").get());
+    }
+
+    @Test void storageOptionsGbMatchesAcrossARealNonBreakingSpaceNotJustAPlainOne() {
+        assertEquals(java.util.List.of(128), MobileApiFieldExtractor.storageOptionsGb("128 GB"));
+    }
+
+    @Test void chipsetStripsARealNonBreakingSpaceRamMentionCleanly() {
+        // Real AGM X5 hardware text - before the UNICODE_CHARACTER_CLASS fix this returned the
+        // whole unstripped "8 GB RAM, Unisoc T7510" string, since RAM_GB never matched at all.
+        assertEquals("Unisoc T7510", MobileApiFieldExtractor.chipset("8 GB RAM, Unisoc T7510").get());
+    }
+
     @Test void extractsStorageBatteryAndCamera() {
         assertEquals(new BigDecimal("256"), MobileApiFieldExtractor.storageGb("256GB").get());
         assertEquals(new BigDecimal("5000"), MobileApiFieldExtractor.batteryMah("5000 mAh").get());
