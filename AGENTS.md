@@ -2053,16 +2053,28 @@ never being provisioned, not a missing sink anymore.
   DB Backfill snapshot run (~50% of a real 6,633-device pull had a corrupted
   chipset and a null `ram_gb`/`storage_gb` from this, not from genuinely
   blank source text as first assumed). Plain `\s` is ASCII-only in Java and
-  silently matches nothing against U+00A0, so `RAM_GB`/`STORAGE_GB` failed
-  to match at all. Fixed with `Pattern.UNICODE_CHARACTER_CLASS` on every
-  `MobileApiFieldExtractor` pattern that uses `\s` — the same fix already
-  proven here for `misc.price`'s U+2009 (thin space) case just below.
-  **Found, not fixed in the same pass:** `chipset()` only strips one RAM
-  mention; a device whose hardware text lists multiple RAM configurations
-  (e.g. "3GB, 4GB RAM, Unisoc Tiger T312" — ships in both) still leaves a
-  malformed chipset value. Confirmed real but low-prevalence (19/6,633 in
-  the same snapshot, ~0.3%) — a `ramOptionsGb()` analogous to
-  `storageOptionsGb()` is the likely real fix, not attempted here.
+  silently matches nothing against U+00A0. Fixed with
+  `Pattern.UNICODE_CHARACTER_CLASS` on every `MobileApiFieldExtractor`
+  pattern that uses `\s` — the same fix already proven here for
+  `misc.price`'s U+2009 (thin space) case just below.
+- **`chipset()`/`ramGb()` redesigned around a single `RAM_TOKEN`, not
+  `RAM_GB`.** Fixing the U+00A0 gap above exposed three further real
+  patterns a "require the literal word RAM" match never covered, found
+  against the same 6,633-device pull (chipset still contaminated on
+  ~20% of rows even once U+00A0 stopped being the blocker): (1) multiple
+  comma-separated RAM figures before one shared trailing "RAM"
+  ("3GB, 4GB RAM, Unisoc...") — only the one next to the word matched and
+  got removed, leaving the others as debris; (2) RAM given in MB, not GB
+  ("512 MB RAM") — the unit literal was GB-only; (3) the single biggest
+  contributor — RAM stated with no "RAM" word at all
+  ("4 GB, MediaTek Dimensity 6300 MT6835T"). `RAM_TOKEN` drops the
+  required word (the "hardware" field is RAM+chipset only, by the same
+  convention storage/battery have their own separate fields, so a bare
+  figure reliably means RAM even unlabeled) and `chipset()` now
+  `replaceAll`s every match instead of removing one `find()`, with comma
+  cleanup running on the whole string rather than only the ends.
+  `ramGb()` converts an MB match to GB, rounded to the nearest whole
+  number (ram_gb is an INTEGER column).
 - **`releaseDate()` is fully implemented (parses the real `description`
   field's "Announced Sep 2025" text) but never called** — neither
   `MobileApiSmartphoneSource.toPayload()` invokes it nor does

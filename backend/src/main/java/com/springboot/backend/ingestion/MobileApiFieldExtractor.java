@@ -39,8 +39,22 @@ public final class MobileApiFieldExtractor {
     // first assumed. The fix is the same one already proven for misc.price's U+2009 thin-space
     // case below - UNICODE_CHARACTER_CLASS makes \s Unicode-aware (includes U+00A0), so this
     // was always a known fix pattern for this file, just not yet applied to these.
-    private static final Pattern RAM_GB = Pattern.compile(
-            "(\\d+)\\s*GB\\s*RAM", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
+    // Smartphone DB Backfill ticket: a real 6,670-device pull showed the "RAM word required"
+    // shape above still left ~20% of chipsets contaminated, via three distinct real patterns
+    // the original RAM_GB never covered: (1) multiple comma-separated RAM figures before a
+    // single trailing "RAM" ("3GB, 4GB RAM, Unisoc..." - only the last one matched and got
+    // removed, leaving "3GB, , Unisoc..." behind); (2) RAM given in MB, not GB ("512 MB RAM" -
+    // the pattern only ever recognized the literal unit "GB"); (3) the single biggest
+    // contributor - RAM stated with no "RAM" word at all ("4 GB, MediaTek Dimensity 6300
+    // MT6835T"), which never matched a pattern that required that word. All three are real,
+    // confirmed live, not hypothesized. "RAM" is the single field doing this job now,
+    // deliberately TOKEN-shaped (one figure, not a whole-string strip) rather than anchored to
+    // one position: MobileAPI's "hardware" field is RAM+chipset only, by the same convention
+    // storage/battery have their own separate fields - so chipset() below strips EVERY
+    // RAM_TOKEN match (replaceAll, not find-once), handling any number of RAM mentions in any
+    // position, with or without the "RAM" word, with or without a separator between them.
+    private static final Pattern RAM_TOKEN = Pattern.compile(
+            "(\\d+(?:\\.\\d+)?)\\s*(GB|MB)(?:\\s*RAM)?", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
     private static final Pattern STORAGE_GB = Pattern.compile(
             "(\\d+)\\s*GB", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
     private static final Pattern BATTERY_MAH = Pattern.compile(
@@ -99,8 +113,26 @@ public final class MobileApiFieldExtractor {
     private static final Pattern STORAGE_TOKEN = Pattern.compile(
             "^(\\d+(?:\\.\\d+)?)\\s*(GB|TB)", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
 
-    /** Base object's "hardware" field, e.g. "Snapdragon 8 Gen 3, 8GB RAM". */
-    public static Optional<BigDecimal> ramGb(String hardwareText) { return firstMatch(hardwareText, RAM_GB); }
+    /**
+     * Base object's "hardware" field, e.g. "Snapdragon 8 Gen 3, 8GB RAM" - also matches a
+     * bare "4 GB" with no "RAM" word, and an MB-denominated figure (converted to GB, rounded
+     * to the nearest whole number since ram_gb is an INTEGER column with no fractional
+     * representation - a sub-512MB device rounds to 0 rather than silently returning empty
+     * the way it did before RAM_TOKEN recognized MB at all).
+     */
+    public static Optional<BigDecimal> ramGb(String hardwareText) {
+        if (hardwareText == null) return Optional.empty();
+        Matcher m = RAM_TOKEN.matcher(hardwareText);
+        if (!m.find()) return Optional.empty();
+        try {
+            BigDecimal value = new BigDecimal(m.group(1).replace(",", ""));
+            if (m.group(2).equalsIgnoreCase("MB"))
+                value = value.divide(new BigDecimal(1024), 0, java.math.RoundingMode.HALF_UP);
+            return Optional.of(value);
+        } catch (NumberFormatException e) {
+            return Optional.empty();
+        }
+    }
 
     /** Base object's "storage" field, e.g. "256GB". Takes the first (base) tier. */
     public static Optional<BigDecimal> storageGb(String storageText) { return firstMatch(storageText, STORAGE_GB); }
@@ -112,23 +144,28 @@ public final class MobileApiFieldExtractor {
     public static Optional<BigDecimal> cameraMp(String cameraText) { return firstMatch(cameraText, CAMERA_MP); }
 
     /**
-     * Base object's "hardware" field with the RAM portion removed, e.g.
+     * Base object's "hardware" field with every RAM mention removed, e.g.
      * "Snapdragon 8 Gen 3, 8GB RAM" -> "Snapdragon 8 Gen 3". Some real
      * devices have no chipset recorded at all (just "2 GB RAM, ") -> empty.
      *
      * RAM can lead OR trail the chipset - confirmed live (ticket 1.8, GET
      * /devices/43/): a real iPhone 17 Pro gives "12GB RAM, Apple A19 Pro",
-     * RAM first. Removing only a RAM *prefix* (the original form of this
-     * method) silently returned empty for that real device - it never
-     * looked at what came after the match. Removing the matched span
-     * itself, from wherever it falls, handles both real orderings.
+     * RAM first - and there can be more than one RAM mention, with or
+     * without a separator between them ("3GB, 4GB RAM, Unisoc...",
+     * "4 GB6 GB, MediaTek..."), confirmed live against a real 6,670-device
+     * pull. replaceAll (every RAM_TOKEN match, not just the first) handles
+     * any count/position/spacing; comma cleanup then runs on the whole
+     * string (split/trim/drop-empty/rejoin) rather than only the ends, so
+     * an orphaned interior ", ," left by removing two separate mentions
+     * collapses too - stripping one match and trimming only the ends (the
+     * original form of this method) left exactly that kind of debris behind.
      */
     public static Optional<String> chipset(String hardwareText) {
         if (hardwareText == null) return Optional.empty();
-        Matcher m = RAM_GB.matcher(hardwareText);
-        String remainder = (m.find() ? hardwareText.substring(0, m.start()) + hardwareText.substring(m.end()) : hardwareText).strip();
-        while (remainder.startsWith(",")) remainder = remainder.substring(1).strip();
-        while (remainder.endsWith(",")) remainder = remainder.substring(0, remainder.length() - 1).strip();
+        String stripped = RAM_TOKEN.matcher(hardwareText).replaceAll("");
+        String remainder = java.util.Arrays.stream(stripped.split(","))
+                .map(String::strip).filter(segment -> !segment.isEmpty())
+                .collect(java.util.stream.Collectors.joining(", "));
         return remainder.isEmpty() ? Optional.empty() : Optional.of(remainder);
     }
 

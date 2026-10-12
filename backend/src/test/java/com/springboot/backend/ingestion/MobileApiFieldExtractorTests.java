@@ -64,6 +64,49 @@ class MobileApiFieldExtractorTests {
         assertEquals("Unisoc T7510", MobileApiFieldExtractor.chipset("8 GB RAM, Unisoc T7510").get());
     }
 
+    // Real AGM A10 hardware text (Smartphone DB Backfill ticket, live pull) - two RAM figures,
+    // only the second carrying the literal "RAM" word. Before this fix, only "4GB RAM" matched
+    // and got removed, leaving "3GB, , Unisoc Tiger T312" behind (an orphaned leading figure
+    // and a double comma) - replaceAll-strips-every-match now removes both.
+    @Test void chipsetStripsMultipleRamMentionsNotJustTheOneCarryingTheRamWord() {
+        assertEquals("Unisoc Tiger T312", MobileApiFieldExtractor.chipset("3GB, 4GB RAM, Unisoc Tiger T312").get());
+    }
+
+    // Real chipset found via the same pull with no separator at all between two RAM figures -
+    // replaceAll's non-overlapping find() still locates and removes both independently.
+    @Test void chipsetStripsRamMentionsEvenWithNoSeparatorBetweenThem() {
+        assertEquals("MediaTek Dimensity 6300 MT6835T",
+                MobileApiFieldExtractor.chipset("4 GB6 GB, MediaTek Dimensity 6300 MT6835T").get());
+    }
+
+    // Real chipset found via the same pull with NO "RAM" word at all - the single biggest real
+    // contributor to chipset contamination in a live 6,670-device pull, more common than either
+    // of the two cases above. The "hardware" field is RAM+chipset only (storage/battery have
+    // their own separate fields), so a bare "4 GB" here reliably means RAM even unlabeled.
+    @Test void chipsetStripsARamFigureWithNoRamWordAtAll() {
+        assertEquals("MediaTek Dimensity 6300 MT6835T",
+                MobileApiFieldExtractor.chipset("4 GB, MediaTek Dimensity 6300 MT6835T").get());
+    }
+
+    // Real chipset found via the same pull with RAM given in MB, not GB - RAM_TOKEN's original
+    // GB-only unit literal never matched this at all.
+    @Test void chipsetStripsAMegabyteRamMention() {
+        assertEquals("MediaTek MT6731", MobileApiFieldExtractor.chipset("512 MB RAM, MediaTek MT6731").get());
+    }
+
+    @Test void ramGbMatchesABareFigureWithNoRamWordAtAll() {
+        assertEquals(new BigDecimal("4"),
+                MobileApiFieldExtractor.ramGb("4 GB, MediaTek Dimensity 6300 MT6835T").get());
+    }
+
+    @Test void ramGbConvertsMegabytesToGigabytesRoundingToTheNearestWholeNumber() {
+        // ram_gb is an INTEGER column - 512MB rounds up to 1GB rather than silently
+        // disappearing as a null the way it did before RAM_TOKEN recognized MB at all.
+        assertEquals(new BigDecimal("1"), MobileApiFieldExtractor.ramGb("512 MB RAM, MediaTek MT6731").get());
+        // Confirms rounding, not truncation: 64MB/1024 = 0.0625, rounds down to 0.
+        assertEquals(new BigDecimal("0"), MobileApiFieldExtractor.ramGb("64 MB RAM, Spreadtrum SC6531D").get());
+    }
+
     @Test void extractsStorageBatteryAndCamera() {
         assertEquals(new BigDecimal("256"), MobileApiFieldExtractor.storageGb("256GB").get());
         assertEquals(new BigDecimal("5000"), MobileApiFieldExtractor.batteryMah("5000 mAh").get());
