@@ -3359,7 +3359,9 @@ including explicit fallbacks for missing price/reasoning and `-`/`null` evidence
 - `RecommendationCard` shows a star toggle (`aria-pressed`) when the page passes
   `onToggleStar`. Starring is immediate; **unstarring asks for confirmation** in a
   shared `Modal` first. Success and failure are reported with toasts, and a failed
-  request leaves the star unchanged.
+  request leaves the star unchanged. A `404` means a re-assessment replaced the row
+  (new id) while the page was open, so the dashboard refetches the list and asks
+  the user to try again; the replacement row already carries any earlier star.
 - `PUT /api/dashboard/recommendations/{id}/star` stars and
   `DELETE /api/dashboard/recommendations/{id}/star` unstars; both return `204`, are
   idempotent, and return `404` unless the id is one of the caller's `ACTIVE`

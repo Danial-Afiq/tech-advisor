@@ -850,15 +850,37 @@ describe("DashboardPage", () => {
 
     it("keeps the star unselected and explains when saving fails", async () => {
       mocks.setRecommendationStarred.mockRejectedValue(
-        new ApiError(404, "Recommendation not found")
+        new ApiError(500, "Something went wrong")
       );
       const user = await renderStarred();
 
       await user.click(starFor(/^Save Samsung Galaxy S26/));
 
       expect(await screen.findByText("Couldn’t save recommendation")).toBeInTheDocument();
-      expect(screen.getByText("Recommendation not found")).toBeInTheDocument();
+      expect(screen.getByText("Something went wrong")).toBeInTheDocument();
       expect(starFor(/^Save Samsung Galaxy S26/)).toHaveAttribute("aria-pressed", "false");
+      expect(mocks.listDashboardRecommendations).toHaveBeenCalledTimes(1);
+    });
+
+    it("reloads the dashboard when the recommendation was replaced in the background", async () => {
+      mocks.setRecommendationStarred.mockRejectedValue(
+        new ApiError(404, "Recommendation not found")
+      );
+      const user = await renderStarred([recommended]);
+      // The re-assessed row has a new id and kept the user's earlier star.
+      mocks.listDashboardRecommendations.mockResolvedValue([
+        { ...recommended, recommendationId: 99, starred: true },
+      ]);
+
+      await user.click(starFor(/^Save Samsung Galaxy S26/));
+
+      expect(await screen.findByText("Recommendation was just updated")).toBeInTheDocument();
+      expect(mocks.listDashboardRecommendations).toHaveBeenCalledTimes(2);
+      expect(mocks.listDashboardRecommendations).toHaveBeenLastCalledWith("relevance");
+      expect(
+        await screen.findByRole("button", { name: /^Remove Samsung Galaxy S26/ })
+      ).toHaveAttribute("aria-pressed", "true");
+      expect(screen.queryByText("Couldn’t save recommendation")).not.toBeInTheDocument();
     });
   });
 });

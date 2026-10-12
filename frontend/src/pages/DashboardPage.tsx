@@ -63,6 +63,8 @@ export default function DashboardPage() {
     () => new Set()
   );
   const { toasts, pushToast } = useToasts();
+  // Bumped to refetch the current sort, e.g. after a row was replaced server-side.
+  const [reloadCount, setReloadCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,7 +98,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [navigate, sort]);
+  }, [navigate, sort, reloadCount]);
 
   if (!session) {
     return null;
@@ -169,6 +171,22 @@ export default function DashboardPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         void navigate(LOGIN_PATH, { replace: true });
+        return;
+      }
+
+      /*
+       * A re-assessment replaces the row (new id) while the page is open, so
+       * the id we hold no longer exists. Reload to pick up the replacement,
+       * which keeps any star the user already had.
+       */
+      if (err instanceof ApiError && err.status === 404) {
+        setRefreshing(true);
+        setReloadCount((count) => count + 1);
+        pushToast(
+          "Recommendation was just updated",
+          "Your dashboard has been refreshed with the latest results. Please try again.",
+          "!"
+        );
         return;
       }
 
