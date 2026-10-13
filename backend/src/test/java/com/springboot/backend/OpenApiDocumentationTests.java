@@ -180,6 +180,8 @@ class OpenApiDocumentationTests {
                 .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.satisfactionScore.maximum").value(100))
                 .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.budget.minimum").value(0))
                 .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.currency.pattern").value("[A-Z]{3}"))
+                .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.budget").exists())
+                .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.currency").exists())
                 .andExpect(jsonPath("$.components.schemas.LoginResponse.properties.role.enum").isArray());
     }
 }

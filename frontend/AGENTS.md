@@ -118,7 +118,7 @@ them. Never show placeholder numbers as if they were real.
 - `client.ts` has `apiFetch`, which adds the bearer token and turns backend
   error bodies into an `ApiError` with a readable message.
 - `auth.ts` has `signIn` / `signOut`.
-- `devices.ts` has `listDevices` / `createDevice`.
+- `devices.ts` has `listDevices` / `createDevice` / `updateDevice` / `deleteDevice`.
 - `catalogue.ts` has `listSmartphones` (`GET /api/catalogue/smartphones`).
 - `session.ts` stores the JWT.
 
@@ -259,11 +259,11 @@ as one deliberate change across all components, not piecemeal.
 
 - **Sentence case** for everything: headings, buttons and labels ("Add device",
   not "Add Device").
-- **Money** uses a domain formatter, never inline formatting: device-domain SGD
-  amounts go through `money()` → `S$1,000`; recommendation API prices go through
-  `formatRecommendationPrice()` because each row carries its own stored currency.
-  This formatting is not currency conversion: SGD normalization is planned
-  separately and the UI must not relabel foreign-currency values as SGD.
+- **Money** always uses a domain formatter, never inline formatting:
+  - Device budgets use `money(amount, currency?)` → `S$1,000` (SGD or unset) or `USD 1,000`.
+  - `budgetLabel(prefs)` shows "No budget set" when no device budget exists.
+  - Recommendation API prices use `formatRecommendationPrice()` because each row carries its own stored currency.
+  - Currency conversion is not implemented yet. Do not relabel foreign-currency prices as SGD.
 - **Dates** go through `formatDate()`.
 - Buttons: one `primary` action per area; `ghost` for cancel/back/secondary
   navigation; `danger` only for destructive actions. Icon glyphs in labels use
@@ -288,9 +288,16 @@ as one deliberate change across all components, not piecemeal.
   route `/devices`. It loads devices from `GET /api/devices`, saves new ones
   with `POST /api/devices`, edits with `PUT /api/devices/{id}` and removes
   with `DELETE /api/devices/{id}` (a failed remove keeps the device and shows
-  a toast; a 404 counts as already removed). Upgrade preferences are still
-  local-only, and the page says so in its toast. There is no endpoint for
-  device preferences. Brand is required only when adding a
+  a toast; a 404 counts as already removed). Saving the upgrade-profile
+  modal sends the device's `budget` and `currency` with
+  `PUT /api/devices/{id}` (via `deviceToRequest`), and a rejection keeps the
+  modal open with the error. `GET /api/devices` returns them, so the card
+  shows the saved budget after a reload, or "No budget set". The add-device
+  form sends `budget: null`; a device with no saved budget starts the slider
+  at `SUGGESTED_BUDGET`. There is no currency picker: an existing currency is
+  kept, otherwise SGD is sent. Priorities, urgency, brand flexibility, pain
+  points and notes are still page-local (no API), and the toast says so.
+  Brand is required only when adding a
   device: a saved device without a catalogue link comes back with its whole
   name in the model field.
 - `pages/DashboardPage.tsx` is the authenticated USER `/dashboard` route. It
@@ -362,10 +369,12 @@ as one deliberate change across all components, not piecemeal.
   add a second page-level sign-out button.
 - **Not yet migrated:** `pages/ThingieMagiggie.tsx`. When you touch it, move it
   onto the shared components.
-- `DeviceResponse` does not yet include the product category, the `phone`
-  specs or the device preferences, and there is no endpoint for them. Until
-  the backend adds them, pass them to `deviceFromApi` via `extras`. When the
-  backend adds them, update `DeviceResponse` / `deviceFromApi` in one place.
+- `DeviceResponse` includes the budget and currency, which `deviceFromApi`
+  always takes from the response. It does not yet include the product
+  category, the `phone` specs or the other device preferences, and there is
+  no endpoint for them. Until the backend adds them, pass them to
+  `deviceFromApi` via `extras`. When the backend adds them, update
+  `DeviceResponse` / `deviceFromApi` in one place.
 - Priority and urgency option lists in `devices/deviceOptions.ts` are the
   prototype's display labels. The authoritative preference vocabulary is
   `ai/app/factors.py` (root `AGENTS.md`). Map labels to it when wiring to the

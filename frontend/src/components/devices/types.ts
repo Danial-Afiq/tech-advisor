@@ -3,7 +3,13 @@ import type { PhoneSpecs } from "./phoneSpecs";
 export type Condition = "Excellent" | "Good" | "Fair" | "Poor";
 
 export type UpgradePreferences = {
-  budget: number;
+  /**
+   * `device_preferences.budget`; null until the user saves one. The backend
+   * only evaluates a device for recommendations once it has a budget.
+   */
+  budget: number | null;
+  /** ISO 4217 code for `budget` (`device_preferences.currency`). Unset means SGD. */
+  currency?: string | null;
   priorities: string[];
   urgency: string;
   brandFlex: string;

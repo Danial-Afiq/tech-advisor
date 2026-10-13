@@ -26,7 +26,7 @@ import { withCatalogue } from "../components/devices/catalogue";
 import { deviceFromApi, deviceToRequest } from "../components/devices/deviceApi";
 import type { DeviceResponse } from "../components/devices/deviceApi";
 import { DEMO_DEVICES, DEMO_USER } from "../components/devices/demoData";
-import type { Device } from "../components/devices/types";
+import type { Device, UpgradePreferences } from "../components/devices/types";
 import { useSmartphoneCatalogue } from "../components/devices/useSmartphoneCatalogue";
 import {
   DASHBOARD_PATH,
@@ -39,7 +39,8 @@ import {
  * Signed out: local demo devices. Signed in: devices load from
  * `GET /api/devices`, new devices are saved with `POST /api/devices`, edits
  * with `PUT /api/devices/{id}` and removals with `DELETE /api/devices/{id}`.
- * Upgrade preferences are still local-only. Signed in,
+ * Saving upgrade preferences sends the budget and currency with
+ * `PUT /api/devices/{id}`; the other preferences are still local-only. Signed in,
  * the device form suggests smartphones from `GET /api/catalogue/smartphones`
  * and prefills their specs.
  */
@@ -67,7 +68,6 @@ export default function DevicesPageTest() {
   const replace = (next: Device) =>
     setDevices((all) => all.map((d) => (d.id === next.id ? next : d)));
   const prefsDevice = prefs && shownDevices.find((d) => d.id === prefs.id);
-  const localOnly = account ? " (this page only — not saved to your account yet)" : "";
 
   useEffect(() => {
     if (!account) return;
@@ -107,21 +107,21 @@ export default function DevicesPageTest() {
     void navigate("/login", { replace: true });
   };
 
+  // The saved row, plus what the backend doesn't store yet.
+  const fromSaved = (draft: Device, saved: DeviceResponse): Device => ({
+    ...deviceFromApi(saved, {
+      preferences: draft.upgradePreferences,
+      primary: draft.primary,
+      image: draft.image,
+    }),
+    type: draft.type, // not stored by the backend; keep it for this session
+  });
+
   /** Throws on API failure so `DeviceFormModal` stays open and shows it. */
   const saveDevice = async (draft: Device, isNew: boolean) => {
-    // The saved row, plus what the backend doesn't store yet.
-    const fromSaved = (saved: DeviceResponse): Device => ({
-      ...deviceFromApi(saved, {
-        preferences: draft.upgradePreferences,
-        primary: draft.primary,
-        image: draft.image,
-      }),
-      type: draft.type, // not stored by the backend; keep it for this session
-    });
-
     if (!isNew) {
       const device = account
-        ? fromSaved(await updateDevice(draft.id, deviceToRequest(draft)))
+        ? fromSaved(draft, await updateDevice(draft.id, deviceToRequest(draft)))
         : draft;
       replace(device);
       setEditing(null);
@@ -134,12 +134,36 @@ export default function DevicesPageTest() {
 
     let device = draft;
     if (account) {
-      device = fromSaved(await createDevice(deviceToRequest(draft)));
+      device = fromSaved(draft, await createDevice(deviceToRequest(draft)));
       pushToast("Device saved", `${name(device)} was added to your account.`);
     }
     setEditing(null);
     setDevices((all) => [device, ...all]);
     setPrefs({ id: device.id, isNew: true }); // straight into step 2
+  };
+
+  /**
+   * Signed in, the budget and currency are saved with the rest of the device
+   * (`PUT /api/devices/{id}`), which also re-runs its recommendations. The
+   * other preferences have no API yet and stay on this page. Throws on API
+   * failure so `UpgradePreferencesModal` stays open and shows it.
+   */
+  const savePreferences = async (
+    device: Device,
+    upgradePreferences: UpgradePreferences
+  ) => {
+    const draft = { ...device, upgradePreferences };
+    const next = account
+      ? fromSaved(draft, await updateDevice(draft.id, deviceToRequest(draft)))
+      : draft;
+    replace(next);
+    setPrefs(null);
+    pushToast(
+      "Upgrade profile saved",
+      account
+        ? `The budget for ${name(next)} was saved to your account. Your other preferences apply on this page only for now.`
+        : `These preferences now apply only to ${name(next)}.`
+    );
   };
 
   const removeDevice = async (device: Device) => {
@@ -242,14 +266,9 @@ export default function DevicesPageTest() {
           device={prefsDevice}
           isNew={prefs.isNew}
           onClose={() => setPrefs(null)}
-          onSave={(upgradePreferences) => {
-            replace({ ...prefsDevice, upgradePreferences });
-            setPrefs(null);
-            pushToast(
-              "Upgrade profile saved",
-              `These preferences now apply only to ${name(prefsDevice)}${localOnly}.`
-            );
-          }}
+          onSave={(upgradePreferences) =>
+            savePreferences(prefsDevice, upgradePreferences)
+          }
         />
       )}
 
