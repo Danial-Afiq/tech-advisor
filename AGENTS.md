@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 11 October 2026
+> **Last consolidated:** 12 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -43,6 +43,17 @@ When something conflicts, use this order:
   - Embedding calls for retrieval do not count as reasoning calls.
 - Separate `evidence_grades` table: **do not build it**.
   - Evidence grade is stored with each recommendation.
+- Phone variants are **deferred for the current MVP**.
+  - Treat one `products` row as one general phone model, not a selectable
+    RAM/storage configuration.
+  - Existing variant tables and code remain for backward compatibility, but
+    current product, pricing and recommendation flows must not depend on them.
+- Recommendation prices are **indicative model-level observations**, not exact
+  quotes for a particular configuration or retailer.
+  - MobileAPI supplies general model specifications; SearchAPI supplies one
+    representative model price.
+  - SGD normalization is planned in a separate Jira ticket and is not currently
+    implemented. Never relabel a stored foreign-currency amount as SGD.
 - Older Architecture sections that describe factor-tagged chunks, a separate evidence-grade cache, multiple model calls, `released_at`, or global `user_profiles` are **superseded** by the current plan.
 - Current source code uses **Spring Boot 4.1.1 + Java 21**, even though an older Architecture document says Spring Boot 3.x.
 
@@ -156,12 +167,20 @@ The current product and recommendation implementation remains **smartphone-first
 
 Do not treat the presence of the `gpu` table as evidence that GPU ingestion, recommendation logic, or UI is implemented.
 
-Under the current simplified catalogue design, one `products` row represents a
-specific purchasable hardware configuration. Legitimate storage configurations,
-and RAM configurations when RAM distinguishes the offering, may therefore have
-separate product IDs. Colours, carriers, sellers, cosmetic finishes and bundles
-do not create separate products. `price_history` and review evidence attach
-directly to that exact `product_id`; there is no `product_variants` layer.
+Under the current MVP catalogue design, one `products` row represents a
+**general phone model**. For example, Samsung Galaxy S25 is one product regardless
+of RAM or storage configuration. MobileAPI supplies the model's general
+specifications as available, and SearchAPI supplies one representative price
+observation stored against that general `product_id`. The recommendation engine
+uses that representative price for budget filtering and comparisons.
+
+Variant-specific selection and pricing are deferred so the team can prioritise
+a working end-to-end product within the remaining sprint. The existing
+`phone_variants` table, nullable variant foreign keys and supporting code remain
+for backward compatibility, but no current application flow should build new
+functionality around them unless explicitly requested. Prices are therefore
+indicative rather than exact quotations; SGD normalization is separate planned
+work, not completed functionality.
 
 ## 1.2 Core product behaviour
 
@@ -558,17 +577,18 @@ affordable candidate set by `recommendation/CandidatePruningService`, backed by
 
 Rules, all enforced in SQL:
 - candidate `products.category` equals the owned device's category,
-- the product's **latest** `price_history` observation is `<=`
+- the product's latest representative model-level `price_history` observation is `<=`
   `device_preferences.budget` (inclusive),
 - the currently owned `product_id` is excluded,
 - products with **no** price history are excluded - affordability cannot be
   verified, so they are not candidates,
 - products with `status <> 'VERIFIED'` are excluded.
 
-"Latest price" is `DISTINCT ON (product_id) ... ORDER BY product_id,
-observed_at DESC, id DESC`. The `id DESC` tiebreaker is required: without it two
-observations sharing an `observed_at` resolve arbitrarily and the step stops
-being reproducible.
+The representative price is the latest observation selected by `DISTINCT ON
+(product_id) ... ORDER BY product_id, observed_at DESC, id DESC`. The `id DESC`
+tiebreaker is required: without it two observations sharing an `observed_at`
+resolve arbitrarily and the step stops being reproducible. This is still a raw
+stored-currency comparison; SGD normalization is planned separately (§27.9).
 
 This step performs **no** embeddings, retrieval or model calls, and must stay
 that way - bounding the candidate set is what bounds every downstream AI cost.
@@ -1417,9 +1437,9 @@ Fields:
 - `id`
 - `user_id`
 - `product_id` — nullable catalogue link
-- `phone_variant_id` — nullable, added ticket 1.8; the exact SKU owned, for
-  unambiguous spec autofill. Not yet populated by any code path — `product_id`
-  remains the only link `DeviceService`/the device-selection flow actually use.
+- `phone_variant_id` — nullable legacy/deferred ticket 1.8 link. It is retained
+  for backward compatibility but is not populated or used by the current MVP;
+  `product_id` is the authoritative device-selection link.
 - `custom_name`
 - `purchase_date`
 - `condition`
@@ -1471,56 +1491,25 @@ Fields:
 
 These are deterministic facts. Spring Boot should calculate differences.
 
-**Still 1:1 with `products`** (`product_id` is its own primary key) — a model
-can only ever have one row here, which is the exact limitation ticket 1.8
-addresses. Kept exactly as-is, writable in parallel with `phone_variants` -
-`SmartphoneCatalogSink` now writes both (see §14.5a); the ticket 1.7 admin
-CRUD (`SmartphoneCatalogueService`/`Phone`/`PhoneRepository`) still reads/
-writes only this table.
+**Still 1:1 with `products`** (`product_id` is its own primary key). This is the
+current MVP model: the row holds the general phone specifications MobileAPI can
+provide, not a user-selectable RAM/storage configuration. The ticket 1.7 admin
+CRUD (`SmartphoneCatalogueService`/`Phone`/`PhoneRepository`) also reads and
+writes this table.
 
-## 14.5a `phone_variants` (ticket 1.8)
+## 14.5a `phone_variants` (ticket 1.8) — DEFERRED
 
-Same fields as `phone` above, plus `id` (its own primary key), `model_number`,
-and `region`; FK'd to `products` (now the general-model identity) instead of
-being that identity's primary key, so one product has many variant rows.
-Deduplicated on `(product_id, storage_gb, ram_gb, region, chipset,
-model_number)` — all five variant-distinguishing attributes named by the
-ticket's AC — with `NULLS NOT DISTINCT`, since no source gives a stable
-per-SKU external id to key on instead.
+The additive table and related nullable foreign keys/code remain in the
+repository for backward compatibility. They can represent storage, RAM,
+region, chipset and model-number distinctions, and older ingestion code may
+still maintain rows. This schema presence must not be interpreted as active
+variant support.
 
-**`SmartphoneCatalogSink` (MobileAPI) creates `phone_variants` rows for real**
-(closed after this was initially shipped additive-only - a real gap, not a
-hypothetical one). `Payload.Specifications.storageOptionsGb` carries every
-tier `MobileApiFieldExtractor.storageOptionsGb` finds in the device's free-text
-`storage` field ("256GB, 512GB, 1TB"); the sink writes one `phone_variants` row
-per tier, same chipset/ram/battery on every row (MobileAPI gives one of each
-for the whole model, not per tier). Three fallback levels keep a product from
-ever ending up with zero variants, confirmed live, not just unit-tested: no
-tier list (common on older/budget devices) falls back to the single base-tier
-figure `phone.storage_gb` has always held; if even that's unparseable (a real
-device was found live where it is), one row still gets written with
-`storage_gb` left `NULL` rather than skipping the insert. `model_number`/
-`region` stay null from this source - MobileAPI doesn't break those out
-separately. The ticket 1.7 admin CRUD still writes/reads only `phone` and has
-no variant-creation path of its own. `SearchApiSource` (§17.4) can *attach* a
-price to an existing variant but never creates one itself, consistent with
-MobileAPI being the sole source of truth for catalogue structure (§17.4).
-
-**Re-ingest reconciliation (PR #46 review fix).** The upsert on the write
-path above does NOT rely solely on the unique key's exact-match `ON
-CONFLICT` — that key requires every one of its five columns to match
-exactly, so a later ingest where, say, the chipset momentarily failed to
-parse (`NULL`) would never match an existing row whose chipset IS known,
-and silently insert a second, incomplete row for what is really the same
-physical variant (same failure mode for RAM or storage going unknown). Fixed
-by reconciling against a product's existing variant rows first, using a
-null-tolerant comparison per identity column — unknown on either side counts
-as compatible, a known-vs-known mismatch does not. Exactly one compatible
-row is reused (filled in via `COALESCE`, never overwritten with an unknown
-value); zero means this really is a new variant; more than one is genuinely
-ambiguous and is left alone rather than guessed at. A real Snapdragon vs.
-Exynos release of the same storage/RAM tier still lands as two rows, since
-both chipsets are known and unequal.
+The team has put variant-specific functionality on hold for the current MVP.
+No current user flow selects a variant, no recommendation or budget rule should
+depend on `phone_variant_id`, and no new variant-level ingestion, pricing or UI
+work should be added unless the team explicitly reopens the scope. The general
+`products` + `phone` model in §14.4–§14.5 is the current application contract.
 
 ## 14.6 `gpu`
 
@@ -1543,11 +1532,8 @@ The table establishes the disjoint GPU subtype shape. GPU ingestion, recommendat
 Fields:
 - `id`
 - `product_id`
-- `phone_variant_id` — nullable, added ticket 1.8; the exact SKU this price
-  was observed for, when the source could attribute it to one. Null means a
-  model-level observation (e.g. MobileAPI's `misc.price`, which gives one
-  figure for the whole model with no tier breakdown) — still real evidence,
-  not nothing.
+- `phone_variant_id` — nullable legacy/deferred attribution retained for
+  backward compatibility; current MVP price selection does not use it.
 - `price`
 - `currency`
 - `source`
@@ -1555,27 +1541,19 @@ Fields:
 
 Stores observations over time, not just one mutable current price.
 
-**First real writer landed ticket 1.8** (`PriceHistorySink`, ingestion package) —
-before that, `Payload.Price` existed since ticket 1.1's shared contract but
-nothing emitted it and nothing accepted it, so this table was always empty in
-production (confirmed by §17.1.1's existing note that the launch-event
-shortlist always failed for exactly this reason). `SearchApiSource` is the
-only current emitter: it records a price whenever `discover()` makes a fresh
-Google Shopping call and the matched listing has one — never on a cache-hit
-run, deliberately, to stay inside the source's existing 10-request/run budget
-(§17.4). `SmartphoneCatalogSink` (MobileAPI) still writes none.
+`SearchApiSource` is the current price emitter: one fresh Google Shopping
+discovery can yield one representative observation for the general phone
+model, persisted by `PriceHistorySink` against `product_id`. MobileAPI supplies
+general specifications and does not write prices. A cache-hit SearchAPI run
+does not create another observation because it skips the shopping call.
 
-**`ProductRepository.findCompatibleCandidates`'s `DISTINCT ON (product_id)`
-query (§14.4) does not distinguish `phone_variant_id`.** It picks whichever
-row is most recently observed for a product, now potentially a mix of
-model-level and variant-specific rows (SearchAPI can write several variant
-rows plus a model-level one for the same product across different runs). A
-specific variant's price being used to represent "the product's price" for
-affordability filtering is an unreviewed consequence of ticket 1.8 landing
-real data into a query that was written when every row was implicitly
-model-level (because nothing wrote variant-level rows yet) — flagged here,
-not fixed, since the right fix (lowest variant price? the model-level
-observation preferentially? something else?) is a product decision.
+`ProductRepository.findCompatibleCandidates` and the dashboard deliberately
+select the latest observation per general `product_id`. That one value is used
+for budget filtering, comparisons, display and price sorting. It is an
+**indicative price**, not an exact quote for every RAM/storage configuration,
+retailer, region or availability state. Missing-price behaviour is unchanged.
+The optional `phone_variant_id` column and older attribution code remain dormant
+for compatibility and are not a current product contract.
 
 ## 14.8 `benchmark_results`
 
@@ -2010,14 +1988,15 @@ NOT a decision: the JWT is kept in `sessionStorage`, isolated in
 
 # 17. External data sources — current status
 
-## 17.1 Source strategy by data type — team decision 27 Sep 2026
+## 17.1 Source strategy by data type — updated 12 Oct 2026
 
-- **Smartphone specifications and prices:** MobileAPI.dev is the intended
-  authoritative ongoing external provider. Its implemented ingestion adapter
-  writes normalized data to `products` and `phone`; price persistence remains
-  separate work. Normal application requests read PostgreSQL and do not call
-  MobileAPI.dev. ADMIN catalogue CRUD is the manual correction/exception path,
-  not another external data provider.
+- **Smartphone specifications:** MobileAPI.dev is the authoritative ongoing
+  provider for general phone-model data written to `products` and `phone`.
+- **Representative smartphone prices:** SearchAPI supplies one indicative price
+  for the general phone model, stored in `price_history` against `product_id`.
+  It is not a per-variant quotation. Normal application requests read
+  PostgreSQL and do not call either provider. ADMIN catalogue CRUD is the
+  manual correction/exception path, not another external data provider.
 - **Owner reviews:** SearchAPI Google Product Reviews (§17.4).
 - **Benchmarks:** separate device-level benchmark sources and the existing
   benchmark enrichment/provenance. MobileAPI.dev is not currently established
@@ -2085,9 +2064,9 @@ never being provisioned, not a missing sink anymore.
   emitter, but nothing connects a MobileAPI launch to an immediate price
   lookup; a just-launched product's `PRODUCT_LAUNCH` trigger still fires (and
   still finds no price) before SearchAPI has ever run for that product, if it
-  ever does. **The `phone_variants` half is fixed** — the sink now writes one
-  on every ingest, so a just-launched product does have a variant by the time
-  its trigger fires; it just still has no price yet (§14.5a).
+  ever does. Existing variant-row writes remain in the codebase for backward
+  compatibility, but variants are outside the current MVP contract and do not
+  change this general-model launch and price flow (§14.5a).
 
 ## 17.1.2 Commented-out adapter — smartphone/GPU reviews (ticket 1.4, revised scope, superseded)
 
@@ -2201,27 +2180,20 @@ Sources run in `IngestionSource.priority()` order (lower first), not alphabetica
 writes are visible to SearchAPI's untargeted product pick within the same run,
 regardless of source naming.
 
-**Price capture, ticket 1.8.** `discover()`'s Google Shopping call already
+**Representative price capture.** `discover()`'s Google Shopping call already
 carries `extracted_price`/`price` on the matched listing to resolve a review
 token — this data used to be discarded; it's now also emitted as a
 `Payload.Price` (persisted by `PriceHistorySink`, §14.7). Currency is read
 from the price display string's leading symbol (`extracted_price` itself
 carries no currency marker); every real listing observed used `$` regardless
 of `gl=sg`/`location=Singapore` — confirmed live, not assumed to generalize.
-`ProductMatcher.storageGbMentionsInTitle` scans the matched listing's title
-for an embedded storage figure to resolve a specific `phone_variants` row
-(`SearchApiRepository.variantIdFor`, exact match only — an ambiguous tie
-records the price at the model level instead of guessing). Deliberately
-**not** comprehensive: one run resolves at most the one listing SearchAPI's
-matching settled on, not a price per variant a product actually has: a
-product with three storage tiers gets at most one price observation per
-run, for whichever tier that one matched listing happens to name (or none,
-model-level, if it names none). Real per-variant coverage would need a
-separate shopping search per known variant — a real per-source request-budget
-decision (more than the existing 3-requests-per-product ceiling allows),
-not implemented. Also **only on a fresh `discover()` call** — never on a
-cache-hit run, which skips the shopping call entirely to stay inside the
-existing budget; price never refreshes for a product between rediscoveries.
+The matched listing contributes one representative observation for the general
+`product_id`; current recommendation paths do not select or price variants.
+Older optional variant-attribution helpers remain for compatibility but must
+not drive new functionality. Capture occurs **only on a fresh `discover()`
+call** — never on a cache-hit run, which skips the shopping call entirely to
+stay inside the existing budget; price does not refresh between rediscoveries.
+The stored currency is preserved exactly. No SGD conversion is performed here.
 
 ---
 
@@ -2302,6 +2274,9 @@ Known files include:
 - `IngestionAdmin.tsx`
 - `IngestionAdmin.test.tsx`
 - `pages/AdminCatalogue.tsx`
+- `pages/DashboardPage.tsx` (`/dashboard`): the authenticated USER's single
+  recommendation overview/browsing page, using reusable cards, server-side sort
+  and device/verdict/evidence-grade filters (§23.4, §26.4).
 - `config.ts`
 - Vite setup
 - CSS
@@ -3197,6 +3172,49 @@ Current UI concept should show:
 
 Do not merge verdict and evidence grade into one misleading score.
 
+### Dashboard sort — IMPLEMENTED (ticket 4.3.2)
+
+`/dashboard` is the single USER recommendation interface. The former
+Recommendations sidebar item is removed, and `/recommendations` is an
+authenticated compatibility redirect to `/dashboard`; do not introduce a
+second recommendation page. Dashboard cards are rendered only through the
+reusable frontend `RecommendationCard`, with verdict metadata/attention rules
+centralised in `recommendationPresentation.ts`.
+
+`GET /api/dashboard/recommendations?sort=` accepts `relevance` (default),
+`price_asc`, `price_desc` or `recency`, case-insensitive. Anything else returns
+**400** listing the allowed values (`InvalidSortException`, which has its own
+handler — the generic `IllegalArgumentException` mapping in
+`GlobalExceptionHandler` is 409 and must not be used for request validation).
+
+- Sorting is server-side `ORDER BY` in `RecommendationRepository`. The
+  `RecommendationSort` enum owns one fixed SQL fragment per option; request text
+  only selects a fragment and is never concatenated into SQL.
+- `relevance` = verdict tier (STRONG > CONSIDERING > WATCHING > NO_MEANINGFUL_CHANGE,
+  unknown values last) then `factor_analysis->'deterministic'->>'upgrade_score'`
+  (there is no `upgrade_score` column; the cast is guarded with `jsonb_typeof`, so a
+  malformed stored score sorts last instead of failing the whole list). The tier ranks are generated into the SQL
+  `CASE` from one list; `RecommendationSortTest` fails if a verdict is added to
+  `AssessVocabulary.VERDICTS` without a rank. Tier deliberately beats score, since
+  old rows keep the verdict from older thresholds.
+- Price sorts use the same latest representative model-level `price_history`
+  lookup as the card's `latestPrice`; missing prices are `NULLS LAST` in
+  **both** directions. The API field remains `latestPrice`, but the card labels
+  it **Indicative price** and the page shows one visible disclaimer that prices
+  may vary by storage configuration, retailer, region and availability.
+- Every option ends `created_at DESC, id DESC` so ties are reproducible.
+- Prices are compared as raw stored numbers: a mixed-currency catalogue can
+  sort incorrectly. SGD normalization is agreed planned work in a separate
+  Jira ticket, not part of this implementation (§27.9).
+- Frontend keeps `sort` in the URL query string (`useSearchParams`); changing it
+  copies all other query parameters, deletes `page`, and omits `sort` for the
+  default. Unknown URL values fall back to the default. Active client-side
+  filters remain selected while the server refetches the chosen order, then run
+  over the returned rows without changing their relative order. A cancelled
+  effect cannot replace a newer sort response. Cards preserve each row's stored
+  currency and show "Price unavailable" when there is no price.
+- `DashboardSortIntegrationTest` needs real PostgreSQL (LATERAL, JSONB casts).
+
 ## 23.5 Epic 05 — Infrastructure & DevSecOps Guardrails
 `SCRUM-31`
 
@@ -3299,6 +3317,45 @@ Recommendation rows have a `status` such as:
 - expired
 
 Exact recommendation-expiry/decay policy remains a product decision unless a current ticket resolves it.
+
+## 26.4 One-page recommendation dashboard — IMPLEMENTED (4.2.1 / 4.3.1 / 4.3.2)
+
+The authenticated USER dashboard (`/dashboard`) loads
+`GET /api/dashboard/recommendations`. The backend derives the user from the JWT
+and returns only that user's `ACTIVE` recommendations for current owned devices;
+the device join also checks ownership. Filtering operates in React over this
+already scoped result, without sending a user ID or making extra API requests.
+Server-side sorting is selected with the `sort` query parameter described in
+§23.4 and defaults to **Most relevant**.
+
+The **Filters** dropdown provides one owned-device selection (by ID, with
+options deduplicated from the full active recommendation list), multiple verdict
+checkboxes and multiple evidence-grade checkboxes. The square evidence-grade
+checkboxes offer only `A`–`F`, matching the existing `confidence` response field.
+Recommendations with `-` (insufficient evidence) or `null` (not available) remain
+visible when no evidence grade is selected. Selected values within a group
+combine with OR; groups combine
+with AND. An unselected group imposes no restriction. Clear filters restores
+every returned recommendation.
+
+The list shows a filtered/total count and an empty state with a clear-filters
+action when nothing matches. No active recommendations has a separate empty
+state linking to devices. Summary cards and notification counts always describe
+all active recommendations, independently of the filters. Selections persist
+while opening/closing the dropdown and reset when the page unmounts. The dropdown
+supports keyboard opening, Escape, focus return, and outside-click dismissal.
+
+The result count, Filters button and Sort by select share one responsive toolbar.
+The overview continues to describe the full active set. `RecommendationCard`
+owns the standard card presentation: owned device, suggested product, Latest
+price, deterministic verdict, explanation and the separate owner evidence grade,
+including explicit fallbacks for missing price/reasoning and `-`/`null` evidence.
+
+Star/bookmark behaviour remains future work. Do not add placeholder columns,
+fake controls or star-first ranking. A later Star filter should extend the
+existing `RecommendationFilters` state/helper and the reusable card, while
+leaving server relevance sorting unchanged unless a separate product decision
+explicitly changes it.
 
 ---
 
@@ -3424,20 +3481,25 @@ The canonical V6 now includes the generic `products` table and a `gpu` subtype t
 
 This is schema readiness only. GPU ingestion, business logic, recommendation rules, APIs, and UI remain future work and must not be presented as implemented.
 
-## 27.9 Currency handling in the budget gate - ASSUMPTION, NOT A DECISION
+## 27.9 SGD price normalization — PLANNED, NOT IMPLEMENTED
 
 Candidate shortlisting compares `device_preferences.budget` against
-`price_history.price` as **bare numbers, with no conversion**, on the assumption
-that the system runs in a single currency.
+`price_history.price` as **bare numbers, with no conversion**. Dashboard price
+sorting has the same limitation. The team has agreed that prices should be
+normalized to SGD for consistent budget filtering, comparisons and sorting,
+but that work belongs to a separate Jira ticket.
 
-That assumption is not enforced anywhere upstream: the ingestion `Price` payload
-accepts any ISO 4217 code. `CandidatePruningService` therefore logs a warning
-when a candidate's currency differs from the budget's, rather than converting -
-converting would mean inventing an exchange rate.
+Until that ticket is implemented, the ingestion `Price` payload may retain any
+ISO 4217 currency, the dashboard formats each value using its stored currency,
+and `CandidatePruningService` logs a warning when candidate and budget currencies
+differ. The system must not silently relabel a foreign-currency value as SGD or
+claim that conversion has occurred.
 
-`currency` columns exist and are persisted on both tables, so this can be made
-real later without a migration. **Do not read the current implementation as a
-team decision that the product is single-currency.**
+`currency` columns already exist on both tables. The future implementation must
+define an exchange-rate source, observation timing, rounding and audit semantics;
+none is chosen or added by the current indicative-price UI/documentation change.
+No exchange-rate service, dependency, migration or ingestion conversion exists
+today.
 
 ## 27.10 `device_preferences.budget` is NOT NULL - decided here, flagged onward
 

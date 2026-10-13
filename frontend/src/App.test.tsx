@@ -79,6 +79,17 @@ it("redirects USER visitors from / to /dashboard", async () => {
     await expectRoute('Login route', '/login')
   })
 
+  it('redirects the retired /recommendations page to the dashboard for users', async () => {
+    setSession({ token: 'user-token', email: 'user@example.com', role: 'USER' })
+    renderAt('/recommendations')
+    await expectRoute('Dashboard route', '/dashboard')
+  })
+
+  it('keeps the retired /recommendations page behind authentication', async () => {
+    renderAt('/recommendations')
+    await expectRoute('Login route', '/login')
+  })
+
   it('redirects signed-out access to /admin/ingestion to /login', async () => {
     renderAt('/admin/ingestion')
     await expectRoute('Login route', '/login')
