@@ -159,8 +159,10 @@ shared `Button` (including a trigger ref for focus return), `Card`, `Field`,
 `Select`, `Checkbox` and `FieldHint`. `EmptyState` titles are semantic headings.
 The dashboard API module owns the four sort options and URL parsing; sorting is
 server-side, then `filterRecommendations` narrows the returned order without
-re-sorting it. Star/bookmark controls are intentionally absent; extend these
-types/helpers and the reusable card when that separate feature is implemented.
+re-sorting it. The card's star toggle (`onToggleStar`, `starPending`) is shown
+only when the page handles it; the page owns confirming an unstar. The Saved
+toolbar toggle is `savedOnly` in the same filter state; `selectedFilterCount`
+and the dropdown's Clear filters deliberately ignore it (root §26.4).
 
 ---
 
@@ -316,8 +318,10 @@ as one deliberate change across all components, not piecemeal.
   share one responsive toolbar. Recommendation cards label the representative
   model-level amount "Indicative price", preserve "Price unavailable", and the
   toolbar displays the pricing disclaimer once per populated page. Overview
-  cards and notifications retain totals for all active recommendations. See
-  root §23.4, §26.4 and §27.9.
+  cards and notifications retain totals for all active recommendations. Users
+  star a card to save it (persisted), see saved ones with the Saved (n)
+  toolbar toggle, and confirm in a `Modal` before unstarring. See root §23.4,
+  §26.4 and §27.9.
 - Signed in, the device form suggests smartphones from the catalogue as the
   user types a model name. Picking one sends its `productId` and prefills the
   spec fields. Only specs the user changes are saved as `specOverrides`,

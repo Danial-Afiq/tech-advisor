@@ -33,18 +33,41 @@ public class DashboardService {
             getRecommendations(
                     String email, RecommendationSort sort) {
 
-        User user = userRepository
+        return recommendationRepository
+                .findActiveDashboardRecommendationsByUserId(
+                        findUser(email).getId(),
+                        sort
+                );
+    }
+
+    /**
+     * Stars or unstars one of the user's dashboard recommendations.
+     * Setting the current value again is a no-op, not an error.
+     */
+    @Transactional
+    public void setStarred(
+            String email, long recommendationId, boolean starred) {
+
+        boolean updated = recommendationRepository.setStarred(
+                findUser(email).getId(),
+                recommendationId,
+                starred
+        );
+
+        if (!updated) {
+            throw new ResourceNotFoundException(
+                    "Recommendation not found"
+            );
+        }
+    }
+
+    private User findUser(String email) {
+        return userRepository
                 .findByEmailIgnoreCase(email)
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
                                 "User not found"
                         )
-                );
-
-        return recommendationRepository
-                .findActiveDashboardRecommendationsByUserId(
-                        user.getId(),
-                        sort
                 );
     }
 }

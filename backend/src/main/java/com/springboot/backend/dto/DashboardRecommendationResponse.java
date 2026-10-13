@@ -52,6 +52,14 @@ public record DashboardRecommendationResponse(
         )
         String reasoning,
 
+        @Schema(
+                description =
+                        "Whether the user has starred (saved) "
+                                + "this recommendation",
+                example = "false"
+        )
+        boolean starred,
+
         OffsetDateTime createdAt
 ) {
 }

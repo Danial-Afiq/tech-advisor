@@ -14,6 +14,7 @@ import type { DashboardRecommendation } from "../api/dashboard";
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   listDashboardRecommendations: vi.fn(),
+  setRecommendationStarred: vi.fn(),
   signOut: vi.fn(),
 }));
 
@@ -25,6 +26,7 @@ vi.mock("../api/dashboard", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/dashboard")>()),
   listDashboardRecommendations:
     mocks.listDashboardRecommendations,
+  setRecommendationStarred: mocks.setRecommendationStarred,
 }));
 
 vi.mock("../api/auth", () => ({
@@ -71,6 +73,7 @@ const recommended: DashboardRecommendation = {
   verdict: "STRONG_UPGRADE_CANDIDATE",
   confidence: "A",
   reasoning: "This device provides a meaningful upgrade.",
+  starred: false,
   createdAt: "2026-10-07T00:00:00Z",
 };
 
@@ -86,6 +89,7 @@ const notRecommended: DashboardRecommendation = {
   verdict: "NO_MEANINGFUL_CHANGE",
   confidence: "B",
   reasoning: "The improvement is not large enough.",
+  starred: false,
   createdAt: "2026-10-07T00:00:00Z",
 };
 
@@ -101,6 +105,7 @@ const worthConsidering: DashboardRecommendation = {
   verdict: "WORTH_CONSIDERING",
   confidence: "B",
   reasoning: "This upgrade is worth considering.",
+  starred: false,
   createdAt: "2026-10-07T00:00:00Z",
 };
 
@@ -116,6 +121,7 @@ const worthWatching: DashboardRecommendation = {
   verdict: "WORTH_WATCHING",
   confidence: "C",
   reasoning: "This candidate is worth monitoring.",
+  starred: false,
   createdAt: "2026-10-07T00:00:00Z",
 };
 
@@ -167,6 +173,7 @@ beforeEach(() => {
   });
 
   mocks.listDashboardRecommendations.mockResolvedValue([]);
+  mocks.setRecommendationStarred.mockResolvedValue(undefined);
 });
 
 describe("DashboardPage", () => {
@@ -738,6 +745,142 @@ describe("DashboardPage", () => {
       expect(within(controls).getByRole("button", { name: "Filters" })).toBeInTheDocument();
       expect(within(controls).getByRole("combobox", { name: "Sort by" })).toBeInTheDocument();
       expect(controls).toHaveClass("flex-wrap");
+    });
+  });
+
+  describe("starred recommendations", () => {
+    async function renderStarred(rows = allRecommendations) {
+      mocks.listDashboardRecommendations.mockResolvedValue(rows);
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByRole("region", { name: "Device recommendations" });
+      return user;
+    }
+
+    const starFor = (name: RegExp) =>
+      screen.getByRole("button", { name });
+
+    it("stars a recommendation, saves it and shows the star as selected", async () => {
+      const user = await renderStarred();
+      const star = starFor(/^Save Samsung Galaxy S26 for My current phone$/);
+      expect(star).toHaveAttribute("aria-pressed", "false");
+
+      await user.click(star);
+
+      expect(mocks.setRecommendationStarred).toHaveBeenCalledWith(1, true);
+      const starred = await screen.findByRole("button", {
+        name: /^Remove Samsung Galaxy S26 for My current phone$/,
+      });
+      expect(starred).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByText("Recommendation saved")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Saved (1)" })).toBeInTheDocument();
+    });
+
+    it("shows only saved recommendations when the Saved toggle is on", async () => {
+      const user = await renderStarred([
+        { ...recommended, starred: true },
+        notRecommended,
+        { ...worthConsidering, starred: true },
+      ]);
+      const saved = screen.getByRole("button", { name: "Saved (2)" });
+
+      await user.click(saved);
+
+      expect(saved).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByText("Showing 2 of 3 recommendations")).toBeInTheDocument();
+      expect(visibleCandidates()?.getByText("Samsung Galaxy S26")).toBeInTheDocument();
+      expect(visibleCandidates()?.getByText("Google Pixel 11")).toBeInTheDocument();
+      expect(visibleCandidates()?.queryByText("Apple iPhone 18")).not.toBeInTheDocument();
+
+      // Clearing the dropdown's filters leaves the Saved toggle alone.
+      await user.click(screen.getByRole("button", { name: "Filters" }));
+      await user.click(screen.getByRole("checkbox", { name: "A" }));
+      await user.click(screen.getByRole("button", { name: "Clear filters" }));
+      expect(saved).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByText("Showing 2 of 3 recommendations")).toBeInTheDocument();
+    });
+
+    it("asks for confirmation before removing, and keeps it saved on cancel", async () => {
+      const user = await renderStarred([{ ...recommended, starred: true }]);
+
+      await user.click(starFor(/^Remove Samsung Galaxy S26/));
+
+      const dialog = screen.getByRole("dialog", { name: "Remove saved recommendation?" });
+      expect(within(dialog).getByText(/Samsung Galaxy S26 for My current phone/)).toBeInTheDocument();
+      expect(mocks.setRecommendationStarred).not.toHaveBeenCalled();
+
+      await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+      expect(screen.queryByRole("dialog", { name: "Remove saved recommendation?" })).not.toBeInTheDocument();
+      expect(mocks.setRecommendationStarred).not.toHaveBeenCalled();
+      expect(starFor(/^Remove Samsung Galaxy S26/)).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("removes a confirmed recommendation from the saved view", async () => {
+      const user = await renderStarred([
+        { ...recommended, starred: true },
+        { ...worthConsidering, starred: true },
+      ]);
+      await user.click(screen.getByRole("button", { name: "Saved (2)" }));
+
+      await user.click(starFor(/^Remove Samsung Galaxy S26/));
+      await user.click(
+        within(screen.getByRole("dialog", { name: "Remove saved recommendation?" }))
+          .getByRole("button", { name: "Remove" })
+      );
+
+      expect(mocks.setRecommendationStarred).toHaveBeenCalledWith(1, false);
+      await waitFor(() => {
+        expect(visibleCandidates()?.queryByText("Samsung Galaxy S26")).not.toBeInTheDocument();
+      });
+      expect(visibleCandidates()?.getByText("Google Pixel 11")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Saved (1)" })).toBeInTheDocument();
+      expect(screen.getByText("Removed from saved")).toBeInTheDocument();
+    });
+
+    it("shows an empty state when nothing is saved", async () => {
+      const user = await renderStarred();
+
+      await user.click(screen.getByRole("button", { name: "Saved (0)" }));
+
+      expect(screen.getByRole("heading", { name: "No saved recommendations yet" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Show all recommendations" }));
+      expect(screen.getByText("Showing 4 of 4 recommendations")).toBeInTheDocument();
+    });
+
+    it("keeps the star unselected and explains when saving fails", async () => {
+      mocks.setRecommendationStarred.mockRejectedValue(
+        new ApiError(500, "Something went wrong")
+      );
+      const user = await renderStarred();
+
+      await user.click(starFor(/^Save Samsung Galaxy S26/));
+
+      expect(await screen.findByText("Couldn’t save recommendation")).toBeInTheDocument();
+      expect(screen.getByText("Something went wrong")).toBeInTheDocument();
+      expect(starFor(/^Save Samsung Galaxy S26/)).toHaveAttribute("aria-pressed", "false");
+      expect(mocks.listDashboardRecommendations).toHaveBeenCalledTimes(1);
+    });
+
+    it("reloads the dashboard when the recommendation was replaced in the background", async () => {
+      mocks.setRecommendationStarred.mockRejectedValue(
+        new ApiError(404, "Recommendation not found")
+      );
+      const user = await renderStarred([recommended]);
+      // The re-assessed row has a new id and kept the user's earlier star.
+      mocks.listDashboardRecommendations.mockResolvedValue([
+        { ...recommended, recommendationId: 99, starred: true },
+      ]);
+
+      await user.click(starFor(/^Save Samsung Galaxy S26/));
+
+      expect(await screen.findByText("Recommendation was just updated")).toBeInTheDocument();
+      expect(mocks.listDashboardRecommendations).toHaveBeenCalledTimes(2);
+      expect(mocks.listDashboardRecommendations).toHaveBeenLastCalledWith("relevance");
+      expect(
+        await screen.findByRole("button", { name: /^Remove Samsung Galaxy S26/ })
+      ).toHaveAttribute("aria-pressed", "true");
+      expect(screen.queryByText("Couldn’t save recommendation")).not.toBeInTheDocument();
     });
   });
 });

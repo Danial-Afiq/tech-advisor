@@ -1653,7 +1653,18 @@ Fields:
 - `ai_model`
 - `prompt_version`
 - `status`
+- `starred` — V10, ticket 4.4 (see below)
 - `created_at`
+
+### `starred` — user-saved recommendations (V10, ticket 4.4)
+
+`BOOLEAN NOT NULL DEFAULT FALSE`. The user's star lives on the recommendation row,
+not in a separate saved/bookmark table, so it follows the existing lifecycle
+(§18.11): supersede-and-insert copies the star from the superseded `ACTIVE` row onto
+its replacement for the same `(user_id, candidate_product_id)`, so re-assessment
+never silently unsaves it; a candidate that drops off the shortlist is deleted
+together with its star. The flag is a user preference only - it never feeds the
+verdict, scoring or relevance sort.
 
 ### Current semantic change to `confidence`
 Original DB design called it an optional confidence score.
@@ -2231,6 +2242,7 @@ V6__create_sprint_1_schema.sql
 V7__add_external_review_ingestion.sql  # SearchAPI, merged to main
 V8__add_phone_variants.sql             # ticket 1.8 — phone_variants, user_devices.phone_variant_id
 V9__link_price_history_to_phone_variants.sql  # ticket 1.8 — price_history.phone_variant_id
+V10__add_starred_to_recommendations.sql       # ticket 4.4 — recommendations.starred (§14.12)
 ```
 
 `V5` makes `users.password_hash` **NOT NULL**, so every seed, fixture, or test
@@ -2629,7 +2641,8 @@ Row contents:
 Lifecycle rules (decided 27 Sep 2026):
 
 - **Still shortlisted:** normal supersede-and-insert - the previous `ACTIVE` row for
-  that (user, candidate) becomes `SUPERSEDED` and is kept as history.
+  that (user, candidate) becomes `SUPERSEDED` and is kept as history. Its `starred`
+  flag is carried onto the new row (§14.12).
 - **Dropped off this device's shortlist** (over budget, delisted, unverified): every
   row for that device and candidate is **deleted**, history included, not superseded.
   Users come for products that are recommended; a record that a product once was is
@@ -3351,11 +3364,32 @@ owns the standard card presentation: owned device, suggested product, Latest
 price, deterministic verdict, explanation and the separate owner evidence grade,
 including explicit fallbacks for missing price/reasoning and `-`/`null` evidence.
 
-Star/bookmark behaviour remains future work. Do not add placeholder columns,
-fake controls or star-first ranking. A later Star filter should extend the
-existing `RecommendationFilters` state/helper and the reusable card, while
-leaving server relevance sorting unchanged unless a separate product decision
-explicitly changes it.
+### Starred (saved) recommendations — IMPLEMENTED (ticket 4.4)
+
+- `RecommendationCard` shows a star toggle (`aria-pressed`) when the page passes
+  `onToggleStar`. Starring is immediate; **unstarring asks for confirmation** in a
+  shared `Modal` first. Success and failure are reported with toasts, and a failed
+  request leaves the star unchanged. A `404` means a re-assessment replaced the row
+  (new id) while the page was open, so the dashboard refetches the list and asks
+  the user to try again; the replacement row already carries any earlier star.
+- `PUT /api/dashboard/recommendations/{id}/star` stars and
+  `DELETE /api/dashboard/recommendations/{id}/star` unstars; both return `204`, are
+  idempotent, and return `404` unless the id is one of the caller's `ACTIVE`
+  recommendations for a current owned device (exactly the dashboard's rows), so
+  another user's id looks unknown. `GET /api/dashboard/recommendations` returns
+  `starred` on every row. Persisted in `recommendations.starred` (V10, §14.12).
+- Saved recommendations appear on the dashboard through a **Saved (n)** toolbar
+  toggle. It is `savedOnly` in the existing `RecommendationFilters` state and
+  `filterRecommendations` helper, so it combines with the other groups by AND. The
+  dropdown's own count and Clear filters leave it alone; the page-level no-match
+  Clear filters resets everything. With Saved on and nothing starred, an
+  `EmptyState` explains how to save one. Unstarring while Saved is on removes the
+  card from view immediately.
+- No star-first ranking: server relevance sorting is unchanged, and a star never
+  changes the verdict or score.
+- Tests: `DashboardStarIntegrationTest` (real PostgreSQL: star/unstar round trip,
+  401, other user / superseded / non-current device / unknown id → 404, star
+  carried across re-assessment), `DashboardPage.test.tsx`, `RecommendationCard.test.tsx`.
 
 ---
 

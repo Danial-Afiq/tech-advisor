@@ -26,7 +26,7 @@ export const EVIDENCE_GRADE_OPTIONS = [
 }[];
 
 export function emptyRecommendationFilters(): RecommendationFilters {
-  return { deviceId: null, verdicts: [], evidenceGrades: [] };
+  return { deviceId: null, verdicts: [], evidenceGrades: [], savedOnly: false };
 }
 
 export function filterRecommendations(
@@ -39,7 +39,8 @@ export function filterRecommendations(
     && (filters.evidenceGrades.length === 0
       || (recommendation.confidence !== null
         && recommendation.confidence !== "-"
-        && filters.evidenceGrades.includes(recommendation.confidence))),
+        && filters.evidenceGrades.includes(recommendation.confidence)))
+    && (!filters.savedOnly || recommendation.starred),
   );
 }
 
@@ -58,6 +59,7 @@ export function recommendationDeviceOptions(recommendations: readonly DashboardR
     }));
 }
 
+/** Counts the dropdown's own selections; the Saved toggle has its own visible state. */
 export function selectedFilterCount(filters: RecommendationFilters) {
   return Number(filters.deviceId !== null) + filters.verdicts.length + filters.evidenceGrades.length;
 }

@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 import { RecommendationCard } from "./RecommendationCard";
 import type {
   DashboardRecommendation,
@@ -20,6 +21,7 @@ const baseRecommendation: DashboardRecommendation = {
   confidence: "A",
   reasoning:
     "This device offers a meaningful battery and performance upgrade.",
+  starred: false,
   createdAt: "2026-10-11T00:00:00Z",
 };
 
@@ -201,4 +203,38 @@ describe("RecommendationCard", () => {
         screen.getByText("Price unavailable")
     ).toBeInTheDocument();
     });
+
+  it("has no star control unless the caller handles it", () => {
+    render(<RecommendationCard recommendation={recommendation()} />);
+
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("shows the star as a toggle reflecting the saved state", async () => {
+    const onToggleStar = vi.fn();
+    const saved = recommendation({ starred: true });
+    render(<RecommendationCard recommendation={saved} onToggleStar={onToggleStar} />);
+
+    const star = screen.getByRole("button", {
+      name: "Remove Samsung Galaxy S26 for My iPhone 13",
+    });
+    expect(star).toHaveAttribute("aria-pressed", "true");
+
+    await userEvent.setup().click(star);
+    expect(onToggleStar).toHaveBeenCalledWith(saved);
+  });
+
+  it("disables the star while its request runs", () => {
+    render(
+      <RecommendationCard
+        recommendation={recommendation()}
+        onToggleStar={vi.fn()}
+        starPending
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Save Samsung Galaxy S26 for My iPhone 13" })
+    ).toBeDisabled();
+  });
 });
