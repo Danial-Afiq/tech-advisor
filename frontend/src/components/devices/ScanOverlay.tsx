@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Eyebrow } from "../ui/Eyebrow";
-import { money } from "./deviceOptions";
+import { budgetLabel } from "./deviceOptions";
 import type { Device } from "./types";
 
 const STEP_MS = 620;
@@ -61,7 +61,9 @@ export function ScanOverlay({
           Evaluating {device.brand} {device.model}…
         </h3>
         <p className="m-0 text-[13px] text-[#8fa0b8]">
-          Using this device's {money(prefs.budget)} budget and{" "}
+          {prefs.budget == null
+            ? "No budget is set for this device. Using its "
+            : `Using this device's ${budgetLabel(prefs)} budget and `}
           {prefs.priorities.slice(0, 2).join(" + ") || "saved"} priorities.
         </p>
         <div className="mt-[18px] grid gap-2 text-left">

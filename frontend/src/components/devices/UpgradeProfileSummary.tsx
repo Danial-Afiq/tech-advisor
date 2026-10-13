@@ -1,5 +1,5 @@
 import { Tag } from "../ui/Tag";
-import { money } from "./deviceOptions";
+import { budgetLabel } from "./deviceOptions";
 import type { UpgradePreferences } from "./types";
 
 /** Compact budget / urgency / priorities box shown on a device card. */
@@ -13,7 +13,7 @@ export function UpgradeProfileSummary({
       <div className="mb-2 flex items-center justify-between gap-[10px]">
         <strong className="text-[12px]">Upgrade profile</strong>
         <span className="text-[14px] font-extrabold text-[#e9e5ff]">
-          {money(prefs.budget)}
+          {budgetLabel(prefs)}
         </span>
       </div>
       <div className="text-[12px] text-[#8fa0b8]">{prefs.urgency}</div>

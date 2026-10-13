@@ -22,6 +22,8 @@ const demoPhoneResponse: DeviceResponse = {
   satisfactionScore: 66,
   useCases: '["Messaging", "photos", "maps", "media and everyday use"]',
   specOverrides: "{}",
+  budget: 1000,
+  currency: "SGD",
   current: true,
   createdAt: "2026-09-01T00:00:00Z",
   updatedAt: "2026-09-01T00:00:00Z",

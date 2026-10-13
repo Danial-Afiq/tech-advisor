@@ -1,6 +1,7 @@
 package com.springboot.backend.service;
 
 import com.springboot.backend.dto.DeviceRequest;
+import com.springboot.backend.dto.DeviceResponse;
 import com.springboot.backend.exception.ResourceNotFoundException;
 import com.springboot.backend.model.DevicePreference;
 import com.springboot.backend.model.User;
@@ -18,9 +19,11 @@ import org.springframework.context.ApplicationEventPublisher;
 
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
@@ -236,6 +239,86 @@ class DeviceServiceTest {
         assertEquals("USD", existing.getCurrency());
         verify(devicePreferenceRepository).save(existing);
         verify(eventPublisher).publishEvent(new DeviceInventoryChanged(42L, DeviceInventoryChanged.Change.UPDATED));
+    }
+
+    @Test
+    void savingABudgetReturnsItInTheResponse() {
+        User loggedInUser = mock(User.class);
+        when(loggedInUser.getId()).thenReturn(1L);
+        when(userRepository.findByEmail("user-a@example.com"))
+                .thenReturn(Optional.of(loggedInUser));
+
+        UserDevice saved = mock(UserDevice.class);
+        when(saved.getId()).thenReturn(42L);
+        when(userDeviceRepository.save(any(UserDevice.class)))
+                .thenReturn(saved);
+        when(devicePreferenceRepository.findById(42L))
+                .thenReturn(Optional.empty());
+
+        DeviceRequest request = new DeviceRequest();
+        request.setCustomName("My phone");
+        request.setBudget(new BigDecimal("1500.00"));
+        request.setCurrency("USD");
+
+        DeviceResponse response =
+                deviceService.createDevice("user-a@example.com", request);
+
+        assertEquals(new BigDecimal("1500.00"), response.getBudget());
+        assertEquals("USD", response.getCurrency());
+    }
+
+    @Test
+    void anEditWithoutABudgetReturnsTheStoredOne() {
+        User loggedInUser = mock(User.class);
+        when(loggedInUser.getId()).thenReturn(1L);
+        when(userRepository.findByEmail("user-a@example.com"))
+                .thenReturn(Optional.of(loggedInUser));
+
+        UserDevice device = mock(UserDevice.class);
+        when(device.getId()).thenReturn(42L);
+        when(userDeviceRepository.findByIdAndUserIdAndIsCurrentTrue(42L, 1L))
+                .thenReturn(Optional.of(device));
+        when(userDeviceRepository.save(device))
+                .thenReturn(device);
+        when(devicePreferenceRepository.findById(42L))
+                .thenReturn(Optional.of(
+                        new DevicePreference(42L, new BigDecimal("900.00"), "SGD")));
+
+        DeviceRequest request = new DeviceRequest();
+        request.setCustomName("My phone");
+
+        DeviceResponse response =
+                deviceService.updateDevice("user-a@example.com", 42L, request);
+
+        assertEquals(new BigDecimal("900.00"), response.getBudget());
+        assertEquals("SGD", response.getCurrency());
+        verify(devicePreferenceRepository, never()).save(any());
+    }
+
+    @Test
+    void listedDevicesCarryTheirOwnBudgetOrNone() {
+        User loggedInUser = mock(User.class);
+        when(loggedInUser.getId()).thenReturn(1L);
+        when(userRepository.findByEmail("user-a@example.com"))
+                .thenReturn(Optional.of(loggedInUser));
+
+        UserDevice withBudget = mock(UserDevice.class);
+        when(withBudget.getId()).thenReturn(1L);
+        UserDevice withoutBudget = mock(UserDevice.class);
+        when(withoutBudget.getId()).thenReturn(2L);
+        when(userDeviceRepository.findAllByUserIdAndIsCurrentTrueOrderByCreatedAtDesc(1L))
+                .thenReturn(List.of(withBudget, withoutBudget));
+        when(devicePreferenceRepository.findAllById(List.of(1L, 2L)))
+                .thenReturn(List.of(
+                        new DevicePreference(1L, new BigDecimal("1200.00"), "SGD")));
+
+        List<DeviceResponse> devices =
+                deviceService.getCurrentDevices("user-a@example.com");
+
+        assertEquals(new BigDecimal("1200.00"), devices.get(0).getBudget());
+        assertEquals("SGD", devices.get(0).getCurrency());
+        assertNull(devices.get(1).getBudget());
+        assertNull(devices.get(1).getCurrency());
     }
 
     @Test

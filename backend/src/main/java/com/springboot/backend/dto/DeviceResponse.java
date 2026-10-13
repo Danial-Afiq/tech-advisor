@@ -1,9 +1,11 @@
 package com.springboot.backend.dto;
 
+import com.springboot.backend.model.DevicePreference;
 import com.springboot.backend.model.Product;
 import com.springboot.backend.model.UserDevice;
 import io.swagger.v3.oas.annotations.media.Schema;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
@@ -40,6 +42,19 @@ public class DeviceResponse {
     @Schema(description = "JSON-encoded specification overrides.", example = "{\"storage_gb\":256}", accessMode = Schema.AccessMode.READ_ONLY)
     private final String specOverrides;
 
+    @Schema(
+            description = "Device-specific upgrade budget from device_preferences; null when none has been set, "
+                    + "in which case the device is not evaluated for recommendations.",
+            example = "1200.00",
+            accessMode = Schema.AccessMode.READ_ONLY)
+    private final BigDecimal budget;
+
+    @Schema(
+            description = "ISO 4217 currency of the budget; null when no budget has been set.",
+            example = "SGD",
+            accessMode = Schema.AccessMode.READ_ONLY)
+    private final String currency;
+
     @Schema(description = "Whether this device remains active on the account.", example = "true", accessMode = Schema.AccessMode.READ_ONLY)
     private final boolean current;
 
@@ -49,7 +64,10 @@ public class DeviceResponse {
     @Schema(description = "Last update timestamp.", accessMode = Schema.AccessMode.READ_ONLY)
     private final OffsetDateTime updatedAt;
 
-    public DeviceResponse(UserDevice device) {
+    /**
+     * @param preference the device's preferences row, or null when it has none
+     */
+    public DeviceResponse(UserDevice device, DevicePreference preference) {
 
         Product product = device.getProduct();
 
@@ -67,6 +85,10 @@ public class DeviceResponse {
         this.satisfactionScore = device.getSatisfactionScore();
         this.useCases = device.getUseCases();
         this.specOverrides = device.getSpecOverrides();
+        this.budget =
+                preference == null ? null : preference.getBudget();
+        this.currency =
+                preference == null ? null : preference.getCurrency();
         this.current = device.isCurrent();
         this.createdAt = device.getCreatedAt();
         this.updatedAt = device.getUpdatedAt();
@@ -110,6 +132,14 @@ public class DeviceResponse {
 
     public String getSpecOverrides() {
         return specOverrides;
+    }
+
+    public BigDecimal getBudget() {
+        return budget;
+    }
+
+    public String getCurrency() {
+        return currency;
     }
 
     public boolean isCurrent() {
