@@ -20,6 +20,7 @@ primary_region = 'sin'
   interval = "30s"
   method = "GET"
   timeout = "5s"
+  # The health endpoint checks the application, not PostgreSQL (see application.properties).
   path = "/actuator/health"
   protocol = "http"
 
