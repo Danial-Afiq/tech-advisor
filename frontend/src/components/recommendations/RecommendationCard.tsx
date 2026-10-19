@@ -3,6 +3,7 @@ import { Card } from "../ui/Card";
 import {
   evidenceGradeText,
   formatRecommendationPrice,
+  recommendationCardId,
   verdictPresentation,
 } from "./recommendationPresentation";
 import type { DashboardRecommendation } from "./types";
@@ -11,12 +12,15 @@ export function RecommendationCard({
   recommendation,
   onToggleStar,
   starPending = false,
+  highlighted = false,
 }: {
   recommendation: DashboardRecommendation;
   /** Shows the star toggle. The caller decides whether unstarring needs confirming. */
   onToggleStar?: (recommendation: DashboardRecommendation) => void;
   /** Disables the star while its save/remove request runs. */
   starPending?: boolean;
+  /** Outlines the card, e.g. after opening it from a notification. */
+  highlighted?: boolean;
 }) {
   const verdict = verdictPresentation(
     recommendation.verdict
@@ -31,8 +35,10 @@ export function RecommendationCard({
 
   return (
     <Card
-      className="h-full overflow-hidden"
+      id={recommendationCardId(recommendation.recommendationId)}
+      className={`h-full overflow-hidden ${highlighted ? "ring-2 ring-[#7c5cff]" : ""}`}
       aria-label={`Recommendation for ${recommendation.currentDeviceName}`}
+      aria-current={highlighted ? "true" : undefined}
     >
       <div className="card-body gap-0 p-[18px]">
         <div className="flex flex-wrap items-start justify-between gap-3">

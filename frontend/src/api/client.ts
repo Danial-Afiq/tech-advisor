@@ -38,11 +38,18 @@ export async function apiFetch<T>(
     method = "GET",
     body,
     auth = true,
+    keepSessionOn401 = false,
     headers: extraHeaders,
   }: {
     method?: string;
     body?: unknown;
     auth?: boolean;
+    /**
+     * Don't sign the user out on a 401. For optional features whose routes may
+     * not exist on this server yet: the backend answers unknown routes with 401
+     * (its error page is not public), not 404.
+     */
+    keepSessionOn401?: boolean;
     /** Extra request headers, e.g. an Idempotency-Key. Never Content-Type or Authorization. */
     headers?: Record<string, string>;
   } = {}
@@ -64,7 +71,7 @@ export async function apiFetch<T>(
   }
 
   if (!response.ok) {
-    if (response.status === 401 && auth) clearSession();
+    if (response.status === 401 && auth && !keepSessionOn401) clearSession();
     throw new ApiError(response.status, await errorMessage(response));
   }
   return (response.status === 204 ? undefined : await response.json()) as T;

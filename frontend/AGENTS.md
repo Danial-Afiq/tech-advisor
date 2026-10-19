@@ -115,6 +115,8 @@ applied on top of the catalogue specs. Unknown values stay empty and cards hide
 them. Never show placeholder numbers as if they were real.
 
 **Talking to the backend:** all HTTP goes through `src/api/`.
+- `notifications.ts` has the in-app notification calls (see
+  `components/notifications/` below).
 - `client.ts` has `apiFetch`, which adds the bearer token and turns backend
   error bodies into an `ApiError` with a readable message.
 - `auth.ts` has `signIn` / `signOut`.
@@ -165,6 +167,54 @@ toolbar toggle is `savedOnly` in the same filter state; `selectedFilterCount`
 and the dropdown's Clear filters deliberately ignore it (root §26.4).
 
 ---
+
+### `components/notifications/` — in-app notifications (ticket 4.4.2)
+
+`NotificationCenter` is the self-contained top-bar bell: it wraps the shared
+`NotificationButton` (which accepts `ref`/ARIA props and caps the badge at
+99+), loads the unread count on mount and re-checks it every 45s
+(`NOTIFICATION_POLL_MS`), and opens a dropdown built from `Card`, `FormError`,
+`LoadingBlock`, `EmptyState` and `Button`. Each notification is one clickable
+row: phone icon, backend-written title and message, relative time
+(`relativeTime`: "Just now", "5m ago", …) with Read/Unread, and a blue dot
+while unread. Clicking it marks it read and navigates to
+`/dashboard?recommendation={id}`, which outlines and scrolls to that card. A
+notification whose recommendation is gone (`available: false`) says so and
+does not navigate. Each row has an × (styled like the `Modal` close button) that
+permanently deletes that notification. The panel also offers Mark all as read,
+Clear all (asks for confirmation inline first, because it deletes everything) and
+View older notifications (next page). Render it on any signed-in USER page as
+`topbarActions={<NotificationCenter />}`.
+
+**Backend contract** (`src/api/notifications.ts`, types in
+`components/notifications/types.ts`; implemented by `notification/` in the
+backend, root `AGENTS.md` §14.14):
+
+| Route | Returns |
+|---|---|
+| `GET /api/notifications?page&size` | `{ items, page, size, totalItems, totalPages }`, newest first |
+| `GET /api/notifications/unread-count` | `{ count }` |
+| `PUT /api/notifications/{id}/read` | 204 (another user's id: 404) |
+| `PUT /api/notifications/read-all` | 204 |
+| `DELETE /api/notifications/{id}` | 204; deletes the row (another user's id: 404) |
+| `DELETE /api/notifications` | 204; deletes all of the user's notifications |
+
+The backend keeps only each user's newest 10 notifications (configurable), so the
+list rarely needs a second page.
+
+Item fields: `notificationId`, `type` (`NEW_RECOMMENDATION`), `title`,
+`message`, `recommendationId` (the best recommendation in the group; null once
+deleted), `available`, `read`, `createdAt`. The text is written by the backend;
+the frontend never builds it.
+
+**Gotcha — 401 for routes that don't exist.** The backend answers *any*
+unknown route with 401, even with a valid token (its `/error` page is not in
+the security permit list). `apiFetch` signs the user out on 401, so every
+notification call passes `keepSessionOn401: true` and treats 401/404/405 as
+"unavailable" (`isNotificationsUnavailable`): the bell then shows no badge and
+the panel says notifications aren't available yet. This matters whenever the
+frontend is deployed ahead of the backend. Keep the option on any call to a
+route that may not be deployed yet.
 
 ## 4. Design tokens
 
@@ -318,10 +368,16 @@ as one deliberate change across all components, not piecemeal.
   share one responsive toolbar. Recommendation cards label the representative
   model-level amount "Indicative price", preserve "Price unavailable", and the
   toolbar displays the pricing disclaimer once per populated page. Overview
-  cards and notifications retain totals for all active recommendations. Users
+  cards retain totals for all active recommendations. Users
   star a card to save it (persisted), see saved ones with the Saved (n)
   toolbar toggle, and confirm in a `Modal` before unstarring. See root §23.4,
-  §26.4 and §27.9.
+  §26.4 and §27.9. A `?recommendation={id}` query (set when a notification
+  is opened) outlines and scrolls to that card, or explains with a `Callout`
+  that it is no longer active or is hidden by the current filters.
+- **In-app notifications (ticket 4.4.2).** The top-bar bell on `/dashboard`
+  and `/devices` is `NotificationCenter` (replacing the dashboard's attention
+  count and the devices page's hard-coded `1`). See
+  `components/notifications/` above and root §14.14.
 - Signed in, the device form suggests smartphones from the catalogue as the
   user types a model name. Picking one sends its `productId` and prefills the
   spec fields. Only specs the user changes are saved as `specOverrides`,

@@ -3,14 +3,18 @@ package com.springboot.backend.recommendation;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 import com.springboot.backend.dto.DashboardRecommendationResponse;
+import com.springboot.backend.recommendation.RecommendationsPersisted.NotableRecommendation;
+import com.springboot.backend.recommendation.classification.TierMapper;
 
 /**
  * Typed-column persistence for {@code recommendations}, plus the degraded-path
@@ -26,11 +30,14 @@ import com.springboot.backend.dto.DashboardRecommendationResponse;
 public class RecommendationRepository {
     private final JdbcTemplate db;
     private final TransactionTemplate tx;
+    private final ApplicationEventPublisher events;
     private final JsonMapper json = JsonMapper.builder().findAndAddModules().build();
 
-    public RecommendationRepository(JdbcTemplate db, PlatformTransactionManager manager) {
+    public RecommendationRepository(
+            JdbcTemplate db, PlatformTransactionManager manager, ApplicationEventPublisher events) {
         this.db = db;
         this.tx = new TransactionTemplate(manager);
+        this.events = events;
     }
 
     /**
@@ -43,7 +50,9 @@ public class RecommendationRepository {
      */
     public long save(RecommendationRecord rec, Map<String, Object> degradedLog) {
         Long id = tx.execute(status -> {
-            long newId = supersedeAndInsert(rec);
+            Notables notables = new Notables();
+            long newId = supersedeAndInsert(rec, notables);
+            notables.publish();
 
             if (degradedLog != null) {
                 db.update(
@@ -81,7 +90,9 @@ public class RecommendationRepository {
 
         Integer deleted = tx.execute(status -> {
             int removed = deleteDropped(currentDeviceId, shortlistedProductIds);
-            records.forEach(this::supersedeAndInsert);
+            Notables notables = new Notables();
+            records.forEach(rec -> supersedeAndInsert(rec, notables));
+            notables.publish();
             return removed;
         });
         return deleted;
@@ -211,7 +222,9 @@ public class RecommendationRepository {
                     : db.update(
                             "DELETE FROM recommendations WHERE current_device_id=? AND candidate_product_id=?",
                             currentDeviceId, candidateProductId);
-            records.forEach(this::supersedeAndInsert);
+            Notables notables = new Notables();
+            records.forEach(rec -> supersedeAndInsert(rec, notables));
+            notables.publish();
             return removed;
         });
         return deleted;
@@ -237,10 +250,28 @@ public class RecommendationRepository {
      * Supersedes the previous ACTIVE row for the same (user, candidate) pair,
      * if any, then inserts the new one: this is "per-user/per-product"
      * persistence, one current answer per pair. The user's star is carried
-     * onto the new row, so re-assessment never silently unsaves it. Callers
-     * own the transaction.
+     * onto the new row, so re-assessment never silently unsaves it.
+     *
+     * <p>Notifications work per <em>device</em>. The ACTIVE index is per (user,
+     * candidate), so two of a user's devices can keep taking the same row from
+     * each other; comparing against the ACTIVE row would re-notify on every
+     * re-run. Instead the new row is compared with this device's own most recent
+     * row for the candidate, superseded or not, and recorded in {@code notables}
+     * only when it is not {@code NO_MEANINGFUL_CHANGE} and there is no such row
+     * or its verdict differs. Every notification linking to any of this device's
+     * rows for the candidate is re-pointed at the new row, so it keeps (or gets
+     * back) a live link; one whose row now belongs to another device reads as no
+     * longer available until its own device holds the row again. Callers own the
+     * transaction.
      */
-    private long supersedeAndInsert(RecommendationRecord rec) {
+    private long supersedeAndInsert(RecommendationRecord rec, Notables notables) {
+        List<String> deviceHistory = db.queryForList(
+                "SELECT verdict FROM recommendations "
+                        + "WHERE user_id=? AND candidate_product_id=? AND current_device_id IS NOT DISTINCT FROM ?::bigint "
+                        + "ORDER BY created_at DESC, id DESC LIMIT 1",
+                String.class,
+                rec.userId(), rec.candidateProductId(), rec.currentDeviceId());
+
         boolean starred = db.queryForList(
                 "UPDATE recommendations SET status='SUPERSEDED' "
                         + "WHERE user_id=? AND candidate_product_id=? AND status='ACTIVE' "
@@ -249,7 +280,7 @@ public class RecommendationRepository {
                 rec.userId(), rec.candidateProductId())
                 .contains(Boolean.TRUE);
 
-        return db.queryForObject(
+        long newId = db.queryForObject(
                 "INSERT INTO recommendations "
                         + "(user_id, current_device_id, candidate_product_id, trigger_event_id, verdict, "
                         + "confidence, input_snapshot, factor_analysis, reasoning, ai_model, prompt_version, "
@@ -268,6 +299,41 @@ public class RecommendationRepository {
                 rec.aiModel(),
                 rec.promptVersion(),
                 starred);
+
+        if (!deviceHistory.isEmpty()) {
+            db.update(
+                    "UPDATE notifications SET recommendation_id=? WHERE recommendation_id IN ("
+                            + "SELECT id FROM recommendations WHERE user_id=? AND candidate_product_id=? "
+                            + "AND current_device_id IS NOT DISTINCT FROM ?::bigint AND id<>?)",
+                    newId, rec.userId(), rec.candidateProductId(), rec.currentDeviceId(), newId);
+        }
+
+        boolean verdictChanged = deviceHistory.isEmpty() || !rec.verdict().equals(deviceHistory.getFirst());
+        if (verdictChanged && !TierMapper.NO_MEANINGFUL_CHANGE.equals(rec.verdict())) {
+            notables.add(rec, new NotableRecommendation(newId, rec.candidateProductId(), rec.verdict()));
+        }
+        return newId;
+    }
+
+    /**
+     * Notable recommendations from one save, grouped per (user, device), each
+     * group published as one {@link RecommendationsPersisted} - so one
+     * evaluation of one device produces at most one notification.
+     */
+    private final class Notables {
+        private record Key(long userId, Long currentDeviceId) {}
+
+        private final Map<Key, List<NotableRecommendation>> byDevice = new LinkedHashMap<>();
+
+        void add(RecommendationRecord rec, NotableRecommendation notable) {
+            byDevice.computeIfAbsent(new Key(rec.userId(), rec.currentDeviceId()), key -> new ArrayList<>())
+                    .add(notable);
+        }
+
+        void publish() {
+            byDevice.forEach((key, notable) ->
+                    events.publishEvent(new RecommendationsPersisted(key.userId(), key.currentDeviceId(), notable)));
+        }
     }
 
     private int deleteDropped(long currentDeviceId, Collection<Long> shortlistedProductIds) {
