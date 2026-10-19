@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -50,12 +51,20 @@ public class NotificationService {
     private final NotificationRepository notifications;
     private final UserRepository users;
     private final TransactionTemplate requiresNew;
+    private final int maxPerUser;
     private final JsonMapper json = JsonMapper.builder().findAndAddModules().build();
 
     public NotificationService(
-            NotificationRepository notifications, UserRepository users, PlatformTransactionManager manager) {
+            NotificationRepository notifications,
+            UserRepository users,
+            PlatformTransactionManager manager,
+            @Value("${notifications.max-per-user:10}") int maxPerUser) {
+        if (maxPerUser < 1) {
+            throw new IllegalStateException("notifications.max-per-user must be at least 1");
+        }
         this.notifications = notifications;
         this.users = users;
+        this.maxPerUser = maxPerUser;
         this.requiresNew = new TransactionTemplate(manager);
         // AFTER_COMMIT runs while the committed transaction is still bound; writes need their own.
         this.requiresNew.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -96,6 +105,8 @@ public class NotificationService {
         }
 
         notifications.insert(event.userId(), TYPE_NEW_RECOMMENDATION, title, message, top.recommendationId());
+        // Only the newest few are kept, so the bell never piles up.
+        notifications.trimToNewest(event.userId(), maxPerUser);
     }
 
     private void recordFailure(RecommendationsPersisted event, RuntimeException failure) {

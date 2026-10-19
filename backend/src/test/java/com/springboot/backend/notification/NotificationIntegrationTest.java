@@ -151,6 +151,79 @@ class NotificationIntegrationTest {
     }
 
     @Test
+    void twoDevicesTakingTurnsOverOneCandidateDoNotRenotify() throws Exception {
+        long secondDevice = db.queryForObject(
+                "INSERT INTO user_devices (user_id, custom_name, is_current) VALUES (?, 'Work phone', TRUE) RETURNING id",
+                Long.class, owner.getId());
+        RecommendationRecord onSecond = new RecommendationRecord(owner.getId(), secondDevice, productA, null,
+                "WORTH_WATCHING", null, Map.of(), Map.of(), "reasoning", null, null);
+
+        evaluate(rec(productA, "WORTH_WATCHING"));
+        recommendations.replaceForDevice(secondDevice, List.of(productA), List.of(onSecond));
+        assertThat(notifications()).hasSize(2);
+
+        // Each re-run takes the (user, candidate) ACTIVE row back; nothing changed for either device.
+        evaluate(rec(productA, "WORTH_WATCHING"));
+        recommendations.replaceForDevice(secondDevice, List.of(productA), List.of(onSecond));
+        evaluate(rec(productA, "WORTH_WATCHING"));
+
+        assertThat(notifications()).hasSize(2);
+        // The first device holds the row again, so its notification opens the live card.
+        long firstDevicesNotification = (Long) notifications().get(1).get("id");
+        assertThat(db.queryForObject("SELECT recommendation_id FROM notifications WHERE id=?",
+                Long.class, firstDevicesNotification)).isEqualTo(activeId(productA));
+    }
+
+    @Test
+    void aMarketEventEvaluationOfOneCandidateNotifiesOnce() {
+        evaluate(rec(productA, "WORTH_WATCHING"));
+
+        // The market-event trigger re-evaluates a single (device, candidate) pair.
+        recommendations.replaceForCandidate(deviceId, productB, true, List.of(rec(productB, "WORTH_CONSIDERING")));
+        recommendations.replaceForCandidate(deviceId, productB, true, List.of(rec(productB, "WORTH_CONSIDERING")));
+
+        List<Map<String, Object>> rows = notifications();
+        assertThat(rows).hasSize(2);
+        assertThat((String) rows.getFirst().get("message")).endsWith("Bravo is worth considering for your Daily phone.");
+        assertThat(rows.getFirst().get("recommendation_id")).isEqualTo(activeId(productB));
+    }
+
+    @Test
+    void onlyTheNewestTenAreKept() throws Exception {
+        // Each verdict change creates one notification: 12 in total.
+        for (int i = 0; i < 12; i++) {
+            evaluate(rec(productA, i % 2 == 0 ? "WORTH_WATCHING" : "WORTH_CONSIDERING"));
+        }
+
+        List<Map<String, Object>> rows = notifications();
+        assertThat(rows).hasSize(10);
+        assertThat((String) rows.getFirst().get("message")).contains("worth considering");
+        mvc.perform(get("/api/notifications").header("Authorization", "Bearer " + jwtService.generateToken(owner)))
+                .andExpect(jsonPath("$.totalItems").value(10))
+                .andExpect(jsonPath("$.totalPages").value(1));
+        mvc.perform(get("/api/notifications/unread-count")
+                        .header("Authorization", "Bearer " + jwtService.generateToken(owner)))
+                .andExpect(jsonPath("$.count").value(10));
+    }
+
+    @Test
+    void trimmingOneUserLeavesOtherUsersAlone() {
+        long othersDevice = db.queryForObject(
+                "INSERT INTO user_devices (user_id, custom_name, is_current) VALUES (?, 'Other phone', TRUE) RETURNING id",
+                Long.class, otherUser.getId());
+        recommendations.replaceForDevice(othersDevice, List.of(productB), List.of(new RecommendationRecord(
+                otherUser.getId(), othersDevice, productB, null, "WORTH_WATCHING", null,
+                Map.of(), Map.of(), "reasoning", null, null)));
+
+        for (int i = 0; i < 12; i++) {
+            evaluate(rec(productA, i % 2 == 0 ? "WORTH_WATCHING" : "WORTH_CONSIDERING"));
+        }
+
+        assertThat(db.queryForObject(
+                "SELECT COUNT(*) FROM notifications WHERE user_id=?", Long.class, otherUser.getId())).isEqualTo(1);
+    }
+
+    @Test
     void noMeaningfulChangeAloneCreatesNothing() {
         evaluate(rec(productA, "NO_MEANINGFUL_CHANGE"));
 

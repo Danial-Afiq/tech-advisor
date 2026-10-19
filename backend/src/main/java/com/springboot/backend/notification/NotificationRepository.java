@@ -28,6 +28,26 @@ public class NotificationRepository {
     }
 
     /**
+     * Keeps only the user's newest {@code keep} notifications (read or not),
+     * deleting the rest.
+     *
+     * @return how many were deleted
+     */
+    public int trimToNewest(long userId, int keep) {
+        return db.update(
+                """
+                DELETE FROM notifications
+                WHERE user_id = ?
+                  AND id NOT IN (
+                      SELECT id FROM notifications
+                      WHERE user_id = ?
+                      ORDER BY created_at DESC, id DESC
+                      LIMIT ?)
+                """,
+                userId, userId, keep);
+    }
+
+    /**
      * Newest first. {@code available} is true only while the linked
      * recommendation is exactly what the dashboard shows: ACTIVE and on a
      * current device of this user.

@@ -178,6 +178,19 @@ describe("NotificationCenter", () => {
     expect(panel.queryByRole("button", { name: "View older notifications" })).not.toBeInTheDocument();
   });
 
+  it("does not repeat a notification when paging shifts", async () => {
+    mocks.listNotifications
+      .mockResolvedValueOnce(pageOf([grouped], 0, 2))
+      .mockResolvedValueOnce(pageOf([grouped, older], 1, 2));
+    const user = renderCenter();
+    const panel = await openPanel(user);
+
+    await user.click(await panel.findByRole("button", { name: "View older notifications" }));
+
+    await panel.findByRole("button", { name: /^New upgrade recommendation!/ });
+    expect(panel.getAllByRole("button", { name: /New upgrade recommendations!/ })).toHaveLength(1);
+  });
+
   it("shows an empty state when there are no notifications", async () => {
     mocks.listNotifications.mockResolvedValue(pageOf([]));
     const user = renderCenter();

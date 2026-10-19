@@ -252,23 +252,33 @@ public class RecommendationRepository {
      * persistence, one current answer per pair. The user's star is carried
      * onto the new row, so re-assessment never silently unsaves it.
      *
-     * <p>Notifications only look at the previous row <em>for the same device</em>.
-     * The ACTIVE index is per (user, candidate), so another of the user's devices
-     * can take a row over; that row is not this device's history. A notification
-     * linking to a same-device predecessor is re-pointed at the new row, so it
-     * keeps opening the live card, while one whose row was taken over by another
-     * device keeps its old link and reads as no longer available. The new row is
-     * recorded in {@code notables} when it is not {@code NO_MEANINGFUL_CHANGE}
-     * and is new for this device or has a different verdict from this device's
-     * previous row. Callers own the transaction.
+     * <p>Notifications work per <em>device</em>. The ACTIVE index is per (user,
+     * candidate), so two of a user's devices can keep taking the same row from
+     * each other; comparing against the ACTIVE row would re-notify on every
+     * re-run. Instead the new row is compared with this device's own most recent
+     * row for the candidate, superseded or not, and recorded in {@code notables}
+     * only when it is not {@code NO_MEANINGFUL_CHANGE} and there is no such row
+     * or its verdict differs. Every notification linking to any of this device's
+     * rows for the candidate is re-pointed at the new row, so it keeps (or gets
+     * back) a live link; one whose row now belongs to another device reads as no
+     * longer available until its own device holds the row again. Callers own the
+     * transaction.
      */
     private long supersedeAndInsert(RecommendationRecord rec, Notables notables) {
-        List<Map<String, Object>> previous = db.queryForList(
+        List<String> deviceHistory = db.queryForList(
+                "SELECT verdict FROM recommendations "
+                        + "WHERE user_id=? AND candidate_product_id=? AND current_device_id IS NOT DISTINCT FROM ?::bigint "
+                        + "ORDER BY created_at DESC, id DESC LIMIT 1",
+                String.class,
+                rec.userId(), rec.candidateProductId(), rec.currentDeviceId());
+
+        boolean starred = db.queryForList(
                 "UPDATE recommendations SET status='SUPERSEDED' "
                         + "WHERE user_id=? AND candidate_product_id=? AND status='ACTIVE' "
-                        + "RETURNING id, starred, verdict, current_device_id",
-                rec.userId(), rec.candidateProductId());
-        boolean starred = previous.stream().anyMatch(row -> Boolean.TRUE.equals(row.get("starred")));
+                        + "RETURNING starred",
+                Boolean.class,
+                rec.userId(), rec.candidateProductId())
+                .contains(Boolean.TRUE);
 
         long newId = db.queryForObject(
                 "INSERT INTO recommendations "
@@ -290,23 +300,15 @@ public class RecommendationRepository {
                 rec.promptVersion(),
                 starred);
 
-        List<Map<String, Object>> sameDevice = previous.stream()
-                .filter(row -> rec.currentDeviceId() != null
-                        && row.get("current_device_id") instanceof Number device
-                        && device.longValue() == rec.currentDeviceId())
-                .toList();
-
-        if (!sameDevice.isEmpty()) {
-            List<Object> args = new ArrayList<>();
-            args.add(newId);
-            sameDevice.forEach(row -> args.add(row.get("id")));
+        if (!deviceHistory.isEmpty()) {
             db.update(
                     "UPDATE notifications SET recommendation_id=? WHERE recommendation_id IN ("
-                            + String.join(",", Collections.nCopies(sameDevice.size(), "?")) + ")",
-                    args.toArray());
+                            + "SELECT id FROM recommendations WHERE user_id=? AND candidate_product_id=? "
+                            + "AND current_device_id IS NOT DISTINCT FROM ?::bigint AND id<>?)",
+                    newId, rec.userId(), rec.candidateProductId(), rec.currentDeviceId(), newId);
         }
 
-        boolean verdictChanged = sameDevice.stream().noneMatch(row -> rec.verdict().equals(row.get("verdict")));
+        boolean verdictChanged = deviceHistory.isEmpty() || !rec.verdict().equals(deviceHistory.getFirst());
         if (verdictChanged && !TierMapper.NO_MEANINGFUL_CHANGE.equals(rec.verdict())) {
             notables.add(rec, new NotableRecommendation(newId, rec.candidateProductId(), rec.verdict()));
         }

@@ -72,9 +72,12 @@ export function NotificationCenter() {
     listNotifications(pageToLoad)
       .then((result) => {
         if (request !== requestRef.current) return;
-        setItems((current) =>
-          pageToLoad === 0 ? result.items : [...current, ...result.items]
-        );
+        setItems((current) => {
+          if (pageToLoad === 0) return result.items;
+          // Offset paging shifts when a new notification arrives; skip repeats.
+          const shown = new Set(current.map((item) => item.notificationId));
+          return [...current, ...result.items.filter((item) => !shown.has(item.notificationId))];
+        });
         setPage(result.page);
         setTotalPages(result.totalPages);
         setUnavailable(false);

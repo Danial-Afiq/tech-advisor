@@ -1767,10 +1767,11 @@ The recommendation's details are **not** copied here; they stay in `recommendati
 When one is created (`notification/NotificationService`):
 - `RecommendationRepository` publishes `RecommendationsPersisted` from the
   transaction that saved an evaluation, listing only **notable** rows: verdict other
-  than `NO_MEANINGFUL_CHANGE`, and either no previous `ACTIVE` row for that
-  candidate **on the same device** or a different verdict from it. Because the
-  `ACTIVE` index is per (user, candidate), not per device (§18.2), a second device
-  can take over another device's row; that is still new for the second device.
+  than `NO_MEANINGFUL_CHANGE`, and either no earlier row for that candidate **on the
+  same device** (superseded or not) or a different verdict from that device's most
+  recent one. It is judged per device because the `ACTIVE` index is per
+  (user, candidate), not per device (§18.2): two devices can keep taking the same row
+  from each other, and comparing with the `ACTIVE` row would re-notify on every run.
 - **One notification per evaluation per device**, grouping its notable rows
   ("We found 3 new or updated upgrade options for your iPhone 13…"; a single one
   names the product and verdict). It links the best row (strong > considering >
@@ -1779,12 +1780,16 @@ When one is created (`notification/NotificationService`):
   deterministic verdict (§18.12). This is how "never a duplicate" is met.
 - Created `AFTER_COMMIT` in its own transaction. Any failure is caught and written to
   `system_log` (§14.13); the recommendations are already committed and unaffected.
+- **Capped per user.** After each insert, only the user's newest
+  `notifications.max-per-user` (`NOTIFICATIONS_MAX_PER_USER`, default **10**) are kept;
+  older ones are deleted, read or unread. The cap is per user and never touches
+  recommendations.
 
-Link lifecycle: supersede-and-insert **re-points** `recommendation_id` from the
-superseded row to its replacement **on the same device** (§18.11), so the link keeps
-opening the live card. When another device takes the row over, the old link is
-left alone and reads as no longer available, rather than opening another device's
-card.
+Link lifecycle: supersede-and-insert **re-points** every notification linking to
+any of the device's rows for that candidate onto the new row (§18.11), so the link
+keeps opening the live card. While another device holds the row, the old link reads
+as no longer available rather than opening another device's card; it becomes live
+again when its own device next holds the row.
 A deleted recommendation (dropped off the shortlist) leaves `NULL`. The API's
 `available` flag is true only while the linked row is `ACTIVE` on a current device of
 the user, i.e. exactly what the dashboard shows.
@@ -1803,8 +1808,9 @@ tier, no read/tier filters, no dismiss. The frontend polls the unread count ever
 45s; there is no push/WebSocket.
 
 Tests: `NotificationIntegrationTest` (grouping, best link, unchanged re-run, AI
-re-save, verdict change, `NO_MEANINGFUL_CHANGE` only, link re-pointing and
-deletion, endpoints, pagination, other user, 401) and
+re-save, verdict change, market-event single candidate, `NO_MEANINGFUL_CHANGE` only,
+two-device take-over and turn-taking, link re-pointing and deletion, the 10-per-user
+cap and its per-user scope, endpoints, pagination, other user, 401) and
 `NotificationFailureIntegrationTest` (recommendation kept, failure logged).
 
 ---
@@ -2957,6 +2963,7 @@ JWT_EXPIRATION_SECONDS    # optional; defaults to 3600 and must be positive
 ADMIN_EMAIL               # required bootstrap administrator email
 ADMIN_PASSWORD            # required; minimum 12 characters
 RECOMMENDATION_AI_ASSESSMENT_ENABLED # optional, commented out; default true (§18.12)
+NOTIFICATIONS_MAX_PER_USER # optional, commented out; default 10 (§14.14)
 ```
 
 `AI_API_KEY` and `INGESTION_DEMO_PASSWORD` appeared in an earlier version of this

@@ -195,6 +195,9 @@ backend, root `AGENTS.md` §14.14):
 | `PUT /api/notifications/{id}/read` | 204 (another user's id: 404) |
 | `PUT /api/notifications/read-all` | 204 |
 
+The backend keeps only each user's newest 10 notifications (configurable), so the
+list rarely needs a second page.
+
 Item fields: `notificationId`, `type` (`NEW_RECOMMENDATION`), `title`,
 `message`, `recommendationId` (the best recommendation in the group; null once
 deleted), `available`, `read`, `createdAt`. The text is written by the backend;
