@@ -1,48 +1,20 @@
-import type {
-  AppNotification,
-  NotificationReadFilter,
-  NotificationTier,
-} from "./types";
-
-/*
- * Display only. The tier itself is decided by the backend from the verdict and
- * evidence grade; never recompute it here.
- */
-const TIER_PRESENTATIONS: Record<
-  NotificationTier,
-  { label: string; badgeClass: string }
-> = {
-  HIGH: { label: "High confidence", badgeClass: "badge-primary badge-outline" },
-  MEDIUM: { label: "Medium confidence", badgeClass: "badge-warning badge-outline" },
-  LOW: { label: "Low confidence", badgeClass: "badge-ghost" },
-};
-
-export function tierPresentation(tier: NotificationTier) {
-  return TIER_PRESENTATIONS[tier];
-}
-
-export const READ_FILTER_OPTIONS = [
-  { value: "all", label: "All" },
-  { value: "unread", label: "Unread" },
-  { value: "read", label: "Read" },
-] as const satisfies readonly { value: NotificationReadFilter; label: string }[];
-
-export const TIER_FILTER_OPTIONS = [
-  { value: "", label: "All tiers" },
-  { value: "HIGH", label: "High confidence" },
-  { value: "MEDIUM", label: "Medium confidence" },
-  { value: "LOW", label: "Low confidence" },
-] as const;
-
-export function parseTierFilter(value: string): NotificationTier | null {
-  return value === "HIGH" || value === "MEDIUM" || value === "LOW" ? value : null;
-}
-
-export function notificationProductName(notification: AppNotification) {
-  return [notification.candidateBrand, notification.candidateModelName]
-    .filter(Boolean)
-    .join(" ");
-}
+import { formatDate } from "../devices/deviceOptions";
 
 /** Query string the dashboard reads to scroll to and highlight one recommendation. */
 export const RECOMMENDATION_QUERY_PARAM = "recommendation";
+
+/** How often the bell re-checks the unread count while a page is open. */
+export const NOTIFICATION_POLL_MS = 45_000;
+
+/** "Just now", "5m ago", "3h ago", "2d ago", then a date. */
+export function relativeTime(createdAt: string, now = Date.now()) {
+  const minutes = Math.floor((now - new Date(createdAt).getTime()) / 60_000);
+  if (Number.isNaN(minutes)) return createdAt;
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return formatDate(createdAt);
+}

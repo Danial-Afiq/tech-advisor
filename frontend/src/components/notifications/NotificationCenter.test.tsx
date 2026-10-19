@@ -1,9 +1,10 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
 import { NotificationCenter } from "./NotificationCenter";
+import { NOTIFICATION_POLL_MS, relativeTime } from "./notificationPresentation";
 import type { AppNotification, NotificationPage } from "./types";
 
 const mocks = vi.hoisted(() => ({
@@ -11,7 +12,6 @@ const mocks = vi.hoisted(() => ({
   getUnreadNotificationCount: vi.fn(),
   markNotificationRead: vi.fn(),
   markAllNotificationsRead: vi.fn(),
-  dismissNotification: vi.fn(),
 }));
 
 vi.mock("../../api/notifications", async (importOriginal) => ({
@@ -19,30 +19,25 @@ vi.mock("../../api/notifications", async (importOriginal) => ({
   ...mocks,
 }));
 
-const strong: AppNotification = {
+const grouped: AppNotification = {
   notificationId: 1,
+  type: "NEW_RECOMMENDATION",
+  title: "New upgrade recommendations!",
+  message: "We found 3 new upgrade options for your iPhone 13. See what's worth upgrading to.",
   recommendationId: 42,
-  currentDeviceName: "My current phone",
-  candidateBrand: "Samsung",
-  candidateModelName: "Galaxy S26",
-  verdict: "STRONG_UPGRADE_CANDIDATE",
-  evidenceGrade: "A",
-  tier: "HIGH",
+  available: true,
   read: false,
-  actionable: true,
-  createdAt: "2026-10-18T09:00:00Z",
+  createdAt: new Date().toISOString(),
 };
 
-const watching: AppNotification = {
-  ...strong,
+const older: AppNotification = {
+  ...grouped,
   notificationId: 2,
+  title: "New upgrade recommendation!",
+  message: "Google Pixel 11 is worth watching for your iPhone 13.",
   recommendationId: 43,
-  candidateBrand: "Google",
-  candidateModelName: "Pixel 11",
-  verdict: "WORTH_WATCHING",
-  evidenceGrade: "-",
-  tier: "LOW",
   read: true,
+  createdAt: "2026-10-01T09:00:00Z",
 };
 
 function pageOf(items: AppNotification[], page = 0, totalPages = 1): NotificationPage {
@@ -67,20 +62,22 @@ function renderCenter() {
 }
 
 async function openPanel(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(screen.getByRole("button", { name: /^Notifications/ }));
+  await user.click(bell());
   return within(screen.getByRole("dialog", { name: "Notifications" }));
 }
 
 const bell = () => screen.getByRole("button", { name: /^Notifications/ });
-const item = (name: RegExp) => screen.getByRole("listitem", { name });
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getUnreadNotificationCount.mockResolvedValue(1);
-  mocks.listNotifications.mockResolvedValue(pageOf([strong, watching]));
+  mocks.listNotifications.mockResolvedValue(pageOf([grouped, older]));
   mocks.markNotificationRead.mockResolvedValue(undefined);
   mocks.markAllNotificationsRead.mockResolvedValue(undefined);
-  mocks.dismissNotification.mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("NotificationCenter", () => {
@@ -91,108 +88,94 @@ describe("NotificationCenter", () => {
     expect(await screen.findByRole("button", { name: "Notifications, 3 unread" })).toBeInTheDocument();
   });
 
-  it("lists notifications with product, verdict, evidence grade and tier", async () => {
-    const user = renderCenter();
-    const panel = await openPanel(user);
+  it("re-checks the unread count while the page is open", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    renderCenter();
+    await waitFor(() => expect(mocks.getUnreadNotificationCount).toHaveBeenCalledTimes(1));
 
-    expect(mocks.listNotifications).toHaveBeenCalledWith({ read: "all", tier: null, page: 0, size: 10 });
-    const unread = await panel.findByRole("listitem", { name: "Unread: Samsung Galaxy S26 for My current phone" });
-    expect(within(unread).getByText("Strong upgrade candidate")).toBeInTheDocument();
-    expect(within(unread).getByText("High confidence")).toBeInTheDocument();
-    expect(within(unread).getByText("Owner evidence: A")).toBeInTheDocument();
+    mocks.getUnreadNotificationCount.mockResolvedValue(4);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(NOTIFICATION_POLL_MS);
+    });
 
-    const read = item(/^Google Pixel 11/);
-    expect(within(read).getByText("Low confidence")).toBeInTheDocument();
-    expect(within(read).getByText("Not enough evidence yet")).toBeInTheDocument();
-    expect(within(read).queryByRole("button", { name: "Mark as read" })).not.toBeInTheDocument();
+    expect(mocks.getUnreadNotificationCount).toHaveBeenCalledTimes(2);
+    expect(await screen.findByRole("button", { name: "Notifications, 4 unread" })).toBeInTheDocument();
   });
 
-  it("filters by read state and tier on the server", async () => {
+  it("lists the title, message, time and read state", async () => {
     const user = renderCenter();
     const panel = await openPanel(user);
 
-    await user.selectOptions(panel.getByRole("combobox", { name: "Show" }), "unread");
-    expect(mocks.listNotifications).toHaveBeenLastCalledWith({ read: "unread", tier: null, page: 0, size: 10 });
+    expect(mocks.listNotifications).toHaveBeenCalledWith(0);
+    const unread = await panel.findByRole("button", { name: /^Unread: New upgrade recommendations!/ });
+    expect(unread).toHaveTextContent("We found 3 new upgrade options for your iPhone 13.");
+    expect(unread).toHaveTextContent("Just now · Unread");
 
-    await user.selectOptions(panel.getByRole("combobox", { name: "Tier" }), "HIGH");
-    expect(mocks.listNotifications).toHaveBeenLastCalledWith({ read: "unread", tier: "HIGH", page: 0, size: 10 });
+    const read = panel.getByRole("button", { name: /^New upgrade recommendation!/ });
+    expect(read).toHaveTextContent("· Read");
   });
 
-  it("marks one notification as read and lowers the unread count", async () => {
+  it("opens the recommendation card and marks the notification read", async () => {
     const user = renderCenter();
     const panel = await openPanel(user);
-    const unread = await panel.findByRole("listitem", { name: /^Unread: Samsung/ });
 
-    await user.click(within(unread).getByRole("button", { name: "Mark as read" }));
+    await user.click(await panel.findByRole("button", { name: /^Unread: New upgrade recommendations!/ }));
 
     expect(mocks.markNotificationRead).toHaveBeenCalledWith(1);
-    expect(await panel.findByRole("listitem", { name: /^Samsung Galaxy S26/ })).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("/dashboard?recommendation=42");
+    expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
     expect(bell()).toHaveAccessibleName("Notifications");
+  });
+
+  it("still opens the recommendation when marking it read fails", async () => {
+    mocks.markNotificationRead.mockRejectedValue(new ApiError(500, "Something went wrong"));
+    const user = renderCenter();
+    const panel = await openPanel(user);
+
+    await user.click(await panel.findByRole("button", { name: /^Unread: New upgrade/ }));
+
+    expect(screen.getByTestId("location")).toHaveTextContent("/dashboard?recommendation=42");
+  });
+
+  it("does not navigate for a recommendation that is no longer available", async () => {
+    mocks.listNotifications.mockResolvedValue(
+      pageOf([{ ...grouped, available: false }, { ...older, recommendationId: null, available: false }])
+    );
+    const user = renderCenter();
+    const panel = await openPanel(user);
+
+    await user.click(await panel.findByRole("button", { name: /^Unread: New upgrade/ }));
+
+    expect(mocks.markNotificationRead).toHaveBeenCalledWith(1);
+    expect(screen.getByTestId("location")).toHaveTextContent("/devices");
+    expect(panel.getAllByText("This recommendation is no longer available.")).toHaveLength(2);
   });
 
   it("marks all notifications as read", async () => {
     const user = renderCenter();
     const panel = await openPanel(user);
-    await panel.findByRole("listitem", { name: /^Unread: Samsung/ });
+    await panel.findByRole("button", { name: /^Unread: New upgrade/ });
 
     await user.click(panel.getByRole("button", { name: "Mark all as read" }));
 
     expect(mocks.markAllNotificationsRead).toHaveBeenCalled();
-    expect(await panel.findByRole("listitem", { name: /^Samsung Galaxy S26/ })).toBeInTheDocument();
+    expect(panel.queryByRole("button", { name: /^Unread:/ })).not.toBeInTheDocument();
     expect(panel.getByRole("button", { name: "Mark all as read" })).toBeDisabled();
   });
 
-  it("dismisses a notification without touching the recommendation", async () => {
-    const user = renderCenter();
-    const panel = await openPanel(user);
-    await panel.findByRole("listitem", { name: /^Unread: Samsung/ });
-
-    await user.click(panel.getByRole("button", { name: "Dismiss Samsung Galaxy S26 for My current phone" }));
-
-    expect(mocks.dismissNotification).toHaveBeenCalledWith(1);
-    await waitFor(() => {
-      expect(panel.queryByRole("listitem", { name: /Samsung Galaxy S26/ })).not.toBeInTheDocument();
-    });
-    expect(bell()).toHaveAccessibleName("Notifications");
-  });
-
-  it("opens the recommendation on the dashboard and marks it read", async () => {
-    const user = renderCenter();
-    const panel = await openPanel(user);
-    const unread = await panel.findByRole("listitem", { name: /^Unread: Samsung/ });
-
-    await user.click(within(unread).getByRole("button", { name: /View recommendation/ }));
-
-    expect(mocks.markNotificationRead).toHaveBeenCalledWith(1);
-    expect(screen.getByTestId("location")).toHaveTextContent("/dashboard?recommendation=42");
-    expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
-  });
-
-  it("does not offer to open a superseded or removed recommendation", async () => {
-    mocks.listNotifications.mockResolvedValue(
-      pageOf([{ ...strong, actionable: false }, { ...watching, recommendationId: null, actionable: false }])
-    );
-    const user = renderCenter();
-    const panel = await openPanel(user);
-    await panel.findByRole("listitem", { name: /^Unread: Samsung/ });
-
-    expect(panel.queryByRole("button", { name: /View recommendation/ })).not.toBeInTheDocument();
-    expect(panel.getAllByText("This recommendation has since been updated or removed.")).toHaveLength(2);
-  });
-
-  it("loads further pages", async () => {
+  it("loads older notifications", async () => {
     mocks.listNotifications
-      .mockResolvedValueOnce(pageOf([strong], 0, 2))
-      .mockResolvedValueOnce(pageOf([watching], 1, 2));
+      .mockResolvedValueOnce(pageOf([grouped], 0, 2))
+      .mockResolvedValueOnce(pageOf([older], 1, 2));
     const user = renderCenter();
     const panel = await openPanel(user);
 
-    await user.click(await panel.findByRole("button", { name: "Load more" }));
+    await user.click(await panel.findByRole("button", { name: "View older notifications" }));
 
-    expect(mocks.listNotifications).toHaveBeenLastCalledWith({ read: "all", tier: null, page: 1, size: 10 });
-    expect(await panel.findByRole("listitem", { name: /^Google Pixel 11/ })).toBeInTheDocument();
-    expect(panel.getByRole("listitem", { name: /Samsung Galaxy S26/ })).toBeInTheDocument();
-    expect(panel.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    expect(mocks.listNotifications).toHaveBeenLastCalledWith(1);
+    expect(await panel.findByRole("button", { name: /^New upgrade recommendation!/ })).toBeInTheDocument();
+    expect(panel.getByRole("button", { name: /^Unread: New upgrade recommendations!/ })).toBeInTheDocument();
+    expect(panel.queryByRole("button", { name: "View older notifications" })).not.toBeInTheDocument();
   });
 
   it("shows an empty state when there are no notifications", async () => {
@@ -203,21 +186,17 @@ describe("NotificationCenter", () => {
     expect(await panel.findByRole("heading", { name: "No notifications yet" })).toBeInTheDocument();
   });
 
-  it("shows an error and keeps the item when an action fails", async () => {
-    mocks.dismissNotification.mockRejectedValue(new ApiError(500, "Something went wrong"));
+  it("shows an error when the list fails to load", async () => {
+    mocks.listNotifications.mockRejectedValue(new ApiError(500, "Something went wrong"));
     const user = renderCenter();
     const panel = await openPanel(user);
-    await panel.findByRole("listitem", { name: /^Unread: Samsung/ });
-
-    await user.click(panel.getByRole("button", { name: /^Dismiss Samsung/ }));
 
     expect(await panel.findByRole("alert")).toHaveTextContent("Something went wrong");
-    expect(panel.getByRole("listitem", { name: /^Unread: Samsung/ })).toBeInTheDocument();
   });
 
   it("says notifications are unavailable when the server has no notification routes", async () => {
-    mocks.getUnreadNotificationCount.mockRejectedValue(new ApiError(404, "Not Found"));
-    mocks.listNotifications.mockRejectedValue(new ApiError(404, "Not Found"));
+    mocks.getUnreadNotificationCount.mockRejectedValue(new ApiError(401, "Unauthorized"));
+    mocks.listNotifications.mockRejectedValue(new ApiError(401, "Unauthorized"));
     const user = renderCenter();
 
     await waitFor(() => expect(mocks.getUnreadNotificationCount).toHaveBeenCalled());
@@ -225,18 +204,33 @@ describe("NotificationCenter", () => {
     const panel = await openPanel(user);
 
     expect(await panel.findByRole("heading", { name: "Notifications aren’t available yet" })).toBeInTheDocument();
-    expect(panel.queryByRole("button", { name: "Mark all as read" })).not.toBeInTheDocument();
   });
 
   it("closes with Escape and returns focus to the bell", async () => {
     const user = renderCenter();
     await openPanel(user);
-    expect(bell()).toHaveAttribute("aria-expanded", "true");
 
     await user.keyboard("{Escape}");
 
     expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
     expect(bell()).toHaveFocus();
     expect(bell()).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+describe("relativeTime", () => {
+  const now = Date.parse("2026-10-19T12:00:00Z");
+
+  it.each([
+    ["2026-10-19T11:59:30Z", "Just now"],
+    ["2026-10-19T11:55:00Z", "5m ago"],
+    ["2026-10-19T09:00:00Z", "3h ago"],
+    ["2026-10-17T12:00:00Z", "2d ago"],
+  ])("%s -> %s", (createdAt, expected) => {
+    expect(relativeTime(createdAt, now)).toBe(expected);
+  });
+
+  it("falls back to a date after a week", () => {
+    expect(relativeTime("2026-10-01T12:00:00Z", now)).not.toMatch(/ago|Just now/);
   });
 });

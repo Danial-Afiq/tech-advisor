@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  NOTIFICATION_PAGE_SIZE,
-  dismissNotification,
   getUnreadNotificationCount,
   isNotificationsUnavailable,
   listNotifications,
@@ -10,35 +8,24 @@ import {
   markNotificationRead,
 } from "../../api/notifications";
 import { DASHBOARD_PATH } from "../../routing/paths";
-import { formatDate } from "../devices/deviceOptions";
 import { NotificationButton } from "../layout/NotificationButton";
-import {
-  evidenceGradeText,
-  verdictPresentation,
-} from "../recommendations/recommendationPresentation";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { EmptyState } from "../ui/EmptyState";
-import { Field, FormError, Select } from "../ui/Form";
+import { FormError } from "../ui/Form";
 import { LoadingBlock } from "../ui/LoadingBlock";
 import {
-  READ_FILTER_OPTIONS,
+  NOTIFICATION_POLL_MS,
   RECOMMENDATION_QUERY_PARAM,
-  TIER_FILTER_OPTIONS,
-  notificationProductName,
-  parseTierFilter,
-  tierPresentation,
+  relativeTime,
 } from "./notificationPresentation";
-import type {
-  AppNotification,
-  NotificationReadFilter,
-  NotificationTier,
-} from "./types";
+import type { AppNotification } from "./types";
 
 /**
- * The top-bar bell: live unread count plus a dropdown to list, filter, open,
- * mark read and dismiss the signed-in user's notifications. Self-contained, so
- * any signed-in USER page renders it as `topbarActions={<NotificationCenter />}`.
+ * The top-bar bell: unread count (re-checked every 45s) plus a dropdown of the
+ * signed-in user's notifications. Clicking one marks it read and takes the
+ * user to its recommendation card on the dashboard. Self-contained, so any
+ * signed-in USER page renders it as `topbarActions={<NotificationCenter />}`.
  */
 export function NotificationCenter() {
   const navigate = useNavigate();
@@ -50,14 +37,11 @@ export function NotificationCenter() {
   const [open, setOpen] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const [unread, setUnread] = useState(0);
-  const [readFilter, setReadFilter] = useState<NotificationReadFilter>("all");
-  const [tier, setTier] = useState<NotificationTier | null>(null);
   const [items, setItems] = useState<AppNotification[]>([]);
   const [page, setPage] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busyIds, setBusyIds] = useState<ReadonlySet<number>>(() => new Set());
   const [markingAll, setMarkingAll] = useState(false);
 
   const refreshUnread = useCallback(() => {
@@ -68,28 +52,24 @@ export function NotificationCenter() {
       })
       .catch((err: unknown) => {
         if (isNotificationsUnavailable(err)) setUnavailable(true);
-        // Any other failure keeps the last known count; the page owns 401s.
+        // Any other failure keeps the last known count; the page owns sign-out.
       });
   }, []);
 
-  useEffect(refreshUnread, [refreshUnread]);
+  // Poll so a recommendation produced in the background shows up without a reload.
+  useEffect(() => {
+    refreshUnread();
+    const timer = window.setInterval(refreshUnread, NOTIFICATION_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [refreshUnread]);
 
-  /** Loads one page for the given filters; page 0 replaces the list. */
-  function loadPage(
-    pageToLoad: number,
-    nextRead: NotificationReadFilter = readFilter,
-    nextTier: NotificationTier | null = tier
-  ) {
+  /** Loads one page; page 0 replaces the list. */
+  function loadPage(pageToLoad: number) {
     const request = ++requestRef.current;
     setLoading(true);
     setError(null);
 
-    listNotifications({
-      read: nextRead,
-      tier: nextTier,
-      page: pageToLoad,
-      size: NOTIFICATION_PAGE_SIZE,
-    })
+    listNotifications(pageToLoad)
       .then((result) => {
         if (request !== requestRef.current) return;
         setItems((current) =>
@@ -137,66 +117,29 @@ export function NotificationCenter() {
     };
   }, [open]);
 
-  async function runForItem(notification: AppNotification, action: () => Promise<void>) {
-    const itemId = notification.notificationId;
-    setBusyIds((current) => new Set(current).add(itemId));
-    setError(null);
-    try {
-      await action();
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Please try again.");
-      return false;
-    } finally {
-      setBusyIds((current) => {
-        const next = new Set(current);
-        next.delete(itemId);
-        return next;
-      });
-    }
-  }
-
-  function applyRead(notification: AppNotification) {
-    if (notification.read) return;
-    setUnread((count) => Math.max(0, count - 1));
-    setItems((current) =>
-      readFilter === "unread"
-        ? current.filter((item) => item.notificationId !== notification.notificationId)
-        : current.map((item) =>
-            item.notificationId === notification.notificationId ? { ...item, read: true } : item
-          )
-    );
-  }
-
-  async function handleMarkRead(notification: AppNotification) {
-    if (await runForItem(notification, () => markNotificationRead(notification.notificationId))) {
-      applyRead(notification);
-    }
-  }
-
-  async function handleDismiss(notification: AppNotification) {
-    if (await runForItem(notification, () => dismissNotification(notification.notificationId))) {
-      if (!notification.read) setUnread((count) => Math.max(0, count - 1));
-      setItems((current) =>
-        current.filter((item) => item.notificationId !== notification.notificationId)
-      );
-    }
-  }
-
   async function handleOpen(notification: AppNotification) {
     if (!notification.read) {
-      // Opening still navigates if marking read fails; the error stays visible next time.
-      if (await runForItem(notification, () => markNotificationRead(notification.notificationId))) {
-        applyRead(notification);
+      try {
+        await markNotificationRead(notification.notificationId);
+        setUnread((count) => Math.max(0, count - 1));
+        setItems((current) =>
+          current.map((item) =>
+            item.notificationId === notification.notificationId ? { ...item, read: true } : item
+          )
+        );
+      } catch {
+        // Still take the user to the recommendation; it stays unread for next time.
       }
     }
 
-    setOpen(false);
-    void navigate(
-      `${DASHBOARD_PATH}?${RECOMMENDATION_QUERY_PARAM}=${encodeURIComponent(
-        String(notification.recommendationId)
-      )}`
-    );
+    if (notification.available && notification.recommendationId !== null) {
+      setOpen(false);
+      void navigate(
+        `${DASHBOARD_PATH}?${RECOMMENDATION_QUERY_PARAM}=${encodeURIComponent(
+          String(notification.recommendationId)
+        )}`
+      );
+    }
   }
 
   async function handleMarkAll() {
@@ -205,9 +148,7 @@ export function NotificationCenter() {
     try {
       await markAllNotificationsRead();
       setUnread(0);
-      setItems((current) =>
-        readFilter === "unread" ? [] : current.map((item) => ({ ...item, read: true }))
-      );
+      setItems((current) => current.map((item) => ({ ...item, read: true })));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Please try again.");
     } finally {
@@ -248,7 +189,7 @@ export function NotificationCenter() {
           className="absolute right-0 z-20 mt-2 w-[400px] max-[620px]:fixed max-[620px]:inset-x-4 max-[620px]:top-[72px] max-[620px]:w-auto"
         >
           <Card className="bg-[#0d1727] text-left">
-            <div className="card-body max-h-[calc(100dvh-120px)] gap-[14px] overflow-y-auto p-[18px]">
+            <div className="card-body max-h-[calc(100dvh-120px)] gap-[12px] overflow-y-auto p-[18px]">
               <div className="flex items-center justify-between gap-3">
                 <h3 id={`${id}-title`} className="m-0 text-[16px] font-extrabold text-[#eef5ff]">
                   Notifications
@@ -274,45 +215,15 @@ export function NotificationCenter() {
                 />
               ) : (
                 <>
-                  <div className="grid grid-cols-2 gap-[10px] [&>*]:mb-0">
-                    <Field label="Show" htmlFor={`${id}-read`}>
-                      <Select
-                        id={`${id}-read`}
-                        value={readFilter}
-                        options={READ_FILTER_OPTIONS}
-                        onChange={(event) => {
-                          const next = event.target.value as NotificationReadFilter;
-                          setReadFilter(next);
-                          loadPage(0, next, tier);
-                        }}
-                      />
-                    </Field>
-                    <Field label="Tier" htmlFor={`${id}-tier`}>
-                      <Select
-                        id={`${id}-tier`}
-                        value={tier ?? ""}
-                        options={TIER_FILTER_OPTIONS}
-                        onChange={(event) => {
-                          const next = parseTierFilter(event.target.value);
-                          setTier(next);
-                          loadPage(0, readFilter, next);
-                        }}
-                      />
-                    </Field>
-                  </div>
-
                   <FormError message={error} />
 
                   {items.length > 0 && (
-                    <ul aria-label="Notification list" className="m-0 grid list-none gap-[10px] p-0">
+                    <ul aria-label="Notification list" className="m-0 grid list-none gap-0 p-0">
                       {items.map((notification) => (
                         <NotificationItem
                           key={notification.notificationId}
                           notification={notification}
-                          busy={busyIds.has(notification.notificationId)}
                           onOpen={() => void handleOpen(notification)}
-                          onMarkRead={() => void handleMarkRead(notification)}
-                          onDismiss={() => void handleDismiss(notification)}
                         />
                       ))}
                     </ul>
@@ -323,19 +234,17 @@ export function NotificationCenter() {
                   {!loading && items.length === 0 && !error && (
                     <EmptyState
                       icon="✦"
-                      title={readFilter === "all" && tier === null ? "No notifications yet" : "No notifications match"}
-                      description={
-                        readFilter === "all" && tier === null
-                          ? "You’ll be notified here whenever a new recommendation is produced for one of your devices."
-                          : "Try another filter to see more notifications."
-                      }
+                      title="No notifications yet"
+                      description="You’ll be notified here when a new or changed upgrade recommendation is found for one of your devices."
                     />
                   )}
 
                   {!loading && page + 1 < totalPages && (
-                    <Button size="sm" onClick={() => loadPage(page + 1)}>
-                      Load more
-                    </Button>
+                    <div className="border-t border-white/[0.09] pt-[10px] text-center">
+                      <Button size="sm" variant="ghost" onClick={() => loadPage(page + 1)}>
+                        View older notifications
+                      </Button>
+                    </div>
                   )}
                 </>
               )}
@@ -349,82 +258,49 @@ export function NotificationCenter() {
 
 function NotificationItem({
   notification,
-  busy,
   onOpen,
-  onMarkRead,
-  onDismiss,
 }: {
   notification: AppNotification;
-  busy: boolean;
   onOpen: () => void;
-  onMarkRead: () => void;
-  onDismiss: () => void;
 }) {
-  const product = notificationProductName(notification);
-  const verdict = verdictPresentation(notification.verdict);
-  const tier = tierPresentation(notification.tier);
-  const canOpen = notification.actionable && notification.recommendationId !== null;
+  const canOpen = notification.available && notification.recommendationId !== null;
 
   return (
-    <li
-      aria-label={`${notification.read ? "" : "Unread: "}${product} for ${notification.currentDeviceName}`}
-      className={`rounded-[13px] border border-white/[0.09] p-[12px] ${
-        notification.read ? "bg-[#0a1423]" : "bg-[#111d31]"
-      } ${canOpen ? "" : "opacity-70"}`}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h4 className="m-0 flex items-center gap-[7px] text-[14px] font-bold text-[#eef5ff]">
-            {!notification.read && (
-              <span aria-hidden="true" className="h-[8px] w-[8px] shrink-0 rounded-full bg-[#7c5cff]" />
-            )}
-            {product}
-          </h4>
-          <p className="mt-[2px] mb-0 text-[12px] text-[#8fa0b8]">
-            For {notification.currentDeviceName} · {formatDate(notification.createdAt)}
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-[8px] flex flex-wrap items-center gap-[6px]">
-        <span className={`badge rounded-full text-[10px] font-semibold ${verdict.badgeClass}`}>
-          {verdict.label}
-        </span>
-        <span className={`badge rounded-full text-[10px] font-semibold ${tier.badgeClass}`}>
-          {tier.label}
-        </span>
-        <span className="text-[11px] text-[#9eacc0]">
-          {evidenceGradeText(notification.evidenceGrade)}
-        </span>
-      </div>
-
-      {!canOpen && (
-        <p className="mt-[8px] mb-0 text-[11px] text-[#8fa0b8]">
-          This recommendation has since been updated or removed.
-        </p>
-      )}
-
-      <div className="mt-[10px] flex flex-wrap gap-[6px]">
-        {canOpen && (
-          <Button size="sm" variant="secondary" disabled={busy} onClick={onOpen}>
-            View recommendation <span aria-hidden="true">→</span>
-          </Button>
-        )}
-        {!notification.read && (
-          <Button size="sm" variant="ghost" disabled={busy} onClick={onMarkRead}>
-            Mark as read
-          </Button>
-        )}
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={busy}
-          aria-label={`Dismiss ${product} for ${notification.currentDeviceName}`}
-          onClick={onDismiss}
+    <li className="border-b border-white/[0.09] last:border-b-0">
+      <button
+        type="button"
+        aria-label={`${notification.read ? "" : "Unread: "}${notification.title}. ${notification.message}`}
+        onClick={onOpen}
+        className="flex w-full items-start gap-[12px] rounded-[13px] px-[8px] py-[12px] text-left hover:bg-white/[0.04]"
+      >
+        <span
+          aria-hidden="true"
+          className="grid h-[36px] w-[36px] shrink-0 place-items-center rounded-[10px] border border-white/[0.09] bg-[#0a1423] text-[16px]"
         >
-          Dismiss
-        </Button>
-      </div>
+          📱
+        </span>
+
+        <span className="min-w-0 flex-1">
+          <span className={`block text-[14px] text-[#eef5ff] ${notification.read ? "font-semibold" : "font-extrabold"}`}>
+            {notification.title}
+          </span>
+          <span className="mt-[2px] block text-[13px] leading-[1.45] text-[#c6d1df]">
+            {notification.message}
+          </span>
+          {!canOpen && (
+            <span className="mt-[4px] block text-[12px] text-[#8fa0b8]">
+              This recommendation is no longer available.
+            </span>
+          )}
+          <span className="mt-[4px] block text-[12px] text-[#8fa0b8]">
+            {relativeTime(notification.createdAt)} · {notification.read ? "Read" : "Unread"}
+          </span>
+        </span>
+
+        {!notification.read && (
+          <span aria-hidden="true" className="mt-[6px] h-[9px] w-[9px] shrink-0 rounded-full bg-[#28c0ff]" />
+        )}
+      </button>
     </li>
   );
 }
