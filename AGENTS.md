@@ -1801,16 +1801,21 @@ authenticated user, always scoped to the caller; another user's id returns 404):
 - `GET /api/notifications/unread-count` → `{ count }`
 - `PUT /api/notifications/{id}/read` → 204, idempotent (keeps the first `read_at`)
 - `PUT /api/notifications/read-all` → 204
+- `DELETE /api/notifications/{id}` → 204 (another user's id: 404) and
+  `DELETE /api/notifications` → 204 (clear all). Both **hard-delete** the rows from
+  `notifications`; the linked recommendations are never changed.
 
 Not implemented, relative to the original ticket text (design agreed with the
 implementer on 19 Oct 2026, simpler than the ticket): no HIGH/MEDIUM/LOW confidence
-tier, no read/tier filters, no dismiss. The frontend polls the unread count every
+tier and no read/tier filters. The ticket's "dismiss (hide)" became a permanent
+delete, per-notification or clear-all. The frontend polls the unread count every
 45s; there is no push/WebSocket.
 
 Tests: `NotificationIntegrationTest` (grouping, best link, unchanged re-run, AI
 re-save, verdict change, market-event single candidate, `NO_MEANINGFUL_CHANGE` only,
 two-device take-over and turn-taking, link re-pointing and deletion, the 10-per-user
-cap and its per-user scope, endpoints, pagination, other user, 401) and
+cap and its per-user scope, delete one / clear all (rows gone, other users and
+recommendations untouched), endpoints, pagination, other user, 401) and
 `NotificationFailureIntegrationTest` (recommendation kept, failure logged).
 
 ---

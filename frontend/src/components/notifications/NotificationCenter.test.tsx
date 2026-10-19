@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   getUnreadNotificationCount: vi.fn(),
   markNotificationRead: vi.fn(),
   markAllNotificationsRead: vi.fn(),
+  deleteNotification: vi.fn(),
+  clearNotifications: vi.fn(),
 }));
 
 vi.mock("../../api/notifications", async (importOriginal) => ({
@@ -74,6 +76,8 @@ beforeEach(() => {
   mocks.listNotifications.mockResolvedValue(pageOf([grouped, older]));
   mocks.markNotificationRead.mockResolvedValue(undefined);
   mocks.markAllNotificationsRead.mockResolvedValue(undefined);
+  mocks.deleteNotification.mockResolvedValue(undefined);
+  mocks.clearNotifications.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -188,7 +192,68 @@ describe("NotificationCenter", () => {
     await user.click(await panel.findByRole("button", { name: "View older notifications" }));
 
     await panel.findByRole("button", { name: /^New upgrade recommendation!/ });
-    expect(panel.getAllByRole("button", { name: /New upgrade recommendations!/ })).toHaveLength(1);
+    expect(panel.getAllByRole("button", { name: /^(Unread: )?New upgrade recommendations!/ })).toHaveLength(1);
+  });
+
+  it("deletes one notification with its x button", async () => {
+    const user = renderCenter();
+    const panel = await openPanel(user);
+    await panel.findByRole("button", { name: /^Unread: New upgrade recommendations!/ });
+
+    await user.click(panel.getByRole("button", { name: /^Delete notification: New upgrade recommendations!/ }));
+
+    expect(mocks.deleteNotification).toHaveBeenCalledWith(1);
+    await waitFor(() => {
+      expect(panel.queryByRole("button", { name: /New upgrade recommendations!/ })).not.toBeInTheDocument();
+    });
+    expect(panel.getByRole("button", { name: /^New upgrade recommendation!/ })).toBeInTheDocument();
+    // It was unread, so the badge goes down.
+    expect(bell()).toHaveAccessibleName("Notifications");
+    // Deleting is not opening: no navigation, nothing marked read.
+    expect(mocks.markNotificationRead).not.toHaveBeenCalled();
+    expect(screen.getByTestId("location")).toHaveTextContent("/devices");
+  });
+
+  it("keeps the notification and explains when deleting fails", async () => {
+    mocks.deleteNotification.mockRejectedValue(new ApiError(500, "Something went wrong"));
+    const user = renderCenter();
+    const panel = await openPanel(user);
+    await panel.findByRole("button", { name: /^Unread: New upgrade/ });
+
+    await user.click(panel.getByRole("button", { name: /^Delete notification: New upgrade recommendations!/ }));
+
+    expect(await panel.findByRole("alert")).toHaveTextContent("Something went wrong");
+    expect(panel.getByRole("button", { name: /^Unread: New upgrade recommendations!/ })).toBeInTheDocument();
+  });
+
+  it("asks before clearing all, and keeps everything on cancel", async () => {
+    const user = renderCenter();
+    const panel = await openPanel(user);
+    await panel.findByRole("button", { name: /^Unread: New upgrade/ });
+
+    await user.click(panel.getByRole("button", { name: "Clear all" }));
+    const confirm = panel.getByRole("alertdialog", { name: "Delete all notifications?" });
+    expect(mocks.clearNotifications).not.toHaveBeenCalled();
+
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+
+    expect(panel.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(mocks.clearNotifications).not.toHaveBeenCalled();
+    expect(panel.getAllByRole("button", { name: /^Delete notification:/ })).toHaveLength(2);
+  });
+
+  it("clears all notifications after confirming", async () => {
+    const user = renderCenter();
+    const panel = await openPanel(user);
+    await panel.findByRole("button", { name: /^Unread: New upgrade/ });
+
+    await user.click(panel.getByRole("button", { name: "Clear all" }));
+    await user.click(panel.getByRole("button", { name: "Delete all" }));
+
+    expect(mocks.clearNotifications).toHaveBeenCalled();
+    expect(await panel.findByRole("heading", { name: "No notifications yet" })).toBeInTheDocument();
+    expect(panel.getByRole("button", { name: "Clear all" })).toBeDisabled();
+    expect(bell()).toHaveAccessibleName("Notifications");
   });
 
   it("shows an empty state when there are no notifications", async () => {

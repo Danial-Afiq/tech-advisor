@@ -164,6 +164,20 @@ public class NotificationService {
         notifications.markAllRead(findUser(email).getId());
     }
 
+    /** Deletes one of the user's notifications; the recommendation is untouched. */
+    @Transactional
+    public void delete(String email, long notificationId) {
+        if (!notifications.delete(findUser(email).getId(), notificationId)) {
+            throw new ResourceNotFoundException("Notification not found");
+        }
+    }
+
+    /** Deletes all of the user's notifications; recommendations are untouched. */
+    @Transactional
+    public void deleteAll(String email) {
+        notifications.deleteAll(findUser(email).getId());
+    }
+
     private User findUser(String email) {
         return users.findByEmailIgnoreCase(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));

@@ -11,6 +11,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -97,6 +98,38 @@ public class NotificationController {
     })
     public ResponseEntity<Void> markAllRead(Authentication authentication) {
         notificationService.markAllRead(authentication.getName());
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/{notificationId}")
+    @Operation(
+            summary = "Delete one notification",
+            description = "Permanently deletes the notification. The recommendation it links to is not changed."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Notification deleted"),
+            @ApiResponse(responseCode = "401", description = "Bearer token is missing or invalid", content = @Content),
+            @ApiResponse(
+                    responseCode = "404",
+                    description = "No notification with this ID belongs to the user",
+                    content = @Content)
+    })
+    public ResponseEntity<Void> delete(Authentication authentication, @PathVariable long notificationId) {
+        notificationService.delete(authentication.getName(), notificationId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping
+    @Operation(
+            summary = "Clear all notifications",
+            description = "Permanently deletes all of the user's notifications. Recommendations are not changed."
+    )
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "All notifications deleted"),
+            @ApiResponse(responseCode = "401", description = "Bearer token is missing or invalid", content = @Content)
+    })
+    public ResponseEntity<Void> deleteAll(Authentication authentication) {
+        notificationService.deleteAll(authentication.getName());
         return ResponseEntity.noContent().build();
     }
 }

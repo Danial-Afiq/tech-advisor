@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  clearNotifications,
+  deleteNotification,
   getUnreadNotificationCount,
   isNotificationsUnavailable,
   listNotifications,
@@ -24,6 +26,8 @@ describe("notification API on a server without notification routes", () => {
     ["list", () => listNotifications(0)],
     ["mark read", () => markNotificationRead(1)],
     ["mark all read", () => markAllNotificationsRead()],
+    ["delete one", () => deleteNotification(1)],
+    ["clear all", () => clearNotifications()],
   ])("%s: a 401 keeps the session and reads as unavailable", async (_name, call) => {
     setSession({ token: "valid", email: "a@b.com", role: "USER" });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));

@@ -95,6 +95,15 @@ public class NotificationRepository {
                 notificationId, userId) > 0;
     }
 
+    /** @return false when no such notification belongs to this user. */
+    public boolean delete(long userId, long notificationId) {
+        return db.update("DELETE FROM notifications WHERE id=? AND user_id=?", notificationId, userId) > 0;
+    }
+
+    public int deleteAll(long userId) {
+        return db.update("DELETE FROM notifications WHERE user_id=?", userId);
+    }
+
     public int markAllRead(long userId) {
         return db.update(
                 "UPDATE notifications SET read_at = CURRENT_TIMESTAMP WHERE user_id=? AND read_at IS NULL",

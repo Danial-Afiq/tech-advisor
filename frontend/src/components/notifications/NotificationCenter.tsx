@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  clearNotifications,
+  deleteNotification,
   getUnreadNotificationCount,
   isNotificationsUnavailable,
   listNotifications,
@@ -43,6 +45,9 @@ export function NotificationCenter() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [markingAll, setMarkingAll] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [deletingIds, setDeletingIds] = useState<ReadonlySet<number>>(() => new Set());
 
   const refreshUnread = useCallback(() => {
     getUnreadNotificationCount()
@@ -145,6 +150,42 @@ export function NotificationCenter() {
     }
   }
 
+  async function handleDelete(notification: AppNotification) {
+    const itemId = notification.notificationId;
+    setDeletingIds((current) => new Set(current).add(itemId));
+    setError(null);
+    try {
+      await deleteNotification(itemId);
+      setItems((current) => current.filter((item) => item.notificationId !== itemId));
+      if (!notification.read) setUnread((count) => Math.max(0, count - 1));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn’t delete the notification.");
+    } finally {
+      setDeletingIds((current) => {
+        const next = new Set(current);
+        next.delete(itemId);
+        return next;
+      });
+    }
+  }
+
+  async function handleClearAll() {
+    setClearing(true);
+    setError(null);
+    try {
+      await clearNotifications();
+      setItems([]);
+      setUnread(0);
+      setPage(0);
+      setTotalPages(0);
+      setConfirmingClear(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn’t clear notifications.");
+    } finally {
+      setClearing(false);
+    }
+  }
+
   async function handleMarkAll() {
     setMarkingAll(true);
     setError(null);
@@ -198,17 +239,50 @@ export function NotificationCenter() {
                   Notifications
                 </h3>
                 {!unavailable && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    loading={markingAll}
-                    disabled={unread === 0}
-                    onClick={() => void handleMarkAll()}
-                  >
-                    Mark all as read
-                  </Button>
+                  <div className="flex flex-wrap justify-end gap-[6px]">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      loading={markingAll}
+                      disabled={unread === 0}
+                      onClick={() => void handleMarkAll()}
+                    >
+                      Mark all as read
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={items.length === 0 || confirmingClear}
+                      onClick={() => setConfirmingClear(true)}
+                    >
+                      Clear all
+                    </Button>
+                  </div>
                 )}
               </div>
+
+              {confirmingClear && (
+                <div
+                  role="alertdialog"
+                  aria-labelledby={`${id}-clear-title`}
+                  className="rounded-[13px] border border-[#ff6d7a]/25 bg-[#ff6d7a]/[0.06] p-[12px]"
+                >
+                  <p id={`${id}-clear-title`} className="m-0 text-[13px] font-semibold text-[#eef5ff]">
+                    Delete all notifications?
+                  </p>
+                  <p className="mt-[2px] mb-[10px] text-[12px] text-[#8fa0b8]">
+                    This can’t be undone. Your recommendations stay on the dashboard.
+                  </p>
+                  <div className="flex justify-end gap-[6px]">
+                    <Button size="sm" variant="ghost" onClick={() => setConfirmingClear(false)}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" variant="danger" loading={clearing} onClick={() => void handleClearAll()}>
+                      Delete all
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               {unavailable ? (
                 <EmptyState
@@ -226,7 +300,9 @@ export function NotificationCenter() {
                         <NotificationItem
                           key={notification.notificationId}
                           notification={notification}
+                          deleting={deletingIds.has(notification.notificationId)}
                           onOpen={() => void handleOpen(notification)}
+                          onDelete={() => void handleDelete(notification)}
                         />
                       ))}
                     </ul>
@@ -261,20 +337,24 @@ export function NotificationCenter() {
 
 function NotificationItem({
   notification,
+  deleting,
   onOpen,
+  onDelete,
 }: {
   notification: AppNotification;
+  deleting: boolean;
   onOpen: () => void;
+  onDelete: () => void;
 }) {
   const canOpen = notification.available && notification.recommendationId !== null;
 
   return (
-    <li className="border-b border-white/[0.09] last:border-b-0">
+    <li className="flex items-start gap-[4px] border-b border-white/[0.09] last:border-b-0">
       <button
         type="button"
         aria-label={`${notification.read ? "" : "Unread: "}${notification.title}. ${notification.message}`}
         onClick={onOpen}
-        className="flex w-full items-start gap-[12px] rounded-[13px] px-[8px] py-[12px] text-left hover:bg-white/[0.04]"
+        className="flex min-w-0 flex-1 items-start gap-[12px] rounded-[13px] px-[8px] py-[12px] text-left hover:bg-white/[0.04]"
       >
         <span
           aria-hidden="true"
@@ -303,6 +383,17 @@ function NotificationItem({
         {!notification.read && (
           <span aria-hidden="true" className="mt-[6px] h-[9px] w-[9px] shrink-0 rounded-full bg-[#28c0ff]" />
         )}
+      </button>
+
+      <button
+        type="button"
+        aria-label={`Delete notification: ${notification.title} ${notification.message}`}
+        title="Delete notification"
+        disabled={deleting}
+        onClick={onDelete}
+        className="btn btn-ghost btn-sm btn-square mt-[8px] shrink-0 text-[18px] font-normal text-[#90a2ba] disabled:opacity-60"
+      >
+        {deleting ? <span className="loading loading-spinner loading-xs" /> : <span aria-hidden="true">×</span>}
       </button>
     </li>
   );

@@ -21,6 +21,7 @@ import org.springframework.web.context.WebApplicationContext;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -221,6 +222,59 @@ class NotificationIntegrationTest {
 
         assertThat(db.queryForObject(
                 "SELECT COUNT(*) FROM notifications WHERE user_id=?", Long.class, otherUser.getId())).isEqualTo(1);
+    }
+
+    @Test
+    void deletingOneRemovesItFromTheDatabaseButNotTheRecommendation() throws Exception {
+        evaluate(rec(productA, "WORTH_WATCHING"));
+        evaluate(rec(productA, "WORTH_CONSIDERING"));
+        long newest = (Long) notifications().getFirst().get("id");
+        long recommendation = activeId(productA);
+        String token = jwtService.generateToken(owner);
+
+        mvc.perform(delete("/api/notifications/" + newest).header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
+
+        assertThat(db.queryForObject("SELECT COUNT(*) FROM notifications WHERE id=?", Long.class, newest)).isZero();
+        assertThat(notifications()).hasSize(1);
+        assertThat(activeId(productA)).isEqualTo(recommendation);
+        mvc.perform(delete("/api/notifications/" + newest).header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void clearingAllRemovesOnlyTheCallersNotificationsFromTheDatabase() throws Exception {
+        evaluate(rec(productA, "WORTH_WATCHING"));
+        evaluate(rec(productA, "WORTH_CONSIDERING"));
+        long othersDevice = db.queryForObject(
+                "INSERT INTO user_devices (user_id, custom_name, is_current) VALUES (?, 'Other phone', TRUE) RETURNING id",
+                Long.class, otherUser.getId());
+        recommendations.replaceForDevice(othersDevice, List.of(productB), List.of(new RecommendationRecord(
+                otherUser.getId(), othersDevice, productB, null, "WORTH_WATCHING", null,
+                Map.of(), Map.of(), "reasoning", null, null)));
+
+        mvc.perform(delete("/api/notifications").header("Authorization", "Bearer " + jwtService.generateToken(owner)))
+                .andExpect(status().isNoContent());
+
+        assertThat(notifications()).isEmpty();
+        assertThat(db.queryForObject(
+                "SELECT COUNT(*) FROM notifications WHERE user_id=?", Long.class, otherUser.getId())).isEqualTo(1);
+        assertThat(db.queryForObject(
+                "SELECT COUNT(*) FROM recommendations WHERE user_id=? AND status='ACTIVE'",
+                Long.class, owner.getId())).isEqualTo(1);
+    }
+
+    @Test
+    void anotherUserCannotDeleteYourNotification() throws Exception {
+        evaluate(rec(productA, "WORTH_WATCHING"));
+        long ownersNotification = (Long) notifications().getFirst().get("id");
+
+        mvc.perform(delete("/api/notifications/" + ownersNotification)
+                        .header("Authorization", "Bearer " + jwtService.generateToken(otherUser)))
+                .andExpect(status().isNotFound());
+        mvc.perform(delete("/api/notifications/" + ownersNotification)).andExpect(status().isUnauthorized());
+
+        assertThat(notifications()).hasSize(1);
     }
 
     @Test

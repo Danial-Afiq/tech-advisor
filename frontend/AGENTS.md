@@ -180,8 +180,10 @@ row: phone icon, backend-written title and message, relative time
 while unread. Clicking it marks it read and navigates to
 `/dashboard?recommendation={id}`, which outlines and scrolls to that card. A
 notification whose recommendation is gone (`available: false`) says so and
-does not navigate. The panel also offers Mark all as read and View older
-notifications (next page). Render it on any signed-in USER page as
+does not navigate. Each row has an × (styled like the `Modal` close button) that
+permanently deletes that notification. The panel also offers Mark all as read,
+Clear all (asks for confirmation inline first, because it deletes everything) and
+View older notifications (next page). Render it on any signed-in USER page as
 `topbarActions={<NotificationCenter />}`.
 
 **Backend contract** (`src/api/notifications.ts`, types in
@@ -194,6 +196,8 @@ backend, root `AGENTS.md` §14.14):
 | `GET /api/notifications/unread-count` | `{ count }` |
 | `PUT /api/notifications/{id}/read` | 204 (another user's id: 404) |
 | `PUT /api/notifications/read-all` | 204 |
+| `DELETE /api/notifications/{id}` | 204; deletes the row (another user's id: 404) |
+| `DELETE /api/notifications` | 204; deletes all of the user's notifications |
 
 The backend keeps only each user's newest 10 notifications (configurable), so the
 list rarely needs a second page.
