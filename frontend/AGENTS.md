@@ -115,6 +115,8 @@ applied on top of the catalogue specs. Unknown values stay empty and cards hide
 them. Never show placeholder numbers as if they were real.
 
 **Talking to the backend:** all HTTP goes through `src/api/`.
+- `notifications.ts` has the planned in-app notification calls (see
+  `components/notifications/` below).
 - `client.ts` has `apiFetch`, which adds the bearer token and turns backend
   error bodies into an `ApiError` with a readable message.
 - `auth.ts` has `signIn` / `signOut`.
@@ -165,6 +167,50 @@ toolbar toggle is `savedOnly` in the same filter state; `selectedFilterCount`
 and the dropdown's Clear filters deliberately ignore it (root §26.4).
 
 ---
+
+### `components/notifications/` — in-app notifications (ticket 4.4.2)
+
+`NotificationCenter` is the self-contained top-bar bell: it wraps the shared
+`NotificationButton` (which now accepts `ref`/ARIA props and caps the badge at
+99+), loads the unread count on mount, and opens a dropdown panel built from
+`Card`, `Field` + `Select` (Show: all/unread/read; Tier), `FormError`,
+`LoadingBlock`, `EmptyState` and `Button`. Each item shows product, owned
+device, date, the verdict badge and evidence-grade text from
+`recommendationPresentation.ts`, and the tier badge from
+`notificationPresentation.ts`. Actions: View recommendation (marks it read and
+navigates to `/dashboard?recommendation={id}`), Mark as read, Dismiss, Mark
+all as read, Load more. Non-actionable items (superseded/expired/removed) get
+no View button. Filtering and paging are server-side. Render it on any
+signed-in USER page as `topbarActions={<NotificationCenter />}`.
+
+The tier is display-only here. The backend decides it from verdict + evidence
+grade with config cut-offs (HIGH = the email rule, `TierMapper`); never compute
+it in the browser.
+
+**Planned backend contract** (`src/api/notifications.ts`, types in
+`components/notifications/types.ts`). None of it exists on the backend yet:
+
+| Route | Returns |
+|---|---|
+| `GET /api/notifications?read=unread\|read&tier=HIGH\|MEDIUM\|LOW&page&size` | `{ items, page, size, totalItems, totalPages }`, newest first, dismissed excluded |
+| `GET /api/notifications/unread-count` | `{ count }` |
+| `PUT /api/notifications/{id}/read` | 204 |
+| `PUT /api/notifications/read-all` | 204 |
+| `PUT /api/notifications/{id}/dismiss` | 204; hides the notification only, never the recommendation |
+
+Item fields: `notificationId`, `recommendationId` (null once the row is
+deleted), `currentDeviceName`, `candidateBrand`, `candidateModelName`,
+`verdict`, `evidenceGrade`, `tier`, `read`, `actionable`, `createdAt`. Product,
+verdict and grade are a snapshot from when the recommendation was saved.
+Another user's id must return 404.
+
+**Gotcha — 401 for routes that don't exist.** The backend currently answers
+*any* unknown route with 401, even with a valid token (its `/error` page is not
+in the security permit list). `apiFetch` signs the user out on 401, so every
+notification call passes `keepSessionOn401: true` and treats 401/404/405 as
+"unavailable" (`isNotificationsUnavailable`). Without that, the bell would sign
+users out on every page load. Keep the option on any call to a route that may
+not be deployed yet.
 
 ## 4. Design tokens
 
@@ -318,10 +364,17 @@ as one deliberate change across all components, not piecemeal.
   share one responsive toolbar. Recommendation cards label the representative
   model-level amount "Indicative price", preserve "Price unavailable", and the
   toolbar displays the pricing disclaimer once per populated page. Overview
-  cards and notifications retain totals for all active recommendations. Users
+  cards retain totals for all active recommendations. Users
   star a card to save it (persisted), see saved ones with the Saved (n)
   toolbar toggle, and confirm in a `Modal` before unstarring. See root §23.4,
-  §26.4 and §27.9.
+  §26.4 and §27.9. A `?recommendation={id}` query (set when a notification
+  is opened) outlines and scrolls to that card, or explains with a `Callout`
+  that it is no longer active or is hidden by the current filters.
+- **In-app notifications (ticket 4.4.2) — frontend only; backend NOT built.**
+  The top-bar bell on `/dashboard` and `/devices` is `NotificationCenter`
+  (replacing the dashboard's attention count and the devices page's hard-coded
+  `1`). Until the backend exists it shows no badge and its panel says
+  notifications aren't available yet. See the planned contract below.
 - Signed in, the device form suggests smartphones from the catalogue as the
   user types a model name. Picking one sends its `productId` and prefills the
   spec fields. Only specs the user changes are saved as `specOverrides`,

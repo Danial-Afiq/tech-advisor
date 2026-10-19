@@ -29,6 +29,12 @@ vi.mock("../api/dashboard", async (importOriginal) => ({
   setRecommendationStarred: mocks.setRecommendationStarred,
 }));
 
+vi.mock("../api/notifications", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/notifications")>()),
+  getUnreadNotificationCount: vi.fn().mockResolvedValue(0),
+  listNotifications: vi.fn().mockResolvedValue({ items: [], page: 0, size: 10, totalItems: 0, totalPages: 0 }),
+}));
+
 vi.mock("../api/auth", () => ({
   signOut: mocks.signOut,
 }));
@@ -881,6 +887,52 @@ describe("DashboardPage", () => {
         await screen.findByRole("button", { name: /^Remove Samsung Galaxy S26/ })
       ).toHaveAttribute("aria-pressed", "true");
       expect(screen.queryByText("Couldn’t save recommendation")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("opened from a notification", () => {
+    it("outlines the recommendation named in the URL", async () => {
+      mocks.listDashboardRecommendations.mockResolvedValue(allRecommendations);
+      renderPage("/dashboard?recommendation=3");
+
+      const card = await screen.findByRole("article", { name: "Recommendation for Second phone" });
+      expect(card).toHaveAttribute("aria-current", "true");
+      expect(card).toHaveAttribute("id", "recommendation-3");
+      expect(
+        screen.getByRole("article", { name: "Recommendation for Third phone" })
+      ).not.toHaveAttribute("aria-current");
+    });
+
+    it("explains when the opened recommendation is no longer active", async () => {
+      mocks.listDashboardRecommendations.mockResolvedValue(allRecommendations);
+      renderPage("/dashboard?recommendation=999");
+
+      expect(
+        await screen.findByText(/The recommendation you opened is no longer active/)
+      ).toBeInTheDocument();
+    });
+
+    it("offers to clear filters that hide the opened recommendation", async () => {
+      mocks.listDashboardRecommendations.mockResolvedValue(allRecommendations);
+      const user = userEvent.setup();
+      renderPage("/dashboard?recommendation=3");
+      await screen.findByRole("article", { name: "Recommendation for Second phone" });
+
+      await user.click(screen.getByRole("button", { name: /^Saved/ }));
+      expect(screen.getByText(/hidden by your current filters/)).toBeInTheDocument();
+
+      await user.click(screen.getAllByRole("button", { name: "Clear filters" })[0]);
+      expect(
+        screen.getByRole("article", { name: "Recommendation for Second phone" })
+      ).toHaveAttribute("aria-current", "true");
+    });
+
+    it("uses the real notification bell instead of the attention count", async () => {
+      mocks.listDashboardRecommendations.mockResolvedValue(allRecommendations);
+      renderPage();
+      await screen.findByRole("region", { name: "Device recommendations" });
+
+      expect(screen.getByRole("button", { name: "Notifications" })).toHaveAttribute("aria-expanded", "false");
     });
   });
 });

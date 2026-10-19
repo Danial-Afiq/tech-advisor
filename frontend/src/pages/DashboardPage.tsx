@@ -14,7 +14,8 @@ import { ApiError } from "../api/client";
 import { getSession } from "../api/session";
 import { AppShell } from "../components/layout/AppShell";
 import type { NavKey } from "../components/layout/Sidebar";
-import { NotificationButton } from "../components/layout/NotificationButton";
+import { NotificationCenter } from "../components/notifications/NotificationCenter";
+import { RECOMMENDATION_QUERY_PARAM } from "../components/notifications/notificationPresentation";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Callout } from "../components/ui/Callout";
@@ -36,7 +37,10 @@ import {
   LOGIN_PATH,
 } from "../routing/paths";
 import { RecommendationCard } from "../components/recommendations/RecommendationCard";
-import { verdictPresentation } from "../components/recommendations/recommendationPresentation";
+import {
+  recommendationCardId,
+  verdictPresentation,
+} from "../components/recommendations/recommendationPresentation";
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -48,6 +52,12 @@ export default function DashboardPage() {
    */
   const [searchParams, setSearchParams] = useSearchParams();
   const sort = parseSort(searchParams.get("sort"));
+  // Set when the user opens a notification; that card is outlined and scrolled to.
+  const highlightParam = searchParams.get(RECOMMENDATION_QUERY_PARAM);
+  const highlightId =
+    highlightParam !== null && /^\d+$/.test(highlightParam)
+      ? Number(highlightParam)
+      : null;
 
   const [recommendations, setRecommendations] = useState<
     DashboardRecommendation[]
@@ -65,6 +75,13 @@ export default function DashboardPage() {
   const { toasts, pushToast } = useToasts();
   // Bumped to refetch the current sort, e.g. after a row was replaced server-side.
   const [reloadCount, setReloadCount] = useState(0);
+
+  useEffect(() => {
+    if (loading || highlightId === null) return;
+    document
+      .getElementById(recommendationCardId(highlightId))
+      ?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+  }, [loading, highlightId, filters]);
 
   useEffect(() => {
     let cancelled = false;
@@ -264,7 +281,7 @@ export default function DashboardPage() {
         email: session.email,
       }}
       topbarActions={
-        <NotificationButton unread={attentionCount} />
+        <NotificationCenter />
       }
       onNavigate={handleNavigate}
       onSignOut={handleSignOut}
@@ -397,6 +414,27 @@ export default function DashboardPage() {
         </section>
       )}
 
+      {!loading && !error && highlightId !== null &&
+        !filteredRecommendations.some((row) => row.recommendationId === highlightId) && (
+          <div className="mb-[14px]">
+            <Callout>
+              {recommendations.some((row) => row.recommendationId === highlightId) ? (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span>The recommendation you opened is hidden by your current filters.</span>
+                  <Button size="sm" variant="primary" onClick={() => setFilters(emptyRecommendationFilters())}>
+                    Clear filters
+                  </Button>
+                </div>
+              ) : (
+                <span>
+                  The recommendation you opened is no longer active. It may have been replaced by a
+                  newer assessment, which is shown below if it is still relevant.
+                </span>
+              )}
+            </Callout>
+          </div>
+        )}
+
       {!loading && !error && filteredRecommendations.length === 0 && filters.savedOnly && savedCount === 0 && (
         <EmptyState
           icon="☆"
@@ -434,6 +472,7 @@ export default function DashboardPage() {
               <RecommendationCard
                 key={recommendation.recommendationId}
                 recommendation={recommendation}
+                highlighted={recommendation.recommendationId === highlightId}
                 onToggleStar={handleToggleStar}
                 starPending={starPendingIds.has(
                   recommendation.recommendationId

@@ -51,4 +51,14 @@ describe("apiFetch", () => {
     await expect(apiFetch("/api/devices")).rejects.toMatchObject({ status: 401 });
     expect(getSession()).toBeNull();
   });
+
+  it("keeps the session on 401 when asked to", async () => {
+    setSession({ token: "valid", email: "a@b.com", role: "USER", });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
+
+    await expect(
+      apiFetch("/api/optional-feature", { keepSessionOn401: true })
+    ).rejects.toMatchObject({ status: 401 });
+    expect(getSession()).toMatchObject({ token: "valid" });
+  });
 });
