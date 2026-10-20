@@ -112,3 +112,8 @@ export function priceConversionNote(
 
   return null;
 }
+
+/** DOM id of a recommendation's card, used to scroll to it. */
+export function recommendationCardId(recommendationId: number) {
+  return `recommendation-${recommendationId}`;
+}

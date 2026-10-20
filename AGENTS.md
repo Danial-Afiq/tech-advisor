@@ -1747,6 +1747,80 @@ Used for:
 
 Not a replacement for normal application logs.
 
+Component `NOTIFICATIONS` / status `FAILURE` records a notification that could not
+be created (§14.14); its metadata carries `user_id`, `current_device_id`,
+`recommendation_ids` and `error`.
+
+## 14.14 `notifications` — V11, ticket 4.4.2 (IMPLEMENTED)
+
+In-app notifications shown by the top-bar bell. Added after the canonical 13-table
+schema; it is an application table, not part of the Sprint 1 foundation.
+
+Fields:
+- `id`
+- `user_id` — FK `users`, cascade
+- `type` — `NEW_RECOMMENDATION` (only kind today)
+- `title`, `message` — text written by the backend, shown as-is
+- `recommendation_id` — nullable FK `recommendations`, `ON DELETE SET NULL`
+- `created_at`
+- `read_at` — `NULL` while unread
+
+The recommendation's details are **not** copied here; they stay in `recommendations`.
+
+When one is created (`notification/NotificationService`):
+- `RecommendationRepository` publishes `RecommendationsPersisted` from the
+  transaction that saved an evaluation, listing only **notable** rows: verdict other
+  than `NO_MEANINGFUL_CHANGE`, and either no earlier row for that candidate **on the
+  same device** (superseded or not) or a different verdict from that device's most
+  recent one. It is judged per device because the `ACTIVE` index is per
+  (user, candidate), not per device (§18.2): two devices can keep taking the same row
+  from each other, and comparing with the `ACTIVE` row would re-notify on every run.
+- **One notification per evaluation per device**, grouping its notable rows
+  ("We found 3 new or updated upgrade options for your iPhone 13…"; a single one
+  names the product and verdict). It links the best row (strong > considering >
+  watching).
+- An **unchanged re-run creates nothing**, including the AI step re-saving the
+  deterministic verdict (§18.12). This is how "never a duplicate" is met.
+- Created `AFTER_COMMIT` in its own transaction. Any failure is caught and written to
+  `system_log` (§14.13); the recommendations are already committed and unaffected.
+- **Capped per user.** After each insert, only the user's newest
+  `notifications.max-per-user` (`NOTIFICATIONS_MAX_PER_USER`, default **10**) are kept;
+  older ones are deleted, read or unread. The cap is per user and never touches
+  recommendations.
+
+Link lifecycle: supersede-and-insert **re-points** every notification linking to
+any of the device's rows for that candidate onto the new row (§18.11), so the link
+keeps opening the live card. While another device holds the row, the old link reads
+as no longer available rather than opening another device's card; it becomes live
+again when its own device next holds the row.
+A deleted recommendation (dropped off the shortlist) leaves `NULL`. The API's
+`available` flag is true only while the linked row is `ACTIVE` on a current device of
+the user, i.e. exactly what the dashboard shows.
+
+API (`notification/NotificationController`, Swagger tag *Notifications*, any
+authenticated user, always scoped to the caller; another user's id returns 404):
+- `GET /api/notifications?page=0&size=10` → `{ items, page, size, totalItems, totalPages }`,
+  newest first; page < 0 is treated as 0 and size is clamped to 1–50
+- `GET /api/notifications/unread-count` → `{ count }`
+- `PUT /api/notifications/{id}/read` → 204, idempotent (keeps the first `read_at`)
+- `PUT /api/notifications/read-all` → 204
+- `DELETE /api/notifications/{id}` → 204 (another user's id: 404) and
+  `DELETE /api/notifications` → 204 (clear all). Both **hard-delete** the rows from
+  `notifications`; the linked recommendations are never changed.
+
+Not implemented, relative to the original ticket text (design agreed with the
+implementer on 19 Oct 2026, simpler than the ticket): no HIGH/MEDIUM/LOW confidence
+tier and no read/tier filters. The ticket's "dismiss (hide)" became a permanent
+delete, per-notification or clear-all. The frontend polls the unread count every
+45s; there is no push/WebSocket.
+
+Tests: `NotificationIntegrationTest` (grouping, best link, unchanged re-run, AI
+re-save, verdict change, market-event single candidate, `NO_MEANINGFUL_CHANGE` only,
+two-device take-over and turn-taking, link re-pointing and deletion, the 10-per-user
+cap and its per-user scope, delete one / clear all (rows gone, other users and
+recommendations untouched), endpoints, pagination, other user, 401) and
+`NotificationFailureIntegrationTest` (recommendation kept, failure logged).
+
 ---
 
 # 15. Main database relationships
@@ -1771,6 +1845,8 @@ users 1 ── N recommendations
 user_devices 1 ── N recommendations
 products 1 ── N recommendations
 market_events 1 ── N recommendations
+users 1 ── N notifications
+recommendations 1 ── N notifications  (nullable, ON DELETE SET NULL — §14.14)
 ```
 
 End-to-end recommendation context:
@@ -2246,6 +2322,7 @@ V7__add_external_review_ingestion.sql  # SearchAPI, merged to main
 V8__add_phone_variants.sql             # ticket 1.8 — phone_variants, user_devices.phone_variant_id
 V9__link_price_history_to_phone_variants.sql  # ticket 1.8 — price_history.phone_variant_id
 V10__add_starred_to_recommendations.sql       # ticket 4.4 — recommendations.starred (§14.12)
+V11__create_notifications.sql                 # ticket 4.4.2 — notifications (§14.14)
 ```
 
 `V5` makes `users.password_hash` **NOT NULL**, so every seed, fixture, or test
@@ -2645,7 +2722,8 @@ Lifecycle rules (decided 27 Sep 2026):
 
 - **Still shortlisted:** normal supersede-and-insert - the previous `ACTIVE` row for
   that (user, candidate) becomes `SUPERSEDED` and is kept as history. Its `starred`
-  flag is carried onto the new row (§14.12).
+  flag is carried onto the new row (§14.12), and notifications linking to it are
+  re-pointed at the new row (§14.14).
 - **Dropped off this device's shortlist** (over budget, delisted, unverified): every
   row for that device and candidate is **deleted**, history included, not superseded.
   Users come for products that are recommended; a record that a product once was is
@@ -2893,6 +2971,7 @@ JWT_EXPIRATION_SECONDS    # optional; defaults to 3600 and must be positive
 ADMIN_EMAIL               # required bootstrap administrator email
 ADMIN_PASSWORD            # required; minimum 12 characters
 RECOMMENDATION_AI_ASSESSMENT_ENABLED # optional, commented out; default true (§18.12)
+NOTIFICATIONS_MAX_PER_USER # optional, commented out; default 10 (§14.14)
 ```
 
 `AI_API_KEY` and `INGESTION_DEMO_PASSWORD` appeared in an earlier version of this
@@ -3356,8 +3435,11 @@ every returned recommendation.
 
 The list shows a filtered/total count and an empty state with a clear-filters
 action when nothing matches. No active recommendations has a separate empty
-state linking to devices. Summary cards and notification counts always describe
-all active recommendations, independently of the filters. Selections persist
+state linking to devices. Summary cards always describe all active
+recommendations, independently of the filters. The top-bar bell is no longer an
+attention count: it is the in-app notification centre (§14.14), and opening a
+notification lands on `/dashboard?recommendation={id}`, which outlines and scrolls
+to that card or explains that it is no longer active or is hidden by the filters. Selections persist
 while opening/closing the dropdown and reset when the page unmounts. The dropdown
 supports keyboard opening, Escape, focus return, and outside-click dismissal.
 
@@ -3512,6 +3594,12 @@ anything. There is no mail dependency, no template, no delivery and no
 deduplication anywhere in the backend, and the only Telegram in the repository is
 `.github/workflows/telegram-notifications.yml`, which alerts on CI/CD and has
 nothing to do with product notifications.
+
+**In-app notifications are implemented (§14.14)** and deliberately use none of
+this policy: they fire for any new or changed upgrade option and carry no
+confidence tier. Email remains unbuilt. If a tier is added later it must be computed
+by code from verdict + evidence grade with config cut-offs, and its HIGH tier must be
+the same rule as email eligibility.
 
 ## 27.8 PC/GPU expansion
 The canonical V6 now includes the generic `products` table and a `gpu` subtype table alongside `phone`.

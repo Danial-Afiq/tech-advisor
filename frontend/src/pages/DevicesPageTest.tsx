@@ -12,7 +12,7 @@ import { getSession } from "../api/session";
 import type { Session } from "../api/session";
 import { SignInModal } from "../components/auth/SignInModal";
 import { AppShell } from "../components/layout/AppShell";
-import { NotificationButton } from "../components/layout/NotificationButton";
+import { NotificationCenter } from "../components/notifications/NotificationCenter";
 import { Button } from "../components/ui/Button";
 import { Callout } from "../components/ui/Callout";
 import { LoadingBlock } from "../components/ui/LoadingBlock";
@@ -206,7 +206,7 @@ export default function DevicesPageTest() {
           ? { name: account.email.split("@")[0], email: account.email }
           : DEMO_USER
       }
-      topbarActions={<NotificationButton unread={1} />}
+      topbarActions={<NotificationCenter />}
       onSignOut={account ? handleSignOut : undefined}
     >
       <PageHeader
