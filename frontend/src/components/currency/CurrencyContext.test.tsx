@@ -1,10 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  CURRENCY_STORAGE_KEY,
-  CurrencyProvider,
-} from "./CurrencyContext";
+import { CURRENCY_STORAGE_KEY } from "./currency";
+import { CurrencyProvider } from "./CurrencyContext";
 import { CurrencySelector } from "./CurrencySelector";
 
 function renderSelector() {

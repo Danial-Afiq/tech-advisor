@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useCurrency } from "../components/currency/CurrencyContext";
+import { useCurrency } from "../components/currency/currency";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   DEFAULT_SORT,

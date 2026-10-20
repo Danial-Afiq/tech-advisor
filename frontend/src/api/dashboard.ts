@@ -1,6 +1,6 @@
 import { apiFetch } from "./client";
 import type { DashboardRecommendation } from "../components/recommendations/types";
-import type { Currency } from "../components/currency/CurrencyContext";
+import type { Currency } from "../components/currency/currency";
 
 export type { DashboardRecommendation } from "../components/recommendations/types";
 

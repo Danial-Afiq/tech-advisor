@@ -3,7 +3,7 @@ import {
   SUPPORTED_CURRENCIES,
   useCurrency,
   type Currency,
-} from "./CurrencyContext";
+} from "./currency";
 
 export function CurrencySelector() {
   const { currency, setCurrency } = useCurrency();

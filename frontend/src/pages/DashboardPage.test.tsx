@@ -10,10 +10,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import DashboardPage from "./DashboardPage";
 import { ApiError } from "../api/client";
 import type { DashboardRecommendation, SortOption } from "../api/dashboard";
-import {
-  CURRENCY_STORAGE_KEY,
-  CurrencyProvider,
-} from "../components/currency/CurrencyContext";
+import { CURRENCY_STORAGE_KEY } from "../components/currency/currency";
+import { CurrencyProvider } from "../components/currency/CurrencyContext";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
