@@ -188,7 +188,9 @@ public class RecommendationRepository {
                             resultSet.getObject(
                                     "created_at",
                                     java.time.OffsetDateTime.class
-                            )
+                            ),
+                            "ORIGINAL",
+                            null
                     ),
             userId
     );

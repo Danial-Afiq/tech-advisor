@@ -2,6 +2,7 @@ import type {
   EvidenceGrade,
   RecommendationVerdict,
 } from "./types";
+import { formatDate } from "../devices/deviceOptions";
 
 export type VerdictPresentation = {
   label: string;
@@ -73,8 +74,41 @@ export function formatRecommendationPrice(
     return "Price unavailable";
   }
 
-  return new Intl.NumberFormat("en-SG", {
-    style: "currency",
-    currency: currency ?? "SGD",
+  const amount = new Intl.NumberFormat("en-SG", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(price);
+  const code = currency?.trim().toUpperCase();
+  if (!code || !/^[A-Z]{3}$/.test(code)) {
+    return `${amount} (currency unavailable)`;
+  }
+
+  try {
+    return new Intl.NumberFormat("en-SG", {
+      style: "currency",
+      currency: code,
+      currencyDisplay: "code",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(price);
+  } catch {
+    return `${code} ${amount}`;
+  }
+}
+
+export function priceConversionNote(
+  status: "ORIGINAL" | "CONVERTED" | "STALE" | "UNAVAILABLE",
+  rateDate: string | null
+): string | null {
+  if (status === "STALE") {
+    return rateDate
+      ? `Using stale exchange rates dated ${formatDate(rateDate)}.`
+      : "Using stale exchange rates.";
+  }
+
+  if (status === "UNAVAILABLE") {
+    return "Currency conversion is unavailable; showing the original price.";
+  }
+
+  return null;
 }

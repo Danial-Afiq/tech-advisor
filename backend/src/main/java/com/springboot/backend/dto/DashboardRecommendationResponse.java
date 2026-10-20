@@ -3,6 +3,7 @@ package com.springboot.backend.dto;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
 @Schema(
@@ -60,6 +61,38 @@ public record DashboardRecommendationResponse(
         )
         boolean starred,
 
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+
+        @Schema(
+                description = "Whether the displayed price is original, converted, stale, or unavailable",
+                example = "CONVERTED"
+        )
+        String priceConversionStatus,
+
+        @Schema(nullable = true, example = "2026-10-19")
+        LocalDate exchangeRateDate
 ) {
+    public DashboardRecommendationResponse withDisplayedPrice(
+            BigDecimal price,
+            String displayCurrency,
+            String conversionStatus,
+            LocalDate rateDate) {
+        return new DashboardRecommendationResponse(
+                recommendationId,
+                currentDeviceId,
+                currentDeviceName,
+                candidateProductId,
+                candidateBrand,
+                candidateModelName,
+                price,
+                displayCurrency,
+                verdict,
+                confidence,
+                reasoning,
+                starred,
+                createdAt,
+                conversionStatus,
+                rateDate
+        );
+    }
 }

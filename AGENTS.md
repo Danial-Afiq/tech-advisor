@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 12 October 2026
+> **Last consolidated:** 20 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -52,8 +52,10 @@ When something conflicts, use this order:
   quotes for a particular configuration or retailer.
   - MobileAPI supplies general model specifications; SearchAPI supplies one
     representative model price.
-  - SGD normalization is planned in a separate Jira ticket and is not currently
-    implemented. Never relabel a stored foreign-currency amount as SGD.
+  - SCRUM-116 implements display-only conversion for SGD, USD, MYR and GBP.
+    Original `price_history` amounts/currencies remain unchanged. Deterministic
+    budget filtering still compares stored bare amounts and must not be presented
+    as currency-normalized.
 - Older Architecture sections that describe factor-tagged chunks, a separate evidence-grade cache, multiple model calls, `released_at`, or global `user_profiles` are **superseded** by the current plan.
 - Current source code uses **Spring Boot 4.1.1 + Java 21**, even though an older Architecture document says Spring Boot 3.x.
 
@@ -588,7 +590,8 @@ The representative price is the latest observation selected by `DISTINCT ON
 (product_id) ... ORDER BY product_id, observed_at DESC, id DESC`. The `id DESC`
 tiebreaker is required: without it two observations sharing an `observed_at`
 resolve arbitrarily and the step stops being reproducible. This is still a raw
-stored-currency comparison; SGD normalization is planned separately (§27.9).
+stored-currency budget comparison; display conversion does not change shortlisting
+(§27.9).
 
 This step performs **no** embeddings, retrieval or model calls, and must stay
 that way - bounding the candidate set is what bounds every downstream AI cost.
@@ -3515,25 +3518,35 @@ The canonical V6 now includes the generic `products` table and a `gpu` subtype t
 
 This is schema readiness only. GPU ingestion, business logic, recommendation rules, APIs, and UI remain future work and must not be presented as implemented.
 
-## 27.9 SGD price normalization — PLANNED, NOT IMPLEMENTED
+## 27.9 Display currency conversion — IMPLEMENTED (SCRUM-116)
 
 Candidate shortlisting compares `device_preferences.budget` against
-`price_history.price` as **bare numbers, with no conversion**. Dashboard price
-sorting has the same limitation. The team has agreed that prices should be
-normalized to SGD for consistent budget filtering, comparisons and sorting,
-but that work belongs to a separate Jira ticket.
+`price_history.price` as **bare numbers, with no conversion**. SCRUM-116 does not
+change that deterministic rule: cross-currency budget normalization remains
+future work and `CandidatePruningService` continues to warn when candidate and
+budget currencies differ.
 
-Until that ticket is implemented, the ingestion `Price` payload may retain any
-ISO 4217 currency, the dashboard formats each value using its stored currency,
-and `CandidatePruningService` logs a warning when candidate and budget currencies
-differ. The system must not silently relabel a foreign-currency value as SGD or
-claim that conversion has occurred.
+Customer-facing recommendation prices are converted on demand by Spring Boot.
+`CurrencyConversionService` fetches one SGD-based rate set from Frankfurter v2
+(including every source currency the provider returns) and keeps one
+application-wide in-memory snapshot for 24 hours.
+There is no scheduled polling, dependency or database table. Supported cross
+rates are derived from that single snapshot, rounded to two decimal places with
+`HALF_UP`, and price sorting is applied to the converted amounts.
 
-`currency` columns already exist on both tables. The future implementation must
-define an exchange-rate source, observation timing, rounding and audit semantics;
-none is chosen or added by the current indicative-price UI/documentation change.
-No exchange-rate service, dependency, migration or ingestion conversion exists
-today.
+`GET /api/dashboard/recommendations?currency=` accepts SGD (the default), USD,
+MYR or GBP. The response's `latestPrice`/`currency` are display values and
+`priceConversionStatus` is `ORIGINAL`, `CONVERTED`, `STALE` or `UNAVAILABLE`;
+`exchangeRateDate` accompanies converted stale/current rates. If refresh fails,
+an expired cached snapshot is used and marked `STALE`; without a valid snapshot,
+the original amount/currency is returned as `UNAVAILABLE`. Missing or unsupported
+currencies are never guessed or relabelled.
+
+The shared frontend top bar stores the selection in localStorage under
+`tech-advisor-currency`, defaults to SGD and re-fetches recommendation display
+prices immediately on change. The database and ingestion payload remain the
+source of the original amount and explicit ISO currency. No migration or
+ingestion-time conversion was added.
 
 ## 27.10 `device_preferences.budget` is NOT NULL - decided here, flagged onward
 

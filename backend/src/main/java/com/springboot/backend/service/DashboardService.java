@@ -1,5 +1,7 @@
 package com.springboot.backend.service;
 
+import com.springboot.backend.currency.CurrencyConversionService;
+import com.springboot.backend.currency.CurrencyConversionService.Price;
 import com.springboot.backend.dto.DashboardRecommendationResponse;
 import com.springboot.backend.exception.ResourceNotFoundException;
 import com.springboot.backend.model.User;
@@ -9,6 +11,9 @@ import com.springboot.backend.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 @Service
@@ -17,27 +22,62 @@ public class DashboardService {
     private final UserRepository userRepository;
     private final RecommendationRepository
             recommendationRepository;
+    private final CurrencyConversionService currencyConversionService;
 
     public DashboardService(
             UserRepository userRepository,
             RecommendationRepository
-                    recommendationRepository) {
+                    recommendationRepository,
+            CurrencyConversionService currencyConversionService) {
 
         this.userRepository = userRepository;
         this.recommendationRepository =
                 recommendationRepository;
+        this.currencyConversionService = currencyConversionService;
     }
 
     @Transactional(readOnly = true)
     public List<DashboardRecommendationResponse>
             getRecommendations(
-                    String email, RecommendationSort sort) {
+                    String email,
+                    RecommendationSort sort,
+                    String currency) {
 
-        return recommendationRepository
+        List<DashboardRecommendationResponse> original = recommendationRepository
                 .findActiveDashboardRecommendationsByUserId(
                         findUser(email).getId(),
                         sort
                 );
+
+        var conversions = currencyConversionService.convertAll(
+                original.stream()
+                        .map(row -> new Price(row.latestPrice(), row.currency()))
+                        .toList(),
+                currency
+        );
+        List<DashboardRecommendationResponse> converted =
+                new ArrayList<>(original.size());
+        for (int index = 0; index < original.size(); index++) {
+            var conversion = conversions.get(index);
+            converted.add(original.get(index).withDisplayedPrice(
+                    conversion.amount(),
+                    conversion.currency(),
+                    conversion.status().name(),
+                    conversion.exchangeRateDate()
+            ));
+        }
+
+        Comparator<BigDecimal> amounts = sort == RecommendationSort.PRICE_DESC
+                ? Comparator.nullsLast(Comparator.reverseOrder())
+                : Comparator.nullsLast(Comparator.naturalOrder());
+        if (sort == RecommendationSort.PRICE_ASC
+                || sort == RecommendationSort.PRICE_DESC) {
+            converted.sort(Comparator.comparing(
+                    DashboardRecommendationResponse::latestPrice,
+                    amounts
+            ));
+        }
+        return converted;
     }
 
     /**

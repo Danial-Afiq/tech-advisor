@@ -3,6 +3,7 @@ import { Card } from "../ui/Card";
 import {
   evidenceGradeText,
   formatRecommendationPrice,
+  priceConversionNote,
   verdictPresentation,
 } from "./recommendationPresentation";
 import type { DashboardRecommendation } from "./types";
@@ -20,6 +21,10 @@ export function RecommendationCard({
 }) {
   const verdict = verdictPresentation(
     recommendation.verdict
+  );
+  const conversionNote = priceConversionNote(
+    recommendation.priceConversionStatus ?? "ORIGINAL",
+    recommendation.exchangeRateDate ?? null
   );
 
   const candidateName = [
@@ -91,6 +96,12 @@ export function RecommendationCard({
               recommendation.currency
             )}
           </p>
+
+          {conversionNote && (
+            <p className="mt-1 mb-0 text-[11px] leading-[1.45] text-[#f6b84b]">
+              {conversionNote}
+            </p>
+          )}
         </div>
 
         <div className="mt-4">

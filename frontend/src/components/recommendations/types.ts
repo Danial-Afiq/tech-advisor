@@ -25,6 +25,8 @@ export type DashboardRecommendation = {
   candidateModelName: string;
   latestPrice: number | null;
   currency: string | null;
+  priceConversionStatus?: "ORIGINAL" | "CONVERTED" | "STALE" | "UNAVAILABLE";
+  exchangeRateDate?: string | null;
   verdict: RecommendationVerdict;
   confidence: EvidenceGrade;
   reasoning: string | null;

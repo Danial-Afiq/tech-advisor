@@ -19,47 +19,50 @@ import {
   LOGIN_PATH,
   RECOMMENDATIONS_PATH,
 } from "./routing/paths";
+import { CurrencyProvider } from "./components/currency/CurrencyContext";
 
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<SessionHomeRedirect />} />
+    <CurrencyProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<SessionHomeRedirect />} />
 
-        <Route element={<SignedOutOnlyRoute />}>
-          <Route path={LOGIN_PATH} element={<Login />} />
-        </Route>
+          <Route element={<SignedOutOnlyRoute />}>
+            <Route path={LOGIN_PATH} element={<Login />} />
+          </Route>
 
-        <Route element={<RequireRole role="USER" />}>
-          <Route path={DASHBOARD_PATH} element={<DashboardPage />} />
+          <Route element={<RequireRole role="USER" />}>
+            <Route path={DASHBOARD_PATH} element={<DashboardPage />} />
+            <Route
+              path={RECOMMENDATIONS_PATH}
+              element={<Navigate to={DASHBOARD_PATH} replace />}
+            />
+            <Route path={DEVICES_PATH} element={<DevicesPageTest />} />
+          </Route>
+
+          <Route element={<RequireRole role="ADMIN" />}>
+            <Route path={ADMIN_HOME_PATH} element={<IngestionAdmin />} />
+            <Route path={ADMIN_CATALOGUE_PATH} element={<AdminCatalogue />} />
+          </Route>
+
           <Route
-            path={RECOMMENDATIONS_PATH}
-            element={<Navigate to={DASHBOARD_PATH} replace />}
+            path="/DevicesPageTest"
+            element={<Navigate to={DEVICES_PATH} replace />}
           />
-          <Route path={DEVICES_PATH} element={<DevicesPageTest />} />
-        </Route>
 
-        <Route element={<RequireRole role="ADMIN" />}>
-          <Route path={ADMIN_HOME_PATH} element={<IngestionAdmin />} />
-          <Route path={ADMIN_CATALOGUE_PATH} element={<AdminCatalogue />} />
-        </Route>
+          <Route
+            path="/IngestionAdmin"
+            element={<Navigate to={ADMIN_HOME_PATH} replace />}
+          />
 
-        <Route
-          path="/DevicesPageTest"
-          element={<Navigate to={DEVICES_PATH} replace />}
-        />
-
-        <Route
-          path="/IngestionAdmin"
-          element={<Navigate to={ADMIN_HOME_PATH} replace />}
-        />
-
-        <Route
-          path="/ThingieMagiggie"
-          element={<ThingieMagiggie title="thingie" />}
-        />
-      </Routes>
-    </BrowserRouter>
+          <Route
+            path="/ThingieMagiggie"
+            element={<ThingieMagiggie title="thingie" />}
+          />
+        </Routes>
+      </BrowserRouter>
+    </CurrencyProvider>
   );
 }
 

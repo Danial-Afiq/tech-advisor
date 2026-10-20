@@ -104,13 +104,23 @@ public class DashboardController {
                             )
                     )
                     @RequestParam(required = false)
-                    String sort) {
+                    String sort,
+                    @Parameter(
+                            description = "Currency used for displayed prices",
+                            schema = @Schema(
+                                    allowableValues = {"SGD", "USD", "MYR", "GBP"},
+                                    defaultValue = "SGD"
+                            )
+                    )
+                    @RequestParam(defaultValue = "SGD")
+                    String currency) {
 
         List<DashboardRecommendationResponse>
                 recommendations =
                 dashboardService.getRecommendations(
                         authentication.getName(),
-                        RecommendationSort.parse(sort)
+                        RecommendationSort.parse(sort),
+                        currency
                 );
 
         return ResponseEntity.ok(recommendations);

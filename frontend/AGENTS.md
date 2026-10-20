@@ -262,8 +262,11 @@ as one deliberate change across all components, not piecemeal.
 - **Money** always uses a domain formatter, never inline formatting:
   - Device budgets use `money(amount, currency?)` → `S$1,000` (SGD or unset) or `USD 1,000`.
   - `budgetLabel(prefs)` shows "No budget set" when no device budget exists.
-  - Recommendation API prices use `formatRecommendationPrice()` because each row carries its own stored currency.
-  - Currency conversion is not implemented yet. Do not relabel foreign-currency prices as SGD.
+  - Recommendation API prices use `formatRecommendationPrice()`; the backend
+    returns the selected display currency plus conversion freshness metadata.
+  - The shared top-bar selector offers SGD, USD, MYR and GBP, persists
+    `tech-advisor-currency` in localStorage and defaults to SGD. Price conversion
+    is display-only; never relabel a backend `UNAVAILABLE` original amount.
 - **Dates** go through `formatDate()`.
 - Buttons: one `primary` action per area; `ghost` for cancel/back/secondary
   navigation; `danger` only for destructive actions. Icon glyphs in labels use

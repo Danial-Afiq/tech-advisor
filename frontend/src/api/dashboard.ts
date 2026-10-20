@@ -1,5 +1,6 @@
 import { apiFetch } from "./client";
 import type { DashboardRecommendation } from "../components/recommendations/types";
+import type { Currency } from "../components/currency/CurrencyContext";
 
 export type { DashboardRecommendation } from "../components/recommendations/types";
 
@@ -25,13 +26,14 @@ export function parseSort(value: string | null): SortOption {
 }
 
 export function listDashboardRecommendations(
-  sort: SortOption = DEFAULT_SORT
+  sort: SortOption = DEFAULT_SORT,
+  currency: Currency = "SGD"
 ) {
-  const query =
-    sort === DEFAULT_SORT ? "" : `?sort=${encodeURIComponent(sort)}`;
+  const params = new URLSearchParams({ currency });
+  if (sort !== DEFAULT_SORT) params.set("sort", sort);
 
   return apiFetch<DashboardRecommendation[]>(
-    `/api/dashboard/recommendations${query}`
+    `/api/dashboard/recommendations?${params.toString()}`
   );
 }
 
