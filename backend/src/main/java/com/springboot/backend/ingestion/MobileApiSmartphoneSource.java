@@ -104,26 +104,44 @@ public class MobileApiSmartphoneSource implements IngestionSource {
     public void ingest(SourceContext context, Consumer<Payload> output) throws Exception {
         if (apiKey.isBlank()) return;
         context.check();
-        // One fetch either way - only the request shape differs (see Request). Collapsing
-        // the explicit-manual-override and cursor-driven modes onto the same single call,
-        // rather than a near-duplicate loop per mode, keeps this real-HTTP-only method (no
-        // test seam - see fetchList) as small as the project's other adapters keep theirs.
-        boolean cursorDriven = year.isBlank();
-        int currentYear = context.now().atZone(ZoneOffset.UTC).getYear();
-        Cursor cursor = cursorDriven ? loadCursor(currentYear) : null;
-        Request request = cursorDriven
-                ? new Request(Integer.toString(cursor.year()), cursor.page())
-                : new Request(year, null);
+        Cursor cursor = year.isBlank() ? loadCursor(currentYear(context)) : null;
+        JsonNode list = fetchList(context, requestFor(year, cursor));
+        emit(list, sourceId(), context.now(), output);
+        if (cursor != null) saveCursor(nextCursor(cursor, currentYear(context), list));
+    }
 
-        JsonNode list = fetchList(context, request);
-        for (JsonNode device : devicesIn(list)) {
-            toPayload(sourceId(), context.now(), device).ifPresent(output::accept);
-        }
-        if (cursorDriven) saveCursor(advance(cursor, currentYear, list.path("has_next").asBoolean(false)));
+    static int currentYear(SourceContext context) {
+        return context.now().atZone(ZoneOffset.UTC).getYear();
     }
 
     /** One fetchList() call's parameters - see {@link #listUri} for what each shape means. */
     record Request(String year, Integer page) {}
+
+    /**
+     * Pure request-shape decision, split out of {@link #ingest} for direct testability (no
+     * network, no DB): {@code cursor} null means the manual-override mode (year explicitly
+     * configured, no page); otherwise the cursor's own (year, page) drives the request.
+     */
+    static Request requestFor(String year, Cursor cursor) {
+        return cursor == null ? new Request(year, null) : new Request(Integer.toString(cursor.year()), cursor.page());
+    }
+
+    /**
+     * The actual device-processing loop, split out of {@link #ingest} so it's directly
+     * testable against a fixture page - same split as every other pure piece in this class.
+     * {@link #ingest} itself has no test seam (real HTTP, see class Javadoc), but nothing
+     * downstream of a fetched page needs one.
+     */
+    static void emit(JsonNode list, String sourceId, Instant observedAt, Consumer<Payload> output) {
+        for (JsonNode device : devicesIn(list)) {
+            toPayload(sourceId, observedAt, device).ifPresent(output::accept);
+        }
+    }
+
+    /** Wraps {@link #advance} with the one field of {@code list} it actually needs - same reasoning as {@link #emit}. */
+    static Cursor nextCursor(Cursor cursor, int currentYear, JsonNode list) {
+        return advance(cursor, currentYear, list.path("has_next").asBoolean(false));
+    }
 
     /**
      * Pure cursor-advance rule, split out for direct testability (no DB, no network):

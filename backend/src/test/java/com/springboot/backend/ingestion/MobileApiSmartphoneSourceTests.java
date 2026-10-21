@@ -195,4 +195,65 @@ class MobileApiSmartphoneSourceTests {
         var uri = MobileApiSmartphoneSource.listUri("a b&c", new MobileApiSmartphoneSource.Request("2026", 1));
         assertTrue(uri.toString().contains("key=a+b%26c"));
     }
+
+    // requestFor()/emit()/nextCursor() are ingest()'s own logic, split out the same way -
+    // ingest() itself has no test seam (real HTTP), but nothing downstream of a fetched page
+    // needs one, so there's no reason any of it stays untestable.
+
+    @Test void requestForUsesTheCursorWhenOneIsGiven() {
+        var request = MobileApiSmartphoneSource.requestFor("", new MobileApiSmartphoneSource.Cursor(2026, 5));
+        assertEquals(new MobileApiSmartphoneSource.Request("2026", 5), request);
+    }
+
+    @Test void requestForFallsBackToTheConfiguredYearWithNoPageWhenThereIsNoCursor() {
+        // The manual-override mode (sources.mobileapi.year set) never computes a cursor at
+        // all - null here means that mode, not a missing/uninitialized value.
+        var request = MobileApiSmartphoneSource.requestFor("2019", null);
+        assertEquals(new MobileApiSmartphoneSource.Request("2019", null), request);
+    }
+
+    @Test void emitConvertsEveryDeviceOnThePageToAPayload() throws Exception {
+        var page = device("""
+                {"devices": [
+                    {"id": "1", "name": "G5", "manufacturer_name": "BLU", "hardware": "8GB RAM"},
+                    {"id": "2", "name": "G6", "manufacturer_name": "BLU", "hardware": "4GB RAM"}
+                ]}""");
+        List<Payload> emitted = new ArrayList<>();
+        MobileApiSmartphoneSource.emit(page, "mobileapi-smartphone", Instant.parse("2026-01-01T00:00:00Z"), emitted::add);
+        assertEquals(2, emitted.size());
+        assertEquals("1", emitted.get(0).externalId());
+        assertEquals("2", emitted.get(1).externalId());
+    }
+
+    @Test void emitSkipsDevicesThatProduceNoParseablePayload() throws Exception {
+        // deviceWithNoParseableValuesAtAllIsSkipped already covers toPayload() returning
+        // empty for this shape directly - this confirms emit() correctly drops it too rather
+        // than emitting something empty.
+        var page = device("""
+                {"devices": [{"id": "9", "name": "Mystery Phone", "manufacturer_name": "Acme", "hardware": ""}]}""");
+        List<Payload> emitted = new ArrayList<>();
+        MobileApiSmartphoneSource.emit(page, "mobileapi-smartphone", Instant.now(), emitted::add);
+        assertTrue(emitted.isEmpty());
+    }
+
+    @Test void nextCursorAdvancesUsingThePageHasNextField() throws Exception {
+        var page = device("{\"has_next\": true}");
+        var next = MobileApiSmartphoneSource.nextCursor(new MobileApiSmartphoneSource.Cursor(2026, 3), 2026, page);
+        assertEquals(new MobileApiSmartphoneSource.Cursor(2026, 4), next);
+    }
+
+    @Test void nextCursorTreatsAMissingHasNextFieldAsFalse() throws Exception {
+        var page = device("{}");
+        var next = MobileApiSmartphoneSource.nextCursor(new MobileApiSmartphoneSource.Cursor(2026, 3), 2026, page);
+        assertEquals(new MobileApiSmartphoneSource.Cursor(2026, 1), next);
+    }
+
+    @Test void currentYearReadsTheYearFromTheContextsClockNotTheSystemClock() {
+        // context.now() is a plain Clock read (no network, no DB) - a SourceContext built
+        // with a fixed Clock makes this directly testable without a live run.
+        var fixed = Clock.fixed(Instant.parse("2027-03-15T00:00:00Z"), java.time.ZoneOffset.UTC);
+        try (var context = new SourceContext(fixed, () -> {})) {
+            assertEquals(2027, MobileApiSmartphoneSource.currentYear(context));
+        }
+    }
 }
