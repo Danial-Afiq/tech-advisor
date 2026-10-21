@@ -167,4 +167,32 @@ class MobileApiSmartphoneSourceTests {
         var next = MobileApiSmartphoneSource.advance(new MobileApiSmartphoneSource.Cursor(2026, 15), 2027, true);
         assertEquals(new MobileApiSmartphoneSource.Cursor(2027, 1), next);
     }
+
+    // listUri() is the pure URI-construction logic fetchList() wraps around the one real
+    // HTTP call (no test seam - see class Javadoc), split out specifically so the request
+    // shape itself stays directly testable without network, same split as toPayload/devicesIn.
+
+    @Test void listUriWithNoPageAndBlankYearIsTheOriginalUnfilteredLatestRequest() {
+        var uri = MobileApiSmartphoneSource.listUri("key123", new MobileApiSmartphoneSource.Request("", null));
+        assertEquals("https://api.mobileapi.dev/devices/?limit=10&key=key123", uri.toString());
+    }
+
+    @Test void listUriWithNoPageAndAYearIsTheOriginalManualOverrideRequest() {
+        // Unchanged shape for sources.mobileapi.year's explicit manual override - no page
+        // parameter at all, same as it always made before this bugfix existed.
+        var uri = MobileApiSmartphoneSource.listUri("key123", new MobileApiSmartphoneSource.Request("2024", null));
+        assertEquals("https://api.mobileapi.dev/devices/by-year/?year=2024&key=key123", uri.toString());
+    }
+
+    @Test void listUriWithAPageSweepsTheByYearListingExplicitly() {
+        // The actual fix: a page parameter now exists at all, which the original request
+        // shape above never had - this is what lets successive runs sweep forward.
+        var uri = MobileApiSmartphoneSource.listUri("key123", new MobileApiSmartphoneSource.Request("2026", 7));
+        assertEquals("https://api.mobileapi.dev/devices/by-year/?year=2026&limit=10&page=7&key=key123", uri.toString());
+    }
+
+    @Test void listUriUrlEncodesTheApiKeyAndYear() {
+        var uri = MobileApiSmartphoneSource.listUri("a b&c", new MobileApiSmartphoneSource.Request("2026", 1));
+        assertTrue(uri.toString().contains("key=a+b%26c"));
+    }
 }

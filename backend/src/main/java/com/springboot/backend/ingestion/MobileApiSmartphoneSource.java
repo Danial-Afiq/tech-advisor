@@ -104,22 +104,26 @@ public class MobileApiSmartphoneSource implements IngestionSource {
     public void ingest(SourceContext context, Consumer<Payload> output) throws Exception {
         if (apiKey.isBlank()) return;
         context.check();
-        if (!year.isBlank()) {
-            // Explicit manual override: unchanged single fixed-page behaviour.
-            for (JsonNode device : devicesIn(fetchList(context, year, null))) {
-                toPayload(sourceId(), context.now(), device).ifPresent(output::accept);
-            }
-            return;
-        }
+        // One fetch either way - only the request shape differs (see Request). Collapsing
+        // the explicit-manual-override and cursor-driven modes onto the same single call,
+        // rather than a near-duplicate loop per mode, keeps this real-HTTP-only method (no
+        // test seam - see fetchList) as small as the project's other adapters keep theirs.
+        boolean cursorDriven = year.isBlank();
         int currentYear = context.now().atZone(ZoneOffset.UTC).getYear();
-        Cursor cursor = loadCursor(currentYear);
-        JsonNode page = fetchList(context, Integer.toString(cursor.year()), cursor.page());
-        for (JsonNode device : devicesIn(page)) {
+        Cursor cursor = cursorDriven ? loadCursor(currentYear) : null;
+        Request request = cursorDriven
+                ? new Request(Integer.toString(cursor.year()), cursor.page())
+                : new Request(year, null);
+
+        JsonNode list = fetchList(context, request);
+        for (JsonNode device : devicesIn(list)) {
             toPayload(sourceId(), context.now(), device).ifPresent(output::accept);
         }
-        boolean hasNext = page.path("has_next").asBoolean(false);
-        saveCursor(advance(cursor, currentYear, hasNext));
+        if (cursorDriven) saveCursor(advance(cursor, currentYear, list.path("has_next").asBoolean(false)));
     }
+
+    /** One fetchList() call's parameters - see {@link #listUri} for what each shape means. */
+    record Request(String year, Integer page) {}
 
     /**
      * Pure cursor-advance rule, split out for direct testability (no DB, no network):
@@ -213,20 +217,29 @@ public class MobileApiSmartphoneSource implements IngestionSource {
                 new Payload.Specifications(deviceId, brand, modelName, chipset, values, units, storageOptions)));
     }
 
+    private JsonNode fetchList(SourceContext context, Request request) throws Exception {
+        return json.readTree(context.get(listUri(apiKey, request)));
+    }
+
     /**
-     * {@code page} null means the original manual-override shape (no page parameter at
-     * all, whatever {@code yearFilter} resolves to server-side); non-null pages through
-     * the by-year listing explicitly, which is what the cursor-driven default mode uses.
+     * Pure URI construction, split out from {@link #fetchList} for direct testability (no
+     * network) - same split as {@link #toPayload}/{@link #devicesIn}. {@code page} null
+     * means the original manual-override shape (no page parameter at all, whatever
+     * {@code request.year()} resolves to server-side, including blank = latest/unfiltered);
+     * non-null pages through the by-year listing explicitly, which is what the cursor-driven
+     * default mode uses.
      */
-    private JsonNode fetchList(SourceContext context, String yearFilter, Integer page) throws Exception {
+    static URI listUri(String apiKey, Request request) {
         String key = URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
-        URI uri = page == null
-                ? (yearFilter.isBlank()
-                        ? URI.create(BASE + "?limit=" + DEVICE_LIMIT + "&key=" + key)
-                        : URI.create(BASE + "by-year/?year=" + URLEncoder.encode(yearFilter, StandardCharsets.UTF_8) + "&key=" + key))
-                : URI.create(BASE + "by-year/?year=" + URLEncoder.encode(yearFilter, StandardCharsets.UTF_8)
-                        + "&limit=" + DEVICE_LIMIT + "&page=" + page + "&key=" + key);
-        return json.readTree(context.get(uri));
+        String year = request.year();
+        Integer page = request.page();
+        if (page == null) {
+            return year.isBlank()
+                    ? URI.create(BASE + "?limit=" + DEVICE_LIMIT + "&key=" + key)
+                    : URI.create(BASE + "by-year/?year=" + URLEncoder.encode(year, StandardCharsets.UTF_8) + "&key=" + key);
+        }
+        return URI.create(BASE + "by-year/?year=" + URLEncoder.encode(year, StandardCharsets.UTF_8)
+                + "&limit=" + DEVICE_LIMIT + "&page=" + page + "&key=" + key);
     }
 
     static String text(JsonNode node, String field) {
