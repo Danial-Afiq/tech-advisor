@@ -10,6 +10,7 @@ import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,6 +18,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
@@ -41,6 +43,23 @@ import org.springframework.stereotype.Component;
  * Auth: MobileAPI.dev supports both a header and a `?key=` query parameter.
  * SourceContext.get(URI) does not let adapters set custom headers, so this
  * uses the query-parameter form deliberately, not as a workaround of last resort.
+ *
+ * Bugfix (ingestion_cursors, V12): the default/automatic mode used to call the
+ * exact same URL on every run — no page parameter existed at all — so a
+ * scheduled run never discovered anything beyond whatever the first page
+ * happened to be; confirmed live that the default listing isn't even
+ * "newest first," so nothing short of a human manually changing
+ * sources.mobileapi.year ever moved coverage at all. Default mode (year
+ * unset) now sweeps page-by-page through the current calendar year's
+ * by-year listing, one page per run (still exactly 1 HTTP request), tracked
+ * in ingestion_cursors. A full sweep restarts from page 1 automatically -
+ * picking up anything MobileAPI has added to that year since - and a cursor
+ * from a year that no longer matches "now" resets to page 1 of the new
+ * year the moment the calendar rolls over, so new-year releases start
+ * appearing without any manual step. sources.mobileapi.year, when
+ * explicitly set, keeps the original single fixed-page behaviour unchanged —
+ * a deliberate manual override (e.g. for a demo pinned to one year), not
+ * the path this bug was in.
  */
 @Component
 public class MobileApiSmartphoneSource implements IngestionSource {
@@ -49,14 +68,20 @@ public class MobileApiSmartphoneSource implements IngestionSource {
 
     private final String year;
     private final String apiKey;
+    private final JdbcTemplate db;
     private final ObjectMapper json = new ObjectMapper();
 
     public MobileApiSmartphoneSource(
             @Value("${sources.mobileapi.year:}") String year,
-            @Value("${sources.mobileapi.api-key:}") String apiKey) {
+            @Value("${sources.mobileapi.api-key:}") String apiKey,
+            JdbcTemplate db) {
         this.year = year;
         this.apiKey = apiKey;
+        this.db = db;
     }
+
+    /** The persisted {@code ingestion_cursors.state} shape for this source. */
+    record Cursor(int year, int page) {}
 
     @Override
     public String sourceId() {
@@ -79,9 +104,81 @@ public class MobileApiSmartphoneSource implements IngestionSource {
     public void ingest(SourceContext context, Consumer<Payload> output) throws Exception {
         if (apiKey.isBlank()) return;
         context.check();
-        for (JsonNode device : devicesIn(fetchList(context))) {
-            toPayload(sourceId(), context.now(), device).ifPresent(output::accept);
+        Cursor cursor = year.isBlank() ? loadCursor(currentYear(context)) : null;
+        JsonNode list = fetchList(context, requestFor(year, cursor));
+        emit(list, sourceId(), context.now(), output);
+        if (cursor != null) saveCursor(nextCursor(cursor, currentYear(context), list));
+    }
+
+    static int currentYear(SourceContext context) {
+        return context.now().atZone(ZoneOffset.UTC).getYear();
+    }
+
+    /** One fetchList() call's parameters - see {@link #listUri} for what each shape means. */
+    record Request(String year, Integer page) {}
+
+    /**
+     * Pure request-shape decision, split out of {@link #ingest} for direct testability (no
+     * network, no DB): {@code cursor} null means the manual-override mode (year explicitly
+     * configured, no page); otherwise the cursor's own (year, page) drives the request.
+     */
+    static Request requestFor(String year, Cursor cursor) {
+        return cursor == null ? new Request(year, null) : new Request(Integer.toString(cursor.year()), cursor.page());
+    }
+
+    /**
+     * The actual device-processing loop, split out of {@link #ingest} so it's directly
+     * testable against a fixture page - same split as every other pure piece in this class.
+     * {@link #ingest} itself has no test seam (real HTTP, see class Javadoc), but nothing
+     * downstream of a fetched page needs one.
+     */
+    static void emit(JsonNode list, String sourceId, Instant observedAt, Consumer<Payload> output) {
+        for (JsonNode device : devicesIn(list)) {
+            toPayload(sourceId, observedAt, device).ifPresent(output::accept);
         }
+    }
+
+    /** Wraps {@link #advance} with the one field of {@code list} it actually needs - same reasoning as {@link #emit}. */
+    static Cursor nextCursor(Cursor cursor, int currentYear, JsonNode list) {
+        return advance(cursor, currentYear, list.path("has_next").asBoolean(false));
+    }
+
+    /**
+     * Pure cursor-advance rule, split out for direct testability (no DB, no network):
+     * - a cursor whose year no longer matches "now" resets to page 1 of the new year
+     *   immediately, so the calendar rolling over alone starts surfacing that year's
+     *   releases, no manual step required;
+     * - otherwise, page forward while the current year's listing has more pages;
+     * - a completed sweep (no more pages) restarts at page 1 of the same year rather
+     *   than stopping - the only way a newly-added device on an earlier page of a
+     *   year already fully swept is ever noticed.
+     */
+    static Cursor advance(Cursor cursor, int currentYear, boolean hasNext) {
+        if (cursor.year() != currentYear) return new Cursor(currentYear, 1);
+        return hasNext ? new Cursor(cursor.year(), cursor.page() + 1) : new Cursor(cursor.year(), 1);
+    }
+
+    // Package-private (not private) so a real-Postgres test can exercise the actual SQL -
+    // the same reasoning SmartphoneCatalogSink's DB-touching helpers follow.
+    Cursor loadCursor(int currentYear) {
+        List<Cursor> rows = db.query(
+                "SELECT state->>'year' AS year, state->>'page' AS page FROM ingestion_cursors WHERE source_id = ?",
+                (rs, n) -> new Cursor(rs.getInt("year"), rs.getInt("page")), sourceId());
+        Cursor stored = rows.isEmpty() ? null : rows.getFirst();
+        // A missing row, or one left over from a previous year, starts fresh at page 1 -
+        // same rule as advance()'s year-rollover case, applied once up front too.
+        return stored == null || stored.year() != currentYear ? new Cursor(currentYear, 1) : stored;
+    }
+
+    void saveCursor(Cursor cursor) {
+        db.update(
+                """
+                INSERT INTO ingestion_cursors (source_id, state, updated_at)
+                VALUES (?, jsonb_build_object('year', ?, 'page', ?), CURRENT_TIMESTAMP)
+                ON CONFLICT (source_id) DO UPDATE SET
+                    state = EXCLUDED.state, updated_at = EXCLUDED.updated_at
+                """,
+                sourceId(), cursor.year(), cursor.page());
     }
 
     /**
@@ -138,12 +235,29 @@ public class MobileApiSmartphoneSource implements IngestionSource {
                 new Payload.Specifications(deviceId, brand, modelName, chipset, values, units, storageOptions)));
     }
 
-    private JsonNode fetchList(SourceContext context) throws Exception {
+    private JsonNode fetchList(SourceContext context, Request request) throws Exception {
+        return json.readTree(context.get(listUri(apiKey, request)));
+    }
+
+    /**
+     * Pure URI construction, split out from {@link #fetchList} for direct testability (no
+     * network) - same split as {@link #toPayload}/{@link #devicesIn}. {@code page} null
+     * means the original manual-override shape (no page parameter at all, whatever
+     * {@code request.year()} resolves to server-side, including blank = latest/unfiltered);
+     * non-null pages through the by-year listing explicitly, which is what the cursor-driven
+     * default mode uses.
+     */
+    static URI listUri(String apiKey, Request request) {
         String key = URLEncoder.encode(apiKey, StandardCharsets.UTF_8);
-        URI uri = year.isBlank()
-                ? URI.create(BASE + "?limit=" + DEVICE_LIMIT + "&key=" + key)
-                : URI.create(BASE + "by-year/?year=" + URLEncoder.encode(year, StandardCharsets.UTF_8) + "&key=" + key);
-        return json.readTree(context.get(uri));
+        String year = request.year();
+        Integer page = request.page();
+        if (page == null) {
+            return year.isBlank()
+                    ? URI.create(BASE + "?limit=" + DEVICE_LIMIT + "&key=" + key)
+                    : URI.create(BASE + "by-year/?year=" + URLEncoder.encode(year, StandardCharsets.UTF_8) + "&key=" + key);
+        }
+        return URI.create(BASE + "by-year/?year=" + URLEncoder.encode(year, StandardCharsets.UTF_8)
+                + "&limit=" + DEVICE_LIMIT + "&page=" + page + "&key=" + key);
     }
 
     static String text(JsonNode node, String field) {
