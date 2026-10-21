@@ -83,7 +83,9 @@ public class IngestionOrchestrator {
                     store.progress(run, owner); continue;
                 }
                 store.progress(run, owner);
-                try (var context = new SourceContext(clock, check, run.product)) {
+                Duration executionBudget = adapter.executionBudget();
+                try (var context = new SourceContext(
+                        clock, check, run.product, adapter.requestLimit(), executionBudget)) {
                     Future<?> future = sourceWorker.submit(() -> {
                         try {
                             var seen = new HashSet<String>();
@@ -110,7 +112,7 @@ public class IngestionOrchestrator {
                             });
                         } catch (Exception e) { throw new CompletionException(e); }
                     });
-                    try { future.get(60, TimeUnit.SECONDS); }
+                    try { future.get(executionBudget.toMillis(), TimeUnit.MILLISECONDS); }
                     finally { context.close(); future.cancel(true); }
                     result.status = result.errorCount == 0 ? "SUCCESS" : "PARTIAL_FAILURE";
                     applyCooldown(run.runId, owner, id, adapter.cooldown());
@@ -132,7 +134,7 @@ public class IngestionOrchestrator {
                 }
                 synchronized (runLock) {
                     result.finishedAt = clock.instant(); store.progress(run, owner);
-                    if ("SUCCESS".equals(result.status)) adapter.scheduleInterval()
+                    if ("SUCCESS".equals(result.status) && adapter.scheduleCycleComplete()) adapter.scheduleInterval()
                             .ifPresent(interval -> successfulSourceIntervals.put(id, interval));
                 }
             }

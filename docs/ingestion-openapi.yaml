@@ -153,7 +153,7 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/admin/ingestion/sources:
     get:
-      summary: Registered sources and persistent cooldowns
+      summary: Registered sources, schedules, cooldowns and optional progress
       responses:
         '200':
           description: Available source modules
@@ -168,6 +168,11 @@ paths:
                     enabled: { type: boolean }
                     simulation: { type: boolean }
                     nextAllowedAt: { type: string, format: date-time, nullable: true }
+                    phase: { type: string, enum: [INITIAL_BACKFILL, INCREMENTAL], nullable: true }
+                    completedUnits: { type: integer, format: int64, nullable: true }
+                    totalUnits: { type: integer, format: int64, nullable: true }
+                    observationsIngested: { type: integer, format: int64, nullable: true }
+                    productsCovered: { type: integer, format: int64, nullable: true }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/Unavailable' }

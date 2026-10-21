@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -28,114 +29,239 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-/** Raw Geekbench observations from TechAPI's released GitHub dataset. */
+/** One-time TechAPI Geekbench 6 backfill followed by incremental coverage discovery. */
 @Component
 public class TechApiBenchmarkSource implements IngestionSource {
     public static final String ID = "techapi-soc-benchmarks";
-    static final String GEEKBENCH_SINGLE =
-            "Geekbench (version unspecified) single-core [representative SoC]";
-    static final String GEEKBENCH_MULTI =
-            "Geekbench (version unspecified) multi-core [representative SoC]";
+    static final String GEEKBENCH_SINGLE = "Geekbench 6 CPU Single-Core";
+    static final String GEEKBENCH_MULTI = "Geekbench 6 CPU Multi-Core";
 
     private static final Logger LOG = LoggerFactory.getLogger(TechApiBenchmarkSource.class);
     private static final String API_TREE =
             "https://api.github.com/repos/GetTechAPI/TechAPI/git/trees/";
-    private static final String RAW =
-            "https://raw.githubusercontent.com/GetTechAPI/TechAPI/main/";
-    private static final String SMARTPHONES = RAW + "site/public/v1/smartphones/";
-    private static final String SOC_DATA = RAW + "data/soc/";
+    private static final String API_BLOB =
+            "https://api.github.com/repos/GetTechAPI/TechAPI/git/blobs/";
+    private static final String SMARTPHONES =
+            "https://raw.githubusercontent.com/GetTechAPI/TechAPI/main/site/public/v1/smartphones/";
     private static final Pattern SAFE_SOC_PATH = Pattern.compile(
             "[a-z0-9-]+/[0-9]{4}/[a-z0-9-]+\\.json");
     private static final Set<String> GENERIC_CHIPSET_TOKENS = Set.of(
             "soc", "chipset", "processor", "mobile", "platform");
+    private static final int TREE_REQUESTS = 4;
+    private static final int MAX_REQUESTS_PER_ITEM = 3;
+    private static final int NETWORK_OVERHEAD_SECONDS = 30;
 
     private final TechApiBenchmarkRepository repository;
     private final String githubToken;
-    private final int maxProducts;
+    private final int maxItems;
     private final ObjectMapper json = new ObjectMapper();
 
     public TechApiBenchmarkSource(
             TechApiBenchmarkRepository repository,
             @Value("${sources.techapi.github-token:}") String githubToken,
-            @Value("${sources.techapi.max-products-per-run:20}") int maxProducts) {
-        if (maxProducts < 1 || maxProducts > 100)
-            throw new IllegalArgumentException("TechAPI max products per run must be 1-100");
+            @Value("${sources.techapi.max-products-per-run:20}") int maxItems) {
+        if (maxItems < 1 || maxItems > 100)
+            throw new IllegalArgumentException("TechAPI max items per run must be 1-100");
         this.repository = repository;
         this.githubToken = githubToken == null ? "" : githubToken.trim();
-        this.maxProducts = maxProducts;
+        this.maxItems = maxItems;
     }
 
     @Override public String sourceId() { return ID; }
     @Override public int priority() { return 20; }
+    @Override public Duration cooldown() { return Duration.ZERO; }
+    @Override public int requestLimit() { return TREE_REQUESTS + maxItems * MAX_REQUESTS_PER_ITEM; }
+    @Override public Duration executionBudget() {
+        return Duration.ofSeconds(requestLimit() + NETWORK_OVERHEAD_SECONDS);
+    }
     @Override public Optional<Duration> scheduleInterval() { return Optional.of(Duration.ofDays(14)); }
+    @Override public boolean scheduleCycleComplete() {
+        var state = repository.state();
+        return state.initialBackfillComplete && state.pendingRevision == null
+                && repository.nextPhones(state.catalogueCursor, 1).phones().isEmpty();
+    }
+    @Override public Optional<Progress> progress() {
+        var state = repository.state();
+        return Optional.of(new Progress(
+                state.phase,
+                state.completedUnits,
+                state.totalUnits,
+                repository.observationCount(),
+                repository.coveredProductCount()));
+    }
 
     @Override
     public void ingest(SourceContext context, Consumer<Payload> output) throws Exception {
-        var batch = repository.nextPhones(maxProducts);
-        if (batch.phones().isEmpty()) return;
-
-        SocTree tree = fetchSocTree(context);
-        Map<String, Optional<SocBenchmarks>> benchmarkCache = new HashMap<>();
-        int completed = 0;
-
-        for (var phone : batch.phones()) {
-            context.check();
-            if (context.remainingRequests() == 0) break;
-
-            Optional<PhoneReference> reference;
-            try { reference = fetchPhoneReference(context, phone); }
-            catch (RequestBudgetExhausted exhausted) { break; }
-            if (reference.isEmpty()) {
-                skip(phone, "phone-record-unavailable");
-                repository.checkpoint(phone.productId());
-                completed++;
-                continue;
-            }
-            if (!matches(phone, reference.get())) {
-                skip(phone, "phone-or-chipset-mismatch");
-                repository.checkpoint(phone.productId());
-                completed++;
-                continue;
-            }
-
-            List<String> paths = tree.paths(reference.get().socSlug());
-            if (paths.size() != 1) {
-                skip(phone, paths.isEmpty() ? "soc-record-missing" : "soc-record-ambiguous");
-                repository.checkpoint(phone.productId());
-                completed++;
-                continue;
-            }
-
-            String path = paths.getFirst();
-            Optional<SocBenchmarks> benchmarks = benchmarkCache.get(path);
-            if (benchmarks == null) {
-                if (context.remainingRequests() == 0) break;
-                benchmarks = parseSoc(json.readTree(context.get(URI.create(SOC_DATA + path))),
-                        reference.get().socSlug(), context.now());
-                benchmarkCache.put(path, benchmarks);
-            }
-
-            if (benchmarks.isEmpty()) {
-                skip(phone, "geekbench-scores-unavailable");
-            } else {
-                emit(phone, path, benchmarks.get(), output);
-            }
-            repository.checkpoint(phone.productId());
-            completed++;
-        }
-
-        if (completed == batch.phones().size() && !batch.hasMore()) repository.restartCycle();
+        var state = repository.state();
+        if (!state.initialBackfillComplete) initialBackfill(context, output, state);
+        else incremental(context, output, state);
     }
 
-    private SocTree fetchSocTree(SourceContext context) throws Exception {
-        JsonNode root = apiJson(context, "main");
-        String dataSha = treeSha(root, "data");
-        String socSha = treeSha(apiJson(context, dataSha), "soc");
-        return SocTree.parse(apiJson(context, socSha + "?recursive=1"));
+    private void initialBackfill(
+            SourceContext context, Consumer<Payload> output, TechApiIngestionState state)
+            throws Exception {
+        SocTree tree;
+        if (state.snapshotRevision == null) {
+            state.snapshotRevision = currentSocRevision(context);
+            tree = fetchSocTree(context, state.snapshotRevision);
+            state.totalUnits = tree.entries().size();
+            state.catalogueSnapshotMax = repository.maximumEligibleProductId();
+            repository.save(state);
+        } else {
+            tree = fetchSocTree(context, state.snapshotRevision);
+        }
+
+        var phones = repository.phonesThrough(state.catalogueSnapshotMax);
+        List<TreeEntry> remaining = tree.after(state.cursor);
+        int processed = 0;
+        for (TreeEntry entry : remaining) {
+            if (processed >= maxItems) break;
+            context.check();
+            if (tree.entries(entry.slug()).size() == 1) {
+                var benchmarks = fetchSoc(context, entry);
+                if (benchmarks.isPresent()) {
+                    for (var phone : phones)
+                        if (processorMatches(phone, entry.slug(), benchmarks.get().name()))
+                            emit(phone, entry.path(), benchmarks.get(), output);
+                }
+            }
+            state.cursor = entry.path();
+            state.completedUnits = tree.position(entry.path()) + 1L;
+            repository.save(state);
+            processed++;
+        }
+
+        if (tree.after(state.cursor).isEmpty()) {
+            state.phase = "INCREMENTAL";
+            state.initialBackfillComplete = true;
+            state.initialBackfillCompletedAt = context.now();
+            state.baselineRevision = state.snapshotRevision;
+            state.catalogueCursor = state.catalogueSnapshotMax;
+            repository.save(state);
+        }
+    }
+
+    private void incremental(
+            SourceContext context, Consumer<Payload> output, TechApiIngestionState state)
+            throws Exception {
+        int processed = 0;
+        SocTree activeTree = null;
+
+        if (state.pendingRevision == null) {
+            String currentRevision = currentSocRevision(context);
+            if (!currentRevision.equals(state.baselineRevision)) {
+                SocTree baseline = fetchSocTree(context, state.baselineRevision);
+                activeTree = fetchSocTree(context, currentRevision);
+                var changed = activeTree.changedSince(baseline);
+                state.pendingRevision = currentRevision;
+                state.pendingCursor = null;
+                state.pendingCompletedUnits = 0;
+                state.pendingTotalUnits = changed.size();
+                repository.save(state);
+            }
+        }
+
+        if (state.pendingRevision != null) {
+            SocTree baseline = fetchSocTree(context, state.baselineRevision);
+            if (activeTree == null) activeTree = fetchSocTree(context, state.pendingRevision);
+            List<TreeEntry> changed = activeTree.changedSince(baseline);
+            List<TreeEntry> remaining = after(changed, state.pendingCursor);
+            var localPhones = remaining.isEmpty() ? List.<TechApiBenchmarkRepository.PhoneTarget>of()
+                    : repository.allPhones();
+            for (TreeEntry entry : remaining) {
+                if (processed >= maxItems) break;
+                context.check();
+                if (activeTree.entries(entry.slug()).size() == 1) {
+                    var benchmarks = fetchSoc(context, entry);
+                    if (benchmarks.isPresent()) {
+                        for (var phone : localPhones)
+                            if (processorMatches(phone, entry.slug(), benchmarks.get().name()))
+                                emit(phone, entry.path(), benchmarks.get(), output);
+                    }
+                }
+                state.pendingCursor = entry.path();
+                state.pendingCompletedUnits++;
+                repository.save(state);
+                processed++;
+            }
+            if (after(changed, state.pendingCursor).isEmpty()) {
+                state.baselineRevision = state.pendingRevision;
+                state.pendingRevision = null;
+                state.pendingCursor = null;
+                state.pendingCompletedUnits = 0;
+                state.pendingTotalUnits = 0;
+                repository.save(state);
+            }
+        }
+
+        int capacity = maxItems - processed;
+        if (capacity == 0) return;
+        var phones = repository.nextPhones(state.catalogueCursor, capacity);
+        if (phones.phones().isEmpty()) return;
+        if (activeTree == null) activeTree = fetchSocTree(context, state.baselineRevision);
+        Map<String, Optional<SocBenchmarks>> benchmarkCache = new HashMap<>();
+        for (var phone : phones.phones()) {
+            context.check();
+            if (!repository.hasCompleteCoverage(phone.productId())) {
+                Optional<PhoneReference> reference = fetchPhoneReference(context, phone);
+                if (reference.isEmpty()) {
+                    skip(phone, "phone-record-unavailable");
+                } else if (!matches(phone, reference.get())) {
+                    skip(phone, "phone-or-chipset-mismatch");
+                } else {
+                    List<TreeEntry> entries = activeTree.entries(reference.get().socSlug());
+                    if (entries.size() != 1) {
+                        skip(phone, entries.isEmpty() ? "soc-record-missing" : "soc-record-ambiguous");
+                    } else {
+                        TreeEntry entry = entries.getFirst();
+                        Optional<SocBenchmarks> benchmarks = benchmarkCache.computeIfAbsent(
+                                entry.sha(), ignored -> uncheckedFetchSoc(context, entry));
+                        if (benchmarks.isEmpty()) skip(phone, "geekbench-scores-unavailable");
+                        else emit(phone, entry.path(), benchmarks.get(), output);
+                    }
+                }
+            }
+            state.catalogueCursor = phone.productId();
+            repository.save(state);
+        }
+    }
+
+    private Optional<SocBenchmarks> uncheckedFetchSoc(SourceContext context, TreeEntry entry) {
+        try { return fetchSoc(context, entry); }
+        catch (RuntimeException runtime) { throw runtime; }
+        catch (Exception checked) { throw new IllegalStateException(checked); }
+    }
+
+    private String currentSocRevision(SourceContext context) throws Exception {
+        String dataSha = treeSha(apiJson(context, "main"), "data");
+        return treeSha(apiJson(context, dataSha), "soc");
+    }
+
+    private SocTree fetchSocTree(SourceContext context, String revision) throws Exception {
+        if (revision == null || !revision.matches("[a-f0-9]{40}"))
+            throw new IngestionFailure(IngestionFailure.Code.TECHAPI_MALFORMED_DATASET);
+        return SocTree.parse(apiJson(context, revision + "?recursive=1"));
+    }
+
+    private Optional<SocBenchmarks> fetchSoc(SourceContext context, TreeEntry entry) throws Exception {
+        JsonNode blob = githubJson(context, URI.create(API_BLOB + entry.sha()));
+        String encoding = text(blob, "encoding");
+        String content = text(blob, "content");
+        if (!"base64".equals(encoding) || content == null)
+            throw new IngestionFailure(IngestionFailure.Code.TECHAPI_MALFORMED_DATASET);
+        JsonNode document;
+        try { document = json.readTree(Base64.getMimeDecoder().decode(content)); }
+        catch (IllegalArgumentException invalid) {
+            throw new IngestionFailure(IngestionFailure.Code.TECHAPI_MALFORMED_DATASET);
+        }
+        return parseSoc(document, entry.slug(), context.now());
     }
 
     private JsonNode apiJson(SourceContext context, String tree) throws Exception {
-        URI uri = URI.create(API_TREE + tree);
+        return githubJson(context, URI.create(API_TREE + tree));
+    }
+
+    private JsonNode githubJson(SourceContext context, URI uri) throws Exception {
         byte[] body = githubToken.isBlank()
                 ? context.get(uri)
                 : context.get(uri, githubToken, "api.github.com");
@@ -155,7 +281,6 @@ public class TechApiBenchmarkSource implements IngestionSource {
         var candidateSlugs = new LinkedHashSet<>(List.of(slug(withoutBrand), slug(fullModel)));
         candidateSlugs.remove("");
         for (String modelSlug : candidateSlugs) {
-            if (context.remainingRequests() == 0) throw new RequestBudgetExhausted();
             try {
                 JsonNode document = json.readTree(context.get(
                         URI.create(SMARTPHONES + modelSlug + "/index.json")));
@@ -179,14 +304,18 @@ public class TechApiBenchmarkSource implements IngestionSource {
         return Optional.of(new PhoneReference(brand, model, socSlug, socName));
     }
 
-    static boolean matches(
-            TechApiBenchmarkRepository.PhoneTarget local, PhoneReference remote) {
+    static boolean matches(TechApiBenchmarkRepository.PhoneTarget local, PhoneReference remote) {
         if (!identity(local.brand()).equals(identity(remote.brand()))) return false;
         if (!modelIdentity(local.modelName(), local.brand())
                 .equals(modelIdentity(remote.modelName(), remote.brand()))) return false;
+        return processorMatches(local, remote.socSlug(), remote.socName());
+    }
+
+    static boolean processorMatches(
+            TechApiBenchmarkRepository.PhoneTarget local, String socSlug, String socName) {
         Set<String> localKeys = chipsetKeys(local.chipset());
-        Set<String> remoteKeys = chipsetKeys(remote.socName());
-        remoteKeys.add(remote.socSlug());
+        Set<String> remoteKeys = chipsetKeys(socName);
+        remoteKeys.add(socSlug);
         return localKeys.stream().anyMatch(remoteKeys::contains);
     }
 
@@ -196,15 +325,13 @@ public class TechApiBenchmarkSource implements IngestionSource {
         BigDecimal single = positiveDecimal(document, "geekbench_single");
         BigDecimal multi = positiveDecimal(document, "geekbench_multi");
         if (single == null && multi == null) return Optional.empty();
-        return Optional.of(new SocBenchmarks(single, multi,
+        return Optional.of(new SocBenchmarks(text(document, "name"), single, multi,
                 datasetTimestamp(text(document, "updated_at"), retrievedAt)));
     }
 
     private void emit(
-            TechApiBenchmarkRepository.PhoneTarget phone,
-            String path,
-            SocBenchmarks benchmarks,
-            Consumer<Payload> output) {
+            TechApiBenchmarkRepository.PhoneTarget phone, String path,
+            SocBenchmarks benchmarks, Consumer<Payload> output) {
         String product = Long.toString(phone.productId());
         String provenance = "TechAPI GitHub main data/soc/" + path
                 + "; representative processor-level score; CC BY-SA 4.0";
@@ -229,31 +356,68 @@ public class TechApiBenchmarkSource implements IngestionSource {
     }
 
     static final class SocTree {
-        private final Map<String, List<String>> bySlug;
-        private SocTree(Map<String, List<String>> bySlug) { this.bySlug = bySlug; }
+        private final List<TreeEntry> entries;
+        private final Map<String, TreeEntry> byPath;
+        private final Map<String, List<TreeEntry>> bySlug;
+
+        private SocTree(List<TreeEntry> entries) {
+            this.entries = entries;
+            this.byPath = new HashMap<>();
+            this.bySlug = new HashMap<>();
+            for (TreeEntry entry : entries) {
+                byPath.put(entry.path(), entry);
+                bySlug.computeIfAbsent(entry.slug(), ignored -> new ArrayList<>()).add(entry);
+            }
+        }
 
         static SocTree parse(JsonNode tree) {
             if (tree == null || !tree.path("tree").isArray())
                 throw new IngestionFailure(IngestionFailure.Code.TECHAPI_MALFORMED_DATASET);
             if (tree.path("truncated").asBoolean(false))
                 throw new IngestionFailure(IngestionFailure.Code.TECHAPI_TRUNCATED_DATASET);
-            Map<String, List<String>> bySlug = new HashMap<>();
-            for (JsonNode entry : tree.path("tree")) {
-                String path = text(entry, "path");
-                if (!"blob".equals(text(entry, "type")) || path == null
-                        || !SAFE_SOC_PATH.matcher(path).matches()) continue;
-                String file = path.substring(path.lastIndexOf('/') + 1, path.length() - 5);
-                bySlug.computeIfAbsent(file, ignored -> new ArrayList<>()).add(path);
+            List<TreeEntry> entries = new ArrayList<>();
+            for (JsonNode item : tree.path("tree")) {
+                String path = text(item, "path");
+                String sha = text(item, "sha");
+                if (!"blob".equals(text(item, "type")) || path == null || sha == null
+                        || !SAFE_SOC_PATH.matcher(path).matches()
+                        || !sha.matches("[a-f0-9]{40}")) continue;
+                String slug = path.substring(path.lastIndexOf('/') + 1, path.length() - 5);
+                entries.add(new TreeEntry(path, sha, slug));
             }
-            return new SocTree(bySlug);
+            entries.sort(java.util.Comparator.comparing(TreeEntry::path));
+            return new SocTree(List.copyOf(entries));
         }
 
-        List<String> paths(String slug) { return bySlug.getOrDefault(slug, List.of()); }
+        List<TreeEntry> entries() { return entries; }
+        List<TreeEntry> entries(String slug) { return bySlug.getOrDefault(slug, List.of()); }
+
+        int position(String path) {
+            for (int index = 0; index < entries.size(); index++)
+                if (entries.get(index).path().equals(path)) return index;
+            throw new IngestionFailure(IngestionFailure.Code.TECHAPI_MALFORMED_DATASET);
+        }
+
+        List<TreeEntry> after(String cursor) { return TechApiBenchmarkSource.after(entries, cursor); }
+
+        List<TreeEntry> changedSince(SocTree baseline) {
+            return entries.stream().filter(entry -> {
+                TreeEntry previous = baseline.byPath.get(entry.path());
+                return previous == null || !previous.sha().equals(entry.sha());
+            }).toList();
+        }
     }
 
+    private static List<TreeEntry> after(List<TreeEntry> entries, String cursor) {
+        if (cursor == null) return entries;
+        for (int index = 0; index < entries.size(); index++)
+            if (entries.get(index).path().equals(cursor)) return entries.subList(index + 1, entries.size());
+        throw new IngestionFailure(IngestionFailure.Code.TECHAPI_MALFORMED_DATASET);
+    }
+
+    record TreeEntry(String path, String sha, String slug) {}
     record PhoneReference(String brand, String modelName, String socSlug, String socName) {}
-    record SocBenchmarks(BigDecimal single, BigDecimal multi, Instant observedAt) {}
-    private static final class RequestBudgetExhausted extends RuntimeException {}
+    record SocBenchmarks(String name, BigDecimal single, BigDecimal multi, Instant observedAt) {}
 
     private static Set<String> chipsetKeys(String value) {
         Set<String> keys = new LinkedHashSet<>();
@@ -269,9 +433,7 @@ public class TechApiBenchmarkSource implements IngestionSource {
         return keys;
     }
 
-    private static String identity(String value) {
-        return slug(value).replace("-", "");
-    }
+    private static String identity(String value) { return slug(value).replace("-", ""); }
 
     private static String modelIdentity(String model, String brand) {
         if (model != null && brand != null

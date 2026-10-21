@@ -37,6 +37,11 @@ public class TechApiBenchmarkSink implements IngestionSink {
         String provenance = benchmark.provenance() == null
                 ? payload.sourceId()
                 : benchmark.provenance();
+        if (TechApiBenchmarkSource.ID.equals(payload.sourceId())
+                && benchmarks.existsByProductIdAndBenchmarkNameAndSourceStartingWith(
+                        productId, benchmark.name(), "TechAPI GitHub")) {
+            return Result.DUPLICATE;
+        }
         var latest = benchmarks.findFirstByProductIdAndBenchmarkNameOrderByObservedAtDescIdDesc(
                 productId, benchmark.name());
         if (latest.isPresent()

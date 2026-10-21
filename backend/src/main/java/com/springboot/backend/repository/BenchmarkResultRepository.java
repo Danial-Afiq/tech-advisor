@@ -12,6 +12,9 @@ public interface BenchmarkResultRepository extends JpaRepository<BenchmarkResult
     Optional<BenchmarkResult> findFirstByProductIdAndBenchmarkNameOrderByObservedAtDescIdDesc(
             Long productId, String benchmarkName);
 
+    boolean existsByProductIdAndBenchmarkNameAndSourceStartingWith(
+            Long productId, String benchmarkName, String sourcePrefix);
+
     /**
      * The most recent observation of each benchmark for one product.
      *

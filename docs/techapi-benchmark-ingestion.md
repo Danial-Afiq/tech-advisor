@@ -1,67 +1,86 @@
 # TechAPI benchmark ingestion
 
-`techapi-soc-benchmarks` enriches existing VERIFIED smartphone catalogue rows
-with raw Geekbench single-core and multi-core observations. It never creates or
-updates phone specifications; MobileAPI.dev remains the specification source.
+`techapi-soc-benchmarks` enriches existing VERIFIED smartphones with TechAPI's
+raw Geekbench 6 single-core and multi-core scores. It does not create products,
+change phone specifications, refresh existing scores, or alter recommendation
+weights.
 
-## Source and meaning
+## Source and stored meaning
 
-The source reads TechAPI's released `main` branch:
+The adapter reads the released TechAPI `main` Git tree. Raw files under
+`data/soc/...` provide `geekbench_single` and `geekbench_multi`; generated
+smartphone records are used only when a newly added local phone must be mapped
+to its processor. The calculated performance ratings in TechAPI's generated API
+are not used.
 
-- generated smartphone records under `site/public/v1/smartphones/...` provide
-  the phone-to-SoC reference;
-- raw records under `data/soc/...` provide `geekbench_single` and
-  `geekbench_multi`.
+Scores are stored in the existing `benchmark_results` table as:
 
-The generated API's calculated performance ratings are deliberately not used.
-TechAPI does not identify the Geekbench version for these raw fields, so the
-stored benchmark identities explicitly say `version unspecified`. Values are
-labelled `representative SoC`: they describe the processor and must not be
-presented as measurements made on the specific handset.
+- `Geekbench 6 CPU Single-Core`
+- `Geekbench 6 CPU Multi-Core`
 
-TechAPI's data and static API are licensed under
-[CC BY-SA 4.0](https://github.com/GetTechAPI/TechAPI/blob/main/data/LICENSE.md).
-Stored `source` values retain the raw dataset path, representative-SoC wording
-and licence attribution. Any redistributed derived benchmark dataset must keep
-the required attribution and share-alike terms.
+They are representative processor-level observations, not handset test runs.
+The `source` value preserves the raw TechAPI path, that processor-level meaning,
+and CC BY-SA 4.0 attribution. `observed_at` uses TechAPI's `updated_at` when
+available and retrieval time otherwise.
 
-## Matching and bounded coverage
+## Phase 1: initial backfill
 
-The source reads each catalogue phone's brand, model and chipset. It builds a
-TechAPI model slug, validates the returned brand/model, and requires the local
-chipset to equal the referenced TechAPI SoC after conservative normalization.
-It never uses substring matching. Missing, unknown, ambiguous, unverified or
-inconsistent records are skipped and logged without failing other phones.
+The first run pins the current `data/soc` Git tree SHA and the highest eligible
+local product ID. It then walks every SoC JSON path in stable path order. For
+each verified record with a positive raw score, the processor is matched to
+eligible local phone chipsets using exact conservative normalized identities.
+All confidently matching products receive the score.
 
-A bounded Git tree listing locates raw SoC paths without downloading TechAPI's
-93,000-record smartphone index. All network reads use `SourceContext`, including
-its HTTPS-only policy, ten-request ceiling, one-second spacing, one-minute source
-deadline, retry policy and one-MiB response limit. SoC responses are cached for
-the current run, so phones sharing a processor reuse one fetch.
+Each manual run handles at most `TECHAPI_MAX_PRODUCTS_PER_RUN` source records.
+Despite the retained environment-variable name, during the initial phase this
+is a source-record batch size. The last completed path, processed count, total,
+catalogue snapshot and tree SHA are saved in the existing `system_log` table
+under `TECHAPI_BENCHMARK_STATE`. A failed or interrupted item is not
+checkpointed, so the next run retries it. Completion never resets the cursor.
 
-`TECHAPI_MAX_PRODUCTS_PER_RUN` controls how many catalogue rows may be considered
-(default 20, valid 1-100). The HTTP request ceiling may stop a run earlier. The
-last completed product ID is persisted in `INGESTION_COORDINATOR` metadata, so
-the next run resumes there. A completed pass resets the cursor to begin a future
-refresh cycle.
+During the initial backfill, the admin ingestion page shows `processed / total`
+progress, observations stored and products covered. Select **TechAPI processor
+benchmarks** and choose **Run now** repeatedly until the initial-backfill card
+disappears, which means the source has entered incremental monitoring.
 
-## Storage and comparison
+## Phase 2: incremental coverage
 
-The existing `benchmark_results` table remains unchanged. `observed_at` is
-TechAPI's `updated_at` dataset timestamp, interpreted as UTC when the source omits
-an offset. Retrieval time is used only when that value is absent or malformed;
-neither timestamp claims to be the time the benchmark was measured.
+After backfill, successful completed scheduled checks are due every 14 days.
+The adapter first compares the saved SoC tree SHA with the current one. If it is
+unchanged, no SoC files are downloaded. If it changed, immutable old and new Git
+trees are compared by path and blob SHA. Only these records are fetched:
 
-The sink returns `DUPLICATE` when the latest score, unit, direction and provenance
-are unchanged. A changed value appends a new row, preserving history.
-`BenchmarkResultRepository.findLatestPerBenchmark` selects the current row.
-`SpecComparisonService` consumes it through the existing recommendation flow and
-compares only equal benchmark names, units and `higher_is_better` directions.
-No recommendation weights or thresholds are changed.
+- new TechAPI processors with scores;
+- existing processor records whose blob changed, allowing a previously absent
+  single-core or multi-core score to be discovered; and
+- newly added local phones after the saved catalogue product ID.
 
-## Configuration and schedule
+An existing TechAPI metric for a product is immutable for this feature. Numeric
+changes to a score already stored are returned as duplicates and do not append
+history. A changed processor file can still add the other, previously missing
+metric. New local phones are checked against the current pinned SoC tree and
+then checkpointed by product ID.
 
-The source is disabled until explicitly listed:
+Large incremental changes use the same bounded batch and durable source/tree
+and catalogue checkpoints. An incomplete scheduled batch remains due at the
+next shared scheduler wake-up; only a completed incremental cycle starts the
+next 14-day wait. Manual runs continue immediately without changing schedule
+dates.
+
+## Safety and matching
+
+All requests go through `SourceContext`, preserving HTTPS-only access, one-second
+pacing, retries, cancellation, response-size limits and provider `Retry-After`
+deferrals. The per-run request limit is `4 + (3 * batch size)` and the time
+budget is that many seconds plus 30 seconds. The valid batch range is 1–100.
+The adapter downloads bounded Git metadata and individual JSON blobs; it never
+clones or downloads the full repository.
+
+Missing, non-positive, unverified, malformed, ambiguous or non-matching records
+are skipped without fabricating a value. Matching never uses a loose substring.
+There is no application cooldown, so consecutive manual batches are allowed.
+
+## Configuration
 
 ```properties
 INGESTION_ENABLED_SOURCES=techapi-soc-benchmarks
@@ -69,91 +88,51 @@ TECHAPI_GITHUB_TOKEN=
 TECHAPI_MAX_PRODUCTS_PER_RUN=20
 ```
 
-`TECHAPI_GITHUB_TOKEN` is optional; it raises GitHub API rate limits and stays on
-the server. Never commit it. The source declares a 14-day interval. The existing
-coordinator still wakes on its shared two-day schedule for other sources and
-omits TechAPI until its persisted source-specific due time. Only a successful
-scheduled TechAPI execution advances that due time. Manual, failed, skipped and
-interrupted executions do not. No production scheduling or Fly.io setting is
-enabled by this feature.
+`TECHAPI_GITHUB_TOKEN` is optional and only raises GitHub API rate limits. Never
+commit it. `INGESTION_SCHEDULING_ENABLED` controls the existing shared scheduler;
+this feature does not enable production scheduling automatically.
 
-## Manual local verification (PowerShell)
+## Manual local verification
 
-1. Copy `.env.example` to `.env` if needed, fill the normal database/JWT/admin
-   values, and set:
+Start PostgreSQL, the backend and frontend as described in the README. Sign in
+as an ADMIN and open `/admin/ingestion`. Select **TechAPI processor benchmarks**
+and run batches. The progress card should increase and survive backend restarts.
 
-   ```properties
-   INGESTION_SCHEDULING_ENABLED=false
-   INGESTION_ENABLED_SOURCES=techapi-soc-benchmarks
-   ```
+Inspect the durable checkpoint:
 
-2. Start PostgreSQL and the backend from the repository root:
+```powershell
+docker exec tech-advisor-postgres psql -U techadvisor -d techadvisor -c @"
+SELECT status,
+       metadata->>'phase' AS phase,
+       metadata->>'completedUnits' AS processed,
+       metadata->>'totalUnits' AS total,
+       metadata->>'cursor' AS last_source_path,
+       metadata->>'initialBackfillComplete' AS complete,
+       metadata->>'catalogueCursor' AS catalogue_cursor,
+       metadata->>'baselineRevision' AS source_revision
+FROM system_log
+WHERE component = 'TECHAPI_BENCHMARK_STATE'
+ORDER BY id DESC
+LIMIT 1;
+"@
+```
 
-   ```powershell
-   docker compose up -d postgres
-   Set-Location backend
-   .\mvnw.cmd spring-boot:run
-   ```
+Inspect stored coverage:
 
-3. In another PowerShell terminal, log in as the configured administrator and
-   start a manual run:
+```powershell
+docker exec tech-advisor-postgres psql -U techadvisor -d techadvisor -c @"
+SELECT p.brand, p.model_name, ph.chipset,
+       b.benchmark_name, b.score, b.unit, b.higher_is_better,
+       b.source, b.observed_at
+FROM benchmark_results b
+JOIN products p ON p.id = b.product_id
+JOIN phone ph ON ph.product_id = p.id
+WHERE b.source LIKE 'TechAPI GitHub main%'
+ORDER BY p.id, b.benchmark_name, b.id;
+"@
+```
 
-   ```powershell
-   $login = Invoke-RestMethod -Method Post `
-     -Uri 'http://localhost:8080/api/auth/login' `
-     -ContentType 'application/json' `
-     -Body (@{ email = 'YOUR_ADMIN_EMAIL'; password = 'YOUR_ADMIN_PASSWORD' } | ConvertTo-Json)
-
-   $headers = @{
-     Authorization = "Bearer $($login.token)"
-     'Idempotency-Key' = "techapi-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
-   }
-   $body = @{
-     sources = @('techapi-soc-benchmarks')
-     reason = 'Local SCRUM-124 verification'
-   } | ConvertTo-Json
-
-   $run = Invoke-RestMethod -Method Post `
-     -Uri 'http://localhost:8080/api/admin/ingestion/runs' `
-     -Headers $headers -ContentType 'application/json' -Body $body
-   $runId = $run.runId
-   do {
-     Start-Sleep -Seconds 1
-     $result = Invoke-RestMethod -Uri "http://localhost:8080/api/admin/ingestion/runs/$runId" `
-       -Headers @{ Authorization = "Bearer $($login.token)" }
-   } until ($result.finishedAt)
-   $result
-   ```
-
-4. Verify the stored values and history:
-
-   ```powershell
-   docker exec tech-advisor-postgres psql -U techadvisor -d techadvisor -c @"
-   SELECT p.brand, p.model_name, ph.chipset,
-          b.benchmark_name, b.score, b.unit, b.higher_is_better,
-          b.source, b.observed_at
-   FROM benchmark_results b
-   JOIN products p ON p.id = b.product_id
-   JOIN phone ph ON ph.product_id = p.id
-   WHERE b.source LIKE 'TechAPI GitHub main%'
-   ORDER BY p.id, b.benchmark_name, b.observed_at DESC, b.id DESC;
-   "@
-   ```
-
-5. Run the same ingestion again. Unchanged rows should be reported as duplicates
-   and the SQL row count should not increase. The coordinator metadata shows the
-   resumable cursor and the scheduled due time after a successful scheduled run:
-
-   ```powershell
-   docker exec tech-advisor-postgres psql -U techadvisor -d techadvisor -c @"
-   SELECT metadata->'sourceCursors'->>'techapi-soc-benchmarks' AS cursor,
-          metadata->'nextSourceDue'->>'techapi-soc-benchmarks' AS next_due
-   FROM system_log
-   WHERE component = 'INGESTION_COORDINATOR';
-   "@
-   ```
-
-If no rows are written, inspect the per-source run result and backend logs. The
-normal causes are no eligible catalogue phones, a model slug absent from TechAPI,
-an unverified/mismatched chipset, unavailable raw Geekbench fields, provider
-failure, or exhaustion of the bounded request budget. No score is fabricated.
+After the initial phase is complete, another unchanged run should finish with
+zero new observations and leave the row count unchanged. Adding a new VERIFIED
+phone with a matching chipset makes it eligible on the next run. Provider
+failures leave the last successful source path or product ID intact for retry.

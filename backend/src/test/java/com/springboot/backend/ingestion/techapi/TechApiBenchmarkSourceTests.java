@@ -1,172 +1,233 @@
 package com.springboot.backend.ingestion.techapi;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.springboot.backend.ingestion.core.Payload;
 import com.springboot.backend.ingestion.core.SourceContext;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class TechApiBenchmarkSourceTests {
     private static final String DATA_SHA = "a".repeat(40);
-    private static final String SOC_SHA = "b".repeat(40);
-    private static final String SOC_PATH = "qualcomm/2024/snapdragon-8-elite.json";
+    private static final String BASE_SHA = "b".repeat(40);
+    private static final String CURRENT_SHA = "c".repeat(40);
+    private static final String BLOB_ONE = "d".repeat(40);
+    private static final String BLOB_TWO = "e".repeat(40);
+    private static final String PATH_ONE = "qualcomm/2024/snapdragon-8-elite.json";
+    private static final String PATH_TWO = "samsung/2024/exynos-2400.json";
 
     TechApiBenchmarkRepository repository = mock(TechApiBenchmarkRepository.class);
     SourceContext context = mock(SourceContext.class);
-    TechApiBenchmarkSource source = new TechApiBenchmarkSource(repository, "", 20);
+    TechApiIngestionState state = new TechApiIngestionState();
 
     @BeforeEach
     void setup() throws Exception {
-        when(context.remainingRequests()).thenReturn(10);
+        when(repository.state()).thenReturn(state);
+        when(repository.maximumEligibleProductId()).thenReturn(50L);
+        when(repository.phonesThrough(anyLong())).thenReturn(List.of());
+        when(repository.allPhones()).thenReturn(List.of());
+        when(repository.nextPhones(anyLong(), anyInt()))
+                .thenReturn(new TechApiBenchmarkRepository.Batch(List.of(), false));
         when(context.now()).thenReturn(Instant.parse("2026-10-21T00:00:00Z"));
-        when(context.get(any(URI.class))).thenAnswer(invocation -> response(invocation.getArgument(0)));
+        when(context.get(any(URI.class))).thenAnswer(call -> response(call.getArgument(0)));
     }
 
     @Test
-    void parsesPhoneToSocAndEmitsRawGeekbenchScores() throws Exception {
+    void sizesItsNetworkBudgetToTheConfiguredBatch() {
+        var source = source(20);
+        assertEquals(java.time.Duration.ZERO, source.cooldown());
+        assertEquals(64, source.requestLimit());
+        assertEquals(java.time.Duration.ofSeconds(94), source.executionBudget());
+        assertEquals(java.time.Duration.ofDays(14), source.scheduleInterval().orElseThrow());
+    }
+
+    @Test
+    void initialBackfillDiscoversProcessorsEmitsScoresAndMarksCompletion() throws Exception {
         var phone = phone(11, "Samsung", "Galaxy S25", "Qualcomm Snapdragon 8 Elite");
-        when(repository.nextPhones(20)).thenReturn(
-                new TechApiBenchmarkRepository.Batch(List.of(phone), false));
+        when(repository.phonesThrough(50)).thenReturn(List.of(phone));
         List<Payload> emitted = new ArrayList<>();
 
-        source.ingest(context, emitted::add);
+        source(20).ingest(context, emitted::add);
 
         assertEquals(2, emitted.size());
-        var single = (Payload.Benchmark) emitted.get(0).body();
-        var multi = (Payload.Benchmark) emitted.get(1).body();
-        assertEquals(TechApiBenchmarkSource.GEEKBENCH_SINGLE, single.name());
-        assertEquals("3200", single.score().toPlainString());
-        assertEquals(TechApiBenchmarkSource.GEEKBENCH_MULTI, multi.name());
-        assertEquals("10000", multi.score().toPlainString());
-        assertTrue(single.higherIsBetter());
-        assertTrue(single.provenance().contains("representative processor-level"));
-        assertEquals(Instant.parse("2026-05-28T23:32:19Z"), emitted.getFirst().observedAt());
-        verify(repository).checkpoint(11);
-        verify(repository).restartCycle();
+        assertEquals("Geekbench 6 CPU Single-Core", ((Payload.Benchmark) emitted.get(0).body()).name());
+        assertEquals("3200", ((Payload.Benchmark) emitted.get(0).body()).score().toPlainString());
+        assertEquals("Geekbench 6 CPU Multi-Core", ((Payload.Benchmark) emitted.get(1).body()).name());
+        assertTrue(state.initialBackfillComplete);
+        assertEquals(BASE_SHA, state.baselineRevision);
+        assertEquals(PATH_ONE, state.cursor);
+        assertEquals(1, state.completedUnits);
+        assertEquals(50, state.catalogueCursor);
+        verify(repository, atLeast(2)).save(state);
     }
 
     @Test
-    void phonesSharingAProcessorReuseTheFetchedSocRecord() throws Exception {
-        var samsung = phone(11, "Samsung", "Galaxy S25", "Snapdragon 8 Elite");
-        var onePlus = phone(12, "OnePlus", "OnePlus 13", "Qualcomm Snapdragon 8 Elite");
-        when(repository.nextPhones(20)).thenReturn(
-                new TechApiBenchmarkRepository.Batch(List.of(samsung, onePlus), true));
-        List<Payload> emitted = new ArrayList<>();
+    void boundedBackfillResumesAfterItsDurablePathWithoutResetting() throws Exception {
+        state.snapshotRevision = BASE_SHA;
+        state.totalUnits = 2;
+        state.catalogueSnapshotMax = 50;
+        when(context.get(any(URI.class))).thenAnswer(call -> twoEntryResponse(call.getArgument(0)));
 
-        source.ingest(context, emitted::add);
+        source(1).ingest(context, ignored -> {});
+        assertFalse(state.initialBackfillComplete);
+        assertEquals(PATH_ONE, state.cursor);
+        assertEquals(1, state.completedUnits);
 
-        assertEquals(4, emitted.size());
-        verify(context, times(1)).get(URI.create(
-                "https://raw.githubusercontent.com/GetTechAPI/TechAPI/main/data/soc/" + SOC_PATH));
-        verify(repository).checkpoint(11);
-        verify(repository).checkpoint(12);
-        verify(repository, never()).restartCycle();
+        source(1).ingest(context, ignored -> {});
+        assertTrue(state.initialBackfillComplete);
+        assertEquals(PATH_TWO, state.cursor);
+        assertEquals(2, state.completedUnits);
+        verify(context, times(1)).get(URI.create(blobUrl(BLOB_ONE)));
+        verify(context, times(1)).get(URI.create(blobUrl(BLOB_TWO)));
     }
 
     @Test
-    void missingUnknownAndMismatchedChipsetsAreSkippedWithoutCrashing() throws Exception {
-        var unknown = phone(11, "Samsung", "Galaxy S25", "Different Processor");
-        when(repository.nextPhones(20)).thenReturn(
-                new TechApiBenchmarkRepository.Batch(List.of(unknown), false));
+    void failedRecordDoesNotAdvanceTheCheckpoint() throws Exception {
+        state.snapshotRevision = BASE_SHA;
+        state.totalUnits = 1;
+        state.catalogueSnapshotMax = 50;
+        when(context.get(URI.create(blobUrl(BLOB_ONE))))
+                .thenThrow(new SourceContext.TransportFailure());
+
+        assertThrows(SourceContext.TransportFailure.class,
+                () -> source(20).ingest(context, ignored -> {}));
+
+        assertNull(state.cursor);
+        assertEquals(0, state.completedUnits);
+        assertFalse(state.initialBackfillComplete);
+    }
+
+    @Test
+    void unchangedIncrementalRunUsesTreeCheckpointAndWritesNothing() throws Exception {
+        incrementalState(BASE_SHA, 50);
         List<Payload> emitted = new ArrayList<>();
 
-        assertDoesNotThrow(() -> source.ingest(context, emitted::add));
+        source(20).ingest(context, emitted::add);
 
         assertTrue(emitted.isEmpty());
-        verify(repository).checkpoint(11);
+        assertNull(state.pendingRevision);
+        verify(context, never()).get(URI.create(blobUrl(BLOB_ONE)));
+        verify(repository, never()).allPhones();
     }
 
     @Test
-    void ambiguousSocPathsAreSkippedRatherThanGuessed() throws Exception {
-        var phone = phone(11, "Samsung", "Galaxy S25", "Snapdragon 8 Elite");
-        when(repository.nextPhones(20)).thenReturn(
-                new TechApiBenchmarkRepository.Batch(List.of(phone), false));
-        when(context.get(any(URI.class))).thenAnswer(invocation -> {
-            URI uri = invocation.getArgument(0);
-            if (uri.toString().endsWith(SOC_SHA + "?recursive=1")) return bytes("""
-                    {"truncated":false,"tree":[
-                      {"path":"qualcomm/2024/snapdragon-8-elite.json","type":"blob"},
-                      {"path":"qualcomm/2025/snapdragon-8-elite.json","type":"blob"}
-                    ]}
+    void incrementalRunProcessesOnlyNewOrChangedProcessorBlobs() throws Exception {
+        incrementalState(BASE_SHA, 50);
+        when(repository.allPhones()).thenReturn(List.of(
+                phone(11, "Samsung", "Galaxy S25", "Snapdragon 8 Elite")));
+        when(context.get(any(URI.class))).thenAnswer(call -> changedTreeResponse(call.getArgument(0)));
+        List<Payload> emitted = new ArrayList<>();
+
+        source(20).ingest(context, emitted::add);
+
+        assertEquals(2, emitted.size());
+        assertEquals(CURRENT_SHA, state.baselineRevision);
+        assertNull(state.pendingRevision);
+        verify(context, times(1)).get(URI.create(blobUrl(BLOB_TWO)));
+        verify(context, never()).get(URI.create(blobUrl(BLOB_ONE)));
+    }
+
+    @Test
+    void modifiedProcessorCanAddAPreviouslyMissingScore() throws Exception {
+        incrementalState(BASE_SHA, 50);
+        when(repository.allPhones()).thenReturn(List.of(
+                phone(11, "Samsung", "Galaxy S25", "Snapdragon 8 Elite")));
+        when(context.get(any(URI.class))).thenAnswer(call -> {
+            URI uri = call.getArgument(0);
+            if (uri.toString().equals(blobUrl(BLOB_TWO))) return blob("""
+                    {"slug":"snapdragon-8-elite","name":"Snapdragon 8 Elite","verified":true,
+                     "geekbench_single":3200}
                     """);
-            return response(uri);
+            return changedSamePathResponse(uri);
         });
         List<Payload> emitted = new ArrayList<>();
 
-        source.ingest(context, emitted::add);
+        source(20).ingest(context, emitted::add);
 
-        assertTrue(emitted.isEmpty());
-        verify(repository).checkpoint(11);
+        assertEquals(1, emitted.size());
+        assertEquals("Geekbench 6 CPU Single-Core", ((Payload.Benchmark) emitted.getFirst().body()).name());
     }
 
     @Test
-    void invalidBenchmarkValuesAreNotEmitted() throws Exception {
-        var missing = TechApiBenchmarkSource.parseSoc(json("""
+    void incrementalRunProcessesNewLocalPhonesAfterTheCatalogueCursor() throws Exception {
+        incrementalState(BASE_SHA, 50);
+        var phone = phone(51, "Samsung", "Galaxy S25", "Snapdragon 8 Elite");
+        when(repository.nextPhones(50, 20))
+                .thenReturn(new TechApiBenchmarkRepository.Batch(List.of(phone), false));
+        when(repository.hasCompleteCoverage(51)).thenReturn(false);
+        List<Payload> emitted = new ArrayList<>();
+
+        source(20).ingest(context, emitted::add);
+
+        assertEquals(2, emitted.size());
+        assertEquals(51, state.catalogueCursor);
+        verify(context).get(URI.create(
+                "https://raw.githubusercontent.com/GetTechAPI/TechAPI/main/site/public/v1/smartphones/galaxy-s25/index.json"));
+    }
+
+    @Test
+    void alreadyCoveredNewPhoneAdvancesWithoutRefetchingItsProcessor() throws Exception {
+        incrementalState(BASE_SHA, 50);
+        var phone = phone(51, "Samsung", "Galaxy S25", "Snapdragon 8 Elite");
+        when(repository.nextPhones(50, 20))
+                .thenReturn(new TechApiBenchmarkRepository.Batch(List.of(phone), false));
+        when(repository.hasCompleteCoverage(51)).thenReturn(true);
+
+        source(20).ingest(context, ignored -> {});
+
+        assertEquals(51, state.catalogueCursor);
+        verify(context, never()).get(URI.create(blobUrl(BLOB_ONE)));
+    }
+
+    @Test
+    void incompleteWorkStaysDueButCompletedIncrementalCycleUsesFortnightlyCadence() {
+        assertFalse(source(20).scheduleCycleComplete());
+
+        incrementalState(BASE_SHA, 50);
+        assertTrue(source(20).scheduleCycleComplete());
+
+        state.pendingRevision = CURRENT_SHA;
+        assertFalse(source(20).scheduleCycleComplete());
+    }
+
+    @Test
+    void parsingAndMatchingRejectInvalidOrUncertainData() throws Exception {
+        assertTrue(TechApiBenchmarkSource.parseSoc(json("""
                 {"slug":"chip","verified":true,"geekbench_single":0,"geekbench_multi":"unknown"}
-                """), "chip", Instant.EPOCH);
-        assertTrue(missing.isEmpty());
-
-        var singleOnly = TechApiBenchmarkSource.parseSoc(json("""
-                {"slug":"chip","verified":true,"geekbench_single":1234}
-                """), "chip", Instant.EPOCH).orElseThrow();
-        assertEquals("1234", singleOnly.single().toPlainString());
-        assertNull(singleOnly.multi());
-    }
-
-    @Test
-    void parsesVerifiedSmartphoneSocReferencesAndRejectsIncompleteOnes() throws Exception {
-        var parsed = TechApiBenchmarkSource.parsePhone(json(phoneJson(
-                "Samsung", "Galaxy S25", "snapdragon-8-elite", "Snapdragon 8 Elite"))).orElseThrow();
-        assertEquals("snapdragon-8-elite", parsed.socSlug());
-
+                """), "chip", Instant.EPOCH).isEmpty());
+        assertTrue(TechApiBenchmarkSource.processorMatches(
+                phone(1, "Samsung", "Galaxy", "Qualcomm Snapdragon 8 Elite"),
+                "snapdragon-8-elite", "Snapdragon 8 Elite"));
+        assertFalse(TechApiBenchmarkSource.processorMatches(
+                phone(1, "Samsung", "Galaxy", "Different Processor"),
+                "snapdragon-8-elite", "Snapdragon 8 Elite"));
         assertTrue(TechApiBenchmarkSource.parsePhone(json("""
                 {"name":"Galaxy S25","brand":{"name":"Samsung"},"verified":true}
                 """)).isEmpty());
     }
 
-    @Test
-    void matchingSupportsAppleNamesWithoutGuessingMissingOrDifferentChipsets() {
-        var apple = phone(21, "Apple", "Apple iPhone 16 Pro", "Apple A18 Pro");
-        var reference = new TechApiBenchmarkSource.PhoneReference(
-                "Apple", "iPhone 16 Pro", "apple-a18-pro", "Apple A18 Pro");
-
-        assertTrue(TechApiBenchmarkSource.matches(apple, reference));
-        assertFalse(TechApiBenchmarkSource.matches(
-                phone(22, "Apple", "Apple iPhone 16 Pro", null), reference));
-        assertFalse(TechApiBenchmarkSource.matches(
-                phone(23, "Apple", "Apple iPhone 16 Pro", "Apple A17 Pro"), reference));
+    private TechApiBenchmarkSource source(int limit) {
+        return new TechApiBenchmarkSource(repository, "", limit);
     }
 
-    @Test
-    void requestFailureStopsTheRunWithoutAdvancingTheCursor() throws Exception {
-        var phone = phone(11, "Samsung", "Galaxy S25", "Snapdragon 8 Elite");
-        when(repository.nextPhones(20)).thenReturn(
-                new TechApiBenchmarkRepository.Batch(List.of(phone), false));
-        when(context.get(any(URI.class))).thenThrow(new SourceContext.TransportFailure());
-
-        assertThrows(SourceContext.TransportFailure.class,
-                () -> source.ingest(context, ignored -> {}));
-        verify(repository, never()).checkpoint(anyLong());
-    }
-
-    @Test
-    void exhaustedRequestBudgetLeavesTheCurrentPhoneForTheNextRun() throws Exception {
-        var phone = phone(11, "Samsung", "Galaxy S25", "Snapdragon 8 Elite");
-        when(repository.nextPhones(20)).thenReturn(
-                new TechApiBenchmarkRepository.Batch(List.of(phone), false));
-        when(context.remainingRequests()).thenReturn(10, 0);
-
-        source.ingest(context, ignored -> {});
-
-        verify(repository, never()).checkpoint(anyLong());
+    private void incrementalState(String revision, long catalogueCursor) {
+        state.phase = "INCREMENTAL";
+        state.initialBackfillComplete = true;
+        state.snapshotRevision = revision;
+        state.baselineRevision = revision;
+        state.cursor = PATH_ONE;
+        state.completedUnits = 1;
+        state.totalUnits = 1;
+        state.catalogueCursor = catalogueCursor;
     }
 
     private byte[] response(URI uri) {
@@ -176,29 +237,71 @@ class TechApiBenchmarkSourceTests {
                 """.formatted(DATA_SHA));
         if (value.endsWith("/trees/" + DATA_SHA)) return bytes("""
                 {"tree":[{"path":"soc","type":"tree","sha":"%s"}]}
-                """.formatted(SOC_SHA));
-        if (value.endsWith("/trees/" + SOC_SHA + "?recursive=1")) return bytes("""
-                {"truncated":false,"tree":[{"path":"%s","type":"blob"}]}
-                """.formatted(SOC_PATH));
-        if (value.contains("/smartphones/galaxy-s25/")) return bytes(phoneJson(
-                "Samsung", "Galaxy S25", "snapdragon-8-elite", "Snapdragon 8 Elite"));
-        if (value.contains("/smartphones/13/")) return bytes("{}");
-        if (value.contains("/smartphones/oneplus-13/")) return bytes(phoneJson(
-                "OnePlus", "OnePlus 13", "snapdragon-8-elite", "Snapdragon 8 Elite"));
-        if (value.endsWith("/data/soc/" + SOC_PATH)) return bytes("""
-                {"slug":"snapdragon-8-elite","verified":true,
-                 "geekbench_single":3200,"geekbench_multi":10000,
-                 "updated_at":"2026-05-28T23:32:19"}
+                """.formatted(BASE_SHA));
+        if (value.endsWith("/trees/" + BASE_SHA + "?recursive=1")) return tree(
+                entry(PATH_ONE, BLOB_ONE));
+        if (value.equals(blobUrl(BLOB_ONE))) return blob(scoreJson("snapdragon-8-elite", "Snapdragon 8 Elite"));
+        if (value.contains("/smartphones/galaxy-s25/")) return bytes("""
+                {"name":"Galaxy S25","brand":{"name":"Samsung"},
+                 "soc":{"slug":"snapdragon-8-elite","name":"Snapdragon 8 Elite"},"verified":true}
                 """);
         fail("Unexpected URL " + value);
         return new byte[0];
     }
 
-    private static String phoneJson(String brand, String model, String slug, String socName) {
+    private byte[] twoEntryResponse(URI uri) {
+        String value = uri.toString();
+        if (value.endsWith("/trees/" + BASE_SHA + "?recursive=1")) return tree(
+                entry(PATH_ONE, BLOB_ONE) + "," + entry(PATH_TWO, BLOB_TWO));
+        if (value.equals(blobUrl(BLOB_TWO))) return blob(scoreJson("exynos-2400", "Exynos 2400"));
+        return response(uri);
+    }
+
+    private byte[] changedTreeResponse(URI uri) {
+        String value = uri.toString();
+        if (value.endsWith("/trees/" + DATA_SHA)) return bytes("""
+                {"tree":[{"path":"soc","type":"tree","sha":"%s"}]}
+                """.formatted(CURRENT_SHA));
+        if (value.endsWith("/trees/" + BASE_SHA + "?recursive=1")) return tree(entry(PATH_ONE, BLOB_ONE));
+        if (value.endsWith("/trees/" + CURRENT_SHA + "?recursive=1")) return tree(
+                entry(PATH_ONE, BLOB_ONE) + "," + entry(PATH_TWO, BLOB_TWO));
+        if (value.equals(blobUrl(BLOB_TWO))) return blob(scoreJson("exynos-2400", "Snapdragon 8 Elite"));
+        return response(uri);
+    }
+
+    private byte[] changedSamePathResponse(URI uri) {
+        String value = uri.toString();
+        if (value.endsWith("/trees/" + DATA_SHA)) return bytes("""
+                {"tree":[{"path":"soc","type":"tree","sha":"%s"}]}
+                """.formatted(CURRENT_SHA));
+        if (value.endsWith("/trees/" + BASE_SHA + "?recursive=1")) return tree(entry(PATH_ONE, BLOB_ONE));
+        if (value.endsWith("/trees/" + CURRENT_SHA + "?recursive=1")) return tree(entry(PATH_ONE, BLOB_TWO));
+        return response(uri);
+    }
+
+    private static String entry(String path, String sha) {
+        return "{\"path\":\"%s\",\"type\":\"blob\",\"sha\":\"%s\"}".formatted(path, sha);
+    }
+
+    private static byte[] tree(String entries) {
+        return bytes("{\"truncated\":false,\"tree\":[" + entries + "]}");
+    }
+
+    private static byte[] blob(String document) {
+        return bytes("{\"encoding\":\"base64\",\"content\":\""
+                + Base64.getEncoder().encodeToString(bytes(document)) + "\"}");
+    }
+
+    private static String scoreJson(String slug, String name) {
         return """
-                {"name":"%s","brand":{"name":"%s"},
-                 "soc":{"slug":"%s","name":"%s"},"verified":true}
-                """.formatted(model, brand, slug, socName);
+                {"slug":"%s","name":"%s","verified":true,
+                 "geekbench_single":3200,"geekbench_multi":10000,
+                 "updated_at":"2026-05-28T23:32:19"}
+                """.formatted(slug, name);
+    }
+
+    private static String blobUrl(String sha) {
+        return "https://api.github.com/repos/GetTechAPI/TechAPI/git/blobs/" + sha;
     }
 
     private static TechApiBenchmarkRepository.PhoneTarget phone(
@@ -206,11 +309,9 @@ class TechApiBenchmarkSourceTests {
         return new TechApiBenchmarkRepository.PhoneTarget(id, brand, model, chipset);
     }
 
-    private static byte[] bytes(String value) {
-        return value.getBytes(StandardCharsets.UTF_8);
-    }
+    private static byte[] bytes(String value) { return value.getBytes(StandardCharsets.UTF_8); }
 
     private static com.fasterxml.jackson.databind.JsonNode json(String value) throws Exception {
-        return new com.fasterxml.jackson.databind.ObjectMapper().readTree(value);
+        return new ObjectMapper().readTree(value);
     }
 }

@@ -6,7 +6,6 @@ import com.springboot.backend.ingestion.core.IngestionSink;
 import com.springboot.backend.ingestion.core.IngestionSource;
 import com.springboot.backend.ingestion.core.Payload;
 import com.springboot.backend.ingestion.core.SourceContext;
-import com.springboot.backend.ingestion.run.RunStore;
 import com.springboot.backend.model.Phone;
 import com.springboot.backend.recommendation.classification.SpecComparisonService;
 import com.springboot.backend.recommendation.classification.SpecFactorCatalog;
@@ -35,7 +34,6 @@ class TechApiBenchmarkSinkTests {
     @Autowired JdbcTemplate db;
     @Autowired SpecComparisonService comparisons;
     @Autowired TechApiBenchmarkRepository techApiPhones;
-    @Autowired RunStore runs;
     long ownedId;
     long candidateId;
 
@@ -44,25 +42,26 @@ class TechApiBenchmarkSinkTests {
         assertTrue(db.queryForObject("SELECT current_database()", String.class).endsWith("_test"),
                 "Integration tests require a dedicated database whose name ends in _test");
         db.update("DELETE FROM products WHERE brand='TechApiSinkTest'");
+        db.update("DELETE FROM system_log WHERE component='TECHAPI_BENCHMARK_STATE'");
         ownedId = product("Owned");
         candidateId = product("Candidate");
     }
 
     @Test
-    void storesProvenanceDeduplicatesUnchangedScoresAndRetainsChangedHistory() {
+    void storesProvenanceAndNeverRefreshesAnExistingTechApiMetric() {
         assertTrue(sink.supports(SOURCE, benchmark(ownedId, "single", "1000").body()));
         assertEquals(IngestionSink.Result.ACCEPTED,
                 sink.accept("run-1", benchmark(ownedId, "single", "1000")));
         assertEquals(IngestionSink.Result.DUPLICATE,
                 sink.accept("run-2", benchmark(ownedId, "single", "1000")));
-        assertEquals(IngestionSink.Result.ACCEPTED,
+        assertEquals(IngestionSink.Result.DUPLICATE,
                 sink.accept("run-3", benchmark(ownedId, "single", "1200",
                         Instant.parse("2026-10-20T00:00:00Z"))));
 
-        assertEquals(2, db.queryForObject(
+        assertEquals(1, db.queryForObject(
                 "SELECT count(*) FROM benchmark_results WHERE product_id=?", Integer.class, ownedId));
         var latest = benchmarks.findLatestPerBenchmark(ownedId).getFirst();
-        assertEquals(0, new BigDecimal("1200").compareTo(latest.getScore()));
+        assertEquals(0, new BigDecimal("1000").compareTo(latest.getScore()));
         assertEquals(PROVENANCE, latest.getSource());
         assertEquals("points", latest.getUnit());
         assertTrue(latest.isHigherIsBetter());
@@ -86,14 +85,26 @@ class TechApiBenchmarkSinkTests {
     }
 
     @Test
-    void catalogueCheckpointResumesAtTheNextEligiblePhone() {
-        runs.sourceCursor(TechApiBenchmarkSource.ID, ownedId - 1);
-        var first = techApiPhones.nextPhones(1);
+    void durableStateAndCatalogueCursorResumeAtTheNextEligiblePhone() {
+        var state = new TechApiIngestionState();
+        state.snapshotRevision = "a".repeat(40);
+        state.cursor = "qualcomm/2024/first.json";
+        state.completedUnits = 12;
+        state.catalogueCursor = ownedId - 1;
+        techApiPhones.save(state);
+
+        var restored = techApiPhones.state();
+        assertEquals(state.snapshotRevision, restored.snapshotRevision);
+        assertEquals(state.cursor, restored.cursor);
+        assertEquals(12, restored.completedUnits);
+
+        var first = techApiPhones.nextPhones(restored.catalogueCursor, 1);
         assertEquals(ownedId, first.phones().getFirst().productId());
         assertTrue(first.hasMore());
 
-        techApiPhones.checkpoint(ownedId);
-        var resumed = techApiPhones.nextPhones(1);
+        restored.catalogueCursor = ownedId;
+        techApiPhones.save(restored);
+        var resumed = techApiPhones.nextPhones(techApiPhones.state().catalogueCursor, 1);
         assertEquals(candidateId, resumed.phones().getFirst().productId());
     }
 

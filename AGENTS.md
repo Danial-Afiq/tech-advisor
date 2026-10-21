@@ -2103,8 +2103,10 @@ NOT a decision: the JWT is kept in `sessionStorage`, isolated in
   manual correction/exception path, not another external data provider.
 - **Owner reviews:** SearchAPI Google Product Reviews (§17.4).
 - **Benchmarks:** TechAPI's released GitHub `main` dataset supplies raw Geekbench
-  single-core and multi-core fields from SoC records. The values are stored as
-  representative processor-level observations, never handset measurements.
+  6 CPU single-core and multi-core fields from SoC records. They use the
+  canonical `Geekbench 6 CPU Single-Core` and `Geekbench 6 CPU Multi-Core`
+  identities and remain representative processor-level observations rather
+  than handset measurements.
   MobileAPI.dev remains the phone-specification source and is not overwritten.
 - **Launch/change feeds and sources for future product categories:** still open.
 
@@ -2198,31 +2200,53 @@ never being provisioned, not a missing sink anymore.
 
 `TechApiBenchmarkSource` enriches VERIFIED SMARTPHONE catalogue rows with raw
 `geekbench_single` and `geekbench_multi` values from TechAPI's CC BY-SA 4.0
-GitHub dataset. It uses the released `main` branch. The public generated API is
-used to verify a phone's brand/model and its smartphone-to-SoC reference; a
-bounded Git-tree listing locates the matching raw `data/soc/...json` record,
-because the generated API intentionally exposes computed ratings rather than
-the raw Geekbench values required here.
+GitHub dataset. It uses the released `main` branch and has two durable phases.
+The initial one-time backfill pins the `data/soc` Git-tree SHA and local catalogue
+maximum, walks all SoC paths in stable order across bounded runs, and emits every
+valid score for a confidently matching local processor. After completion it
+switches permanently to incremental discovery; the initial cursor never resets.
 
-Matching is exact after conservative normalization of brand/model/chipset names;
+Incremental runs compare the saved SoC-tree SHA with the current SHA and fetch
+only new or changed blobs. This discovers new benchmark-bearing processors and
+an existing processor gaining a previously absent score. A separate product-ID
+checkpoint processes local phones added after the backfill snapshot, using the
+generated smartphone record only to validate brand/model and its SoC reference.
+All source progress is persisted without a migration in the existing
+`system_log` table under `TECHAPI_BENCHMARK_STATE`: tree revisions, source-path
+cursor, initial progress/completion and catalogue cursor survive restarts.
+
+Matching is exact after conservative normalization of processor identity;
 ambiguous, missing, unverifiable or incompatible records are skipped and logged.
-Apple silicon and shared processors use the same exact SoC identity path. One raw
-SoC fetch is reused within a run for every phone sharing that processor. The
-source uses only `SourceContext`, honours its ten-request/one-minute/one-MiB
-limits, and saves a product-ID cursor in the existing coordinator metadata so
-later runs resume rather than restarting from the first phones.
+Apple silicon and shared processors use the same path. The source uses only
+`SourceContext` and keeps its HTTPS, pacing, retry and one-MiB protections.
+Unlike sources using the shared 10-request/60-second defaults, TechAPI sizes its
+bounded request budget to `4 + (3 * TECHAPI_MAX_PRODUCTS_PER_RUN)` and its
+execution budget to that many seconds plus 30 seconds. The retained environment
+variable name now bounds source records or newly added phones per run (1-100).
+It has no application cooldown, allowing consecutive manual batches;
+provider-directed `Retry-After` deferrals still apply. It reads Git tree metadata
+and individual blobs and never downloads the complete TechAPI repository.
 
-`TechApiBenchmarkSink` writes the existing `benchmark_results` history. Identical
-latest observations are duplicates; changed scores append history. Benchmark
-names explicitly say `version unspecified` and `representative SoC`, so they do
-not mix with versioned or handset-level tests. `source` preserves the TechAPI raw
-path, representative-SoC wording and CC BY-SA attribution. `observed_at` uses
-TechAPI's dataset `updated_at` timestamp (treated as UTC when it has no offset),
-falling back to retrieval time only when absent or malformed. This is dataset
-freshness, not a claim about when a benchmark measurement was run.
+`TechApiBenchmarkSink` writes the existing `benchmark_results` table. TechAPI
+scores are treated as static: once a product/benchmark identity has a TechAPI
+observation, later numeric changes are duplicates and never append a refresh.
+A processor record gaining the other missing metric can still insert it. The raw
+fields use the canonical `Geekbench 6 CPU Single-Core` and
+`Geekbench 6 CPU Multi-Core` identities so they align with existing Geekbench 6
+records. `source` preserves the TechAPI raw path, representative-SoC wording and
+CC BY-SA attribution. `observed_at` uses TechAPI's dataset `updated_at` timestamp
+(treated as UTC when it has no offset), falling back to retrieval time only when
+absent or malformed. This is dataset freshness, not a claim about when a
+benchmark measurement was run.
 
 The source declares a 14-day `scheduleInterval()` while the shared coordinator
-continues waking every two days for other sources (§16.5). It remains opt-in via
+continues waking every two days for other sources (§16.5). An incomplete bounded
+initial or incremental cycle remains due at the next shared wake; only completion
+starts the next 14-day wait. Manual runs never move schedule dates. During the
+initial backfill, the admin ingestion page exposes processed/total progress,
+stored observations and covered products. The progress card is hidden after the
+source enters incremental monitoring; scheduling and run history remain visible.
+The source remains opt-in via
 `INGESTION_ENABLED_SOURCES=techapi-soc-benchmarks`; production scheduling and
 deployment settings were not changed. See `docs/techapi-benchmark-ingestion.md`.
 

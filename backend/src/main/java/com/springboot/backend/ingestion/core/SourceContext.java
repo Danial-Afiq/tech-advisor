@@ -19,7 +19,8 @@ public final class SourceContext implements AutoCloseable {
     private final Clock clock;
     private final Runnable ownershipCheck;
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final long deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
+    private final long deadline;
+    private final int requestLimit;
     private long lastRequest;
     private int requests;
     private final HttpClient http;
@@ -33,13 +34,30 @@ public final class SourceContext implements AutoCloseable {
     }
     public SourceContext(Clock clock, Runnable ownershipCheck, RunLog.ProductTarget product) {
         this(clock, ownershipCheck, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
-                .followRedirects(HttpClient.Redirect.NEVER).build(), product);
+                .followRedirects(HttpClient.Redirect.NEVER).build(), product,
+                IngestionSource.DEFAULT_REQUEST_LIMIT, IngestionSource.DEFAULT_EXECUTION_BUDGET);
+    }
+    SourceContext(Clock clock, Runnable ownershipCheck, RunLog.ProductTarget product,
+                  int requestLimit, Duration executionBudget) {
+        this(clock, ownershipCheck, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
+                .followRedirects(HttpClient.Redirect.NEVER).build(), product, requestLimit, executionBudget);
     }
     SourceContext(Clock clock, Runnable ownershipCheck, HttpClient http) {
-        this(clock, ownershipCheck, http, null);
+        this(clock, ownershipCheck, http, null,
+                IngestionSource.DEFAULT_REQUEST_LIMIT, IngestionSource.DEFAULT_EXECUTION_BUDGET);
     }
-    private SourceContext(Clock clock, Runnable ownershipCheck, HttpClient http, RunLog.ProductTarget product) {
+    SourceContext(Clock clock, Runnable ownershipCheck, HttpClient http,
+                  int requestLimit, Duration executionBudget) {
+        this(clock, ownershipCheck, http, null, requestLimit, executionBudget);
+    }
+    private SourceContext(Clock clock, Runnable ownershipCheck, HttpClient http,
+                          RunLog.ProductTarget product, int requestLimit, Duration executionBudget) {
+        if (requestLimit < 1 || executionBudget == null
+                || executionBudget.isZero() || executionBudget.isNegative())
+            throw new IllegalArgumentException("Source limits must be positive");
         this.clock = clock; this.ownershipCheck = ownershipCheck; this.http = http; this.product = product;
+        this.requestLimit = requestLimit;
+        this.deadline = System.nanoTime() + executionBudget.toNanos();
     }
     public RunLog.ProductTarget product() { return product; }
     public static final class HttpFailure extends RuntimeException {
@@ -50,7 +68,7 @@ public final class SourceContext implements AutoCloseable {
         }
     }
     public Instant now() { return clock.instant(); }
-    public int remainingRequests() { return Math.max(0, 10 - requests); }
+    public int remainingRequests() { return Math.max(0, requestLimit - requests); }
     public void check() {
         if (closed.get() || Thread.currentThread().isInterrupted() || System.nanoTime() >= deadline)
             throw new IllegalStateException("Source cancelled or deadline exceeded");
@@ -69,7 +87,7 @@ public final class SourceContext implements AutoCloseable {
             throw new IllegalArgumentException("Invalid source HTTPS target or credentials");
         for (int attempt = 0; attempt < 3; attempt++) {
             check();
-            if (++requests > 10) throw new IllegalStateException("Source request limit exceeded");
+            if (++requests > requestLimit) throw new IllegalStateException("Source request limit exceeded");
             long delay = 1000 - Duration.ofNanos(System.nanoTime() - lastRequest).toMillis();
             if (delay > 0) Thread.sleep(delay);
             check(); lastRequest = System.nanoTime();

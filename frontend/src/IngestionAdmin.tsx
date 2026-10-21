@@ -15,7 +15,9 @@ import { LoadingBlock } from './components/ui/LoadingBlock'
 import { PageHeader } from './components/ui/PageHeader'
 import { Tag } from './components/ui/Tag'
 
-type Source = { sourceId: string; enabled: boolean; simulation: boolean; nextAllowedAt: string | null }
+type Source = { sourceId: string; enabled: boolean; simulation: boolean; nextAllowedAt: string | null;
+  phase?: 'INITIAL_BACKFILL' | 'INCREMENTAL'; completedUnits?: number;
+  totalUnits?: number; observationsIngested?: number; productsCovered?: number }
 type Run = { runId: string; status: string; triggerType: string; requestedAt: string; startedAt: string | null;
   product?: { productId: number | null; productName: string; externalProductId?: string | null } | null;
   finishedAt: string | null; processedPayloadCount: number; errorStackCount: number;
@@ -58,6 +60,7 @@ export default function IngestionAdmin() {
   const [submitting, setSubmitting] = useState(false)
   const [finding, setFinding] = useState(false)
   const searchApiSelected = selected.includes(SEARCHAPI_SOURCE)
+  const techApi = sources.find(source => source.sourceId === TECHAPI_SOURCE)
 
   const request = useCallback(<T,>(path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) =>
     apiFetch<T>(`/api/admin/ingestion${path}`, init), [])
@@ -183,6 +186,31 @@ export default function IngestionAdmin() {
               <strong className="text-[17px] text-[#eef5ff]">{schedule?.activeRunId ? 'Running' : 'Ready'}</strong>
             </div></Card>
           </div>
+
+          {techApi?.phase === 'INITIAL_BACKFILL' && <Card className="mt-6"><div className="card-body gap-4 p-[22px]">
+            <div>
+              <Eyebrow>TechAPI processor benchmarks</Eyebrow>
+              <h2 className="m-0 text-[19px] font-bold text-[#eef5ff]">Initial backfill</h2>
+            </div>
+            <div>
+              <div className="flex justify-between gap-4 text-[13px] text-[#c6d1df]">
+                <span>Initial backfill progress</span>
+                <span>{techApi.completedUnits ?? 0} / {techApi.totalUnits ?? 0} processor records checked</span>
+              </div>
+              <progress className="progress progress-primary mt-2 w-full"
+                aria-label="TechAPI initial backfill progress"
+                value={techApi.completedUnits ?? 0} max={Math.max(techApi.totalUnits ?? 0, 1)} />
+            </div>
+            <div className="grid grid-cols-2 gap-3 max-[500px]:grid-cols-1">
+              <div><Eyebrow>Observations ingested</Eyebrow>
+                <strong className="text-[17px] text-[#eef5ff]">{techApi.observationsIngested ?? 0}</strong></div>
+              <div><Eyebrow>Products covered</Eyebrow>
+                <strong className="text-[17px] text-[#eef5ff]">{techApi.productsCovered ?? 0}</strong></div>
+            </div>
+            <p className="m-0 text-[13px] text-[#8fa0b8]">
+              Run TechAPI processor benchmarks again to continue from the saved checkpoint.
+            </p>
+          </div></Card>}
 
           <Card className="mt-6"><div className="card-body p-[22px]">
             <h2 className="m-0 text-[19px] font-bold text-[#eef5ff]">Run a market update</h2>
