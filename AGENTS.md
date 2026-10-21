@@ -2028,8 +2028,25 @@ ADMIN accounts. ADMIN-only create, update, and delete operations use
 The service writes the existing `products` and `phone` rows in one transaction,
 keeps `category` fixed to `SMARTPHONE`, and explicitly deletes both rows together.
 The list route returns only complete product/phone pairs so a legacy orphan row
-cannot break the whole catalogue response. The `/admin/catalogue` frontend is a
-protected page shell only; the interactive CRUD form is intentionally later work.
+cannot break the whole catalogue response. The `/admin/catalogue` frontend
+(ticket "Manually manage devices in catalogue in admin view") lists the catalogue
+with client-side search, brand/status/OS/missing-spec filters, sorting and
+pagination, and adds, edits and deletes entries through those ADMIN routes. The
+catalogue read/update responses also carry read-only `latestPrice` and `currency`
+(null without price history), chosen by the same latest-observation rule as
+candidate shortlisting and the dashboard (`observed_at DESC, id DESC`); the admin
+table shows them in a Price column with price sorts, a has/no-price filter and an
+inclusive price range (presets that fill editable min/max bounds; prices compared
+as stored, whatever the currency). Prices cannot be edited through this API.
+The Edit modal also shows read-only history from two ADMIN-only routes,
+`GET /api/admin/catalogue/smartphones/{id}/prices` (with the variant label when
+the observation is SKU-level) and `.../{id}/benchmarks`, newest first and capped
+at 50 rows (`AdminCatalogueHistoryController`/`CatalogueHistoryService`); 404 for
+a non-smartphone id. Manual price/benchmark corrections are not implemented yet.
+The page's "Show visualisation of all tables" button opens a side panel of cards, one per table, from `GET /api/admin/database/tables`
+(ADMIN-only, `AdminDatabaseController`/`DatabaseSchemaService`): table names,
+columns, types, primary keys, foreign-key targets and exact row counts read from
+`information_schema`. It never returns row contents.
 
 The SearchAPI source is labelled **SearchAPI customer reviews** in the source list.
 Selecting it shows a required **Smartphone name** field. `POST
@@ -2384,7 +2401,8 @@ Known files include:
 - `App.test.tsx`
 - `IngestionAdmin.tsx`
 - `IngestionAdmin.test.tsx`
-- `pages/AdminCatalogue.tsx`
+- `pages/AdminCatalogue.tsx` (`/admin/catalogue`): ADMIN catalogue search,
+  filter, sort, paging and CRUD, plus the all-tables visualisation panel (§16.7).
 - `pages/DashboardPage.tsx` (`/dashboard`): the authenticated USER's single
   recommendation overview/browsing page, using reusable cards, server-side sort
   and device/verdict/evidence-grade filters (§23.4, §26.4).
