@@ -10,6 +10,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -23,6 +24,8 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -39,6 +42,7 @@ class SmartphoneCatalogueIntegrationTest {
     @Autowired UserRepository users;
     @Autowired ProductRepository products;
     @Autowired PhoneRepository phones;
+    @Autowired JdbcTemplate jdbc;
 
     private MockMvc mvc;
     private String adminToken;
@@ -160,6 +164,47 @@ class SmartphoneCatalogueIntegrationTest {
                 .andExpect(status().isUnauthorized());
         mvc.perform(MockMvcRequestBuilders.get("/api/catalogue/smartphones/{id}", product.getId()))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void listAndReadIncludeTheLatestPriceOrNull() throws Exception {
+        String priced = "Priced Phone " + UUID.randomUUID();
+        String unpriced = "Unpriced Phone " + UUID.randomUUID();
+        for (String model : new String[] {priced, unpriced}) {
+            mvc.perform(MockMvcRequestBuilders.post("/api/admin/catalogue/smartphones")
+                            .header("Authorization", bearer(adminToken))
+                            .contentType("application/json")
+                            .content(phoneJson("Test Brand", model, "Test Chip", 8, 256)))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.latestPrice").value(nullValue()));
+        }
+        long pricedId = products.findByBrandAndModelName("Test Brand", priced).orElseThrow().getId();
+        long unpricedId = products.findByBrandAndModelName("Test Brand", unpriced).orElseThrow().getId();
+
+        // Older, newer, and a same-timestamp tie that the higher id wins.
+        String insert = "INSERT INTO price_history (product_id, price, currency, observed_at) VALUES (?, ?, ?, ?::timestamptz)";
+        jdbc.update(insert, pricedId, 999.00, "SGD", "2026-01-01T00:00:00Z");
+        jdbc.update(insert, pricedId, 849.00, "SGD", "2026-03-01T00:00:00Z");
+        jdbc.update(insert, pricedId, 829.50, "SGD", "2026-03-01T00:00:00Z");
+
+        mvc.perform(MockMvcRequestBuilders.get("/api/catalogue/smartphones")
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == %s)].latestPrice", pricedId).value(829.5))
+                .andExpect(jsonPath("$[?(@.id == %s)].currency", pricedId).value("SGD"))
+                .andExpect(jsonPath("$[?(@.id == %s)].latestPrice", unpricedId).value(hasItem(nullValue())));
+
+        mvc.perform(MockMvcRequestBuilders.get("/api/catalogue/smartphones/{id}", pricedId)
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(jsonPath("$.latestPrice").value(829.5));
+
+        mvc.perform(MockMvcRequestBuilders.put("/api/admin/catalogue/smartphones/{id}", pricedId)
+                        .header("Authorization", bearer(adminToken))
+                        .contentType("application/json")
+                        .content(phoneJson("Test Brand", priced, "New Chip", 12, 512)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.latestPrice").value(829.5))
+                .andExpect(jsonPath("$.currency").value("SGD"));
     }
 
     @Test

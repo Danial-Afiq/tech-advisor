@@ -18,6 +18,34 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     List<Product> findAllByCategoryOrderByBrandAscModelNameAsc(String category);
 
     /**
+     * Latest price per product in a category, for the catalogue list. Same
+     * selection as candidate shortlisting and the dashboard's {@code latestPrice}:
+     * newest {@code observed_at}, ties broken by {@code id DESC}. Products with
+     * no price history are absent.
+     */
+    @Query(value = """
+            SELECT DISTINCT ON (ph.product_id)
+                   ph.product_id AS productId,
+                   ph.price      AS price,
+                   ph.currency   AS currency
+            FROM price_history ph
+            JOIN products p ON p.id = ph.product_id
+            WHERE p.category = :category
+            ORDER BY ph.product_id, ph.observed_at DESC, ph.id DESC
+            """, nativeQuery = true)
+    List<LatestPrice> findLatestPrices(@Param("category") String category);
+
+    /** {@link #findLatestPrices(String)} for one product. */
+    @Query(value = """
+            SELECT product_id AS productId, price, currency
+            FROM price_history
+            WHERE product_id = :productId
+            ORDER BY observed_at DESC, id DESC
+            LIMIT 1
+            """, nativeQuery = true)
+    Optional<LatestPrice> findLatestPrice(@Param("productId") Long productId);
+
+    /**
      * Deterministic candidate shortlisting: same category, at or under the
      * budget ceiling, excluding the device the user already owns.
      *
