@@ -24,13 +24,13 @@ class MobileApiSmartphoneSourceTests {
     private final ObjectMapper json = new ObjectMapper();
 
     @Test void sourceIdIsStableAndValidForTheRegistry() {
-        var source = new MobileApiSmartphoneSource("", "");
+        var source = new MobileApiSmartphoneSource("", "", null);
         assertEquals("mobileapi-smartphone", source.sourceId());
         assertTrue(source.sourceId().matches("[a-z0-9-]{1,80}"));
     }
 
     @Test void noApiKeyConfiguredEmitsNothingRatherThanFailing() throws Exception {
-        var source = new MobileApiSmartphoneSource("", "");
+        var source = new MobileApiSmartphoneSource("", "", null);
         var context = new SourceContext(Clock.systemUTC(), () -> {});
         List<Payload> emitted = new ArrayList<>();
         try {
@@ -142,5 +142,118 @@ class MobileApiSmartphoneSourceTests {
         assertNull(MobileApiSmartphoneSource.text(device("{}"), "name"));
         assertNull(MobileApiSmartphoneSource.text(device("{\"name\": null}"), "name"));
         assertEquals("G5", MobileApiSmartphoneSource.text(device("{\"name\": \"G5\"}"), "name"));
+    }
+
+    // Bugfix (ingestion_cursors): the default/automatic mode used to call the exact same
+    // URL every run - no page parameter existed at all - so a scheduled run never
+    // discovered anything beyond whatever the first page happened to be. advance() is the
+    // pure rule that makes successive runs actually sweep forward instead.
+
+    @Test void advancePagesForwardWithinTheSameYearWhileMorePagesRemain() {
+        var next = MobileApiSmartphoneSource.advance(new MobileApiSmartphoneSource.Cursor(2026, 3), 2026, true);
+        assertEquals(new MobileApiSmartphoneSource.Cursor(2026, 4), next);
+    }
+
+    @Test void advanceRestartsAtPageOneOfTheSameYearOnceTheSweepIsComplete() {
+        // The only way a device added to an earlier page of a year already fully swept is
+        // ever noticed - without this, a finished sweep would just stop discovering anything.
+        var next = MobileApiSmartphoneSource.advance(new MobileApiSmartphoneSource.Cursor(2026, 24), 2026, false);
+        assertEquals(new MobileApiSmartphoneSource.Cursor(2026, 1), next);
+    }
+
+    @Test void advanceResetsToPageOneTheMomentTheCalendarYearRollsOver() {
+        // A cursor left over from last year must not keep paging through a year that's no
+        // longer "now" - the new year's releases must start appearing without a manual step.
+        var next = MobileApiSmartphoneSource.advance(new MobileApiSmartphoneSource.Cursor(2026, 15), 2027, true);
+        assertEquals(new MobileApiSmartphoneSource.Cursor(2027, 1), next);
+    }
+
+    // listUri() is the pure URI-construction logic fetchList() wraps around the one real
+    // HTTP call (no test seam - see class Javadoc), split out specifically so the request
+    // shape itself stays directly testable without network, same split as toPayload/devicesIn.
+
+    @Test void listUriWithNoPageAndBlankYearIsTheOriginalUnfilteredLatestRequest() {
+        var uri = MobileApiSmartphoneSource.listUri("key123", new MobileApiSmartphoneSource.Request("", null));
+        assertEquals("https://api.mobileapi.dev/devices/?limit=10&key=key123", uri.toString());
+    }
+
+    @Test void listUriWithNoPageAndAYearIsTheOriginalManualOverrideRequest() {
+        // Unchanged shape for sources.mobileapi.year's explicit manual override - no page
+        // parameter at all, same as it always made before this bugfix existed.
+        var uri = MobileApiSmartphoneSource.listUri("key123", new MobileApiSmartphoneSource.Request("2024", null));
+        assertEquals("https://api.mobileapi.dev/devices/by-year/?year=2024&key=key123", uri.toString());
+    }
+
+    @Test void listUriWithAPageSweepsTheByYearListingExplicitly() {
+        // The actual fix: a page parameter now exists at all, which the original request
+        // shape above never had - this is what lets successive runs sweep forward.
+        var uri = MobileApiSmartphoneSource.listUri("key123", new MobileApiSmartphoneSource.Request("2026", 7));
+        assertEquals("https://api.mobileapi.dev/devices/by-year/?year=2026&limit=10&page=7&key=key123", uri.toString());
+    }
+
+    @Test void listUriUrlEncodesTheApiKeyAndYear() {
+        var uri = MobileApiSmartphoneSource.listUri("a b&c", new MobileApiSmartphoneSource.Request("2026", 1));
+        assertTrue(uri.toString().contains("key=a+b%26c"));
+    }
+
+    // requestFor()/emit()/nextCursor() are ingest()'s own logic, split out the same way -
+    // ingest() itself has no test seam (real HTTP), but nothing downstream of a fetched page
+    // needs one, so there's no reason any of it stays untestable.
+
+    @Test void requestForUsesTheCursorWhenOneIsGiven() {
+        var request = MobileApiSmartphoneSource.requestFor("", new MobileApiSmartphoneSource.Cursor(2026, 5));
+        assertEquals(new MobileApiSmartphoneSource.Request("2026", 5), request);
+    }
+
+    @Test void requestForFallsBackToTheConfiguredYearWithNoPageWhenThereIsNoCursor() {
+        // The manual-override mode (sources.mobileapi.year set) never computes a cursor at
+        // all - null here means that mode, not a missing/uninitialized value.
+        var request = MobileApiSmartphoneSource.requestFor("2019", null);
+        assertEquals(new MobileApiSmartphoneSource.Request("2019", null), request);
+    }
+
+    @Test void emitConvertsEveryDeviceOnThePageToAPayload() throws Exception {
+        var page = device("""
+                {"devices": [
+                    {"id": "1", "name": "G5", "manufacturer_name": "BLU", "hardware": "8GB RAM"},
+                    {"id": "2", "name": "G6", "manufacturer_name": "BLU", "hardware": "4GB RAM"}
+                ]}""");
+        List<Payload> emitted = new ArrayList<>();
+        MobileApiSmartphoneSource.emit(page, "mobileapi-smartphone", Instant.parse("2026-01-01T00:00:00Z"), emitted::add);
+        assertEquals(2, emitted.size());
+        assertEquals("1", emitted.get(0).externalId());
+        assertEquals("2", emitted.get(1).externalId());
+    }
+
+    @Test void emitSkipsDevicesThatProduceNoParseablePayload() throws Exception {
+        // deviceWithNoParseableValuesAtAllIsSkipped already covers toPayload() returning
+        // empty for this shape directly - this confirms emit() correctly drops it too rather
+        // than emitting something empty.
+        var page = device("""
+                {"devices": [{"id": "9", "name": "Mystery Phone", "manufacturer_name": "Acme", "hardware": ""}]}""");
+        List<Payload> emitted = new ArrayList<>();
+        MobileApiSmartphoneSource.emit(page, "mobileapi-smartphone", Instant.now(), emitted::add);
+        assertTrue(emitted.isEmpty());
+    }
+
+    @Test void nextCursorAdvancesUsingThePageHasNextField() throws Exception {
+        var page = device("{\"has_next\": true}");
+        var next = MobileApiSmartphoneSource.nextCursor(new MobileApiSmartphoneSource.Cursor(2026, 3), 2026, page);
+        assertEquals(new MobileApiSmartphoneSource.Cursor(2026, 4), next);
+    }
+
+    @Test void nextCursorTreatsAMissingHasNextFieldAsFalse() throws Exception {
+        var page = device("{}");
+        var next = MobileApiSmartphoneSource.nextCursor(new MobileApiSmartphoneSource.Cursor(2026, 3), 2026, page);
+        assertEquals(new MobileApiSmartphoneSource.Cursor(2026, 1), next);
+    }
+
+    @Test void currentYearReadsTheYearFromTheContextsClockNotTheSystemClock() {
+        // context.now() is a plain Clock read (no network, no DB) - a SourceContext built
+        // with a fixed Clock makes this directly testable without a live run.
+        var fixed = Clock.fixed(Instant.parse("2027-03-15T00:00:00Z"), java.time.ZoneOffset.UTC);
+        try (var context = new SourceContext(fixed, () -> {})) {
+            assertEquals(2027, MobileApiSmartphoneSource.currentYear(context));
+        }
     }
 }

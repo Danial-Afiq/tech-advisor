@@ -16,6 +16,12 @@ const mocks = vi.hoisted(() => ({
   listSmartphones: vi.fn(),
 }));
 
+vi.mock("../api/notifications", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/notifications")>()),
+  getUnreadNotificationCount: vi.fn().mockResolvedValue(0),
+  listNotifications: vi.fn().mockResolvedValue({ items: [], page: 0, size: 10, totalItems: 0, totalPages: 0 }),
+}));
+
 vi.mock("../api/session", () => ({
   getSession: mocks.getSession,
 }));
