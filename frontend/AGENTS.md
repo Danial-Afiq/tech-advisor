@@ -110,7 +110,7 @@ lists and formatters (`money`, `formatDate`, `ageLabel`) are in
 API/database data into it with `deviceFromApi(response, extras)` in
 `deviceApi.ts`. `response` is the `GET /api/devices` item (`DeviceResponse`),
 and `extras` supplies the product category, the catalogue `phone` row
-(snake_case or camelCase), and the preferences. User `spec_overrides` are
+(snake_case or camelCase). All preferences come from the response. User `spec_overrides` are
 applied on top of the catalogue specs. Unknown values stay empty and cards hide
 them. Never show placeholder numbers as if they were real.
 
@@ -339,14 +339,19 @@ as one deliberate change across all components, not piecemeal.
   with `POST /api/devices`, edits with `PUT /api/devices/{id}` and removes
   with `DELETE /api/devices/{id}` (a failed remove keeps the device and shows
   a toast; a 404 counts as already removed). Saving the upgrade-profile
-  modal sends the device's `budget` and `currency` with
+  modal sends all seven preference fields with
   `PUT /api/devices/{id}` (via `deviceToRequest`), and a rejection keeps the
   modal open with the error. `GET /api/devices` returns them, so the card
-  shows the saved budget after a reload, or "No budget set". The add-device
+  restores the complete profile after a reload, or "No budget set". The add-device
   form sends `budget: null`; a device with no saved budget starts the slider
   at `SUGGESTED_BUDGET`. There is no currency picker: an existing currency is
-  kept, otherwise SGD is sent. Priorities, urgency, brand flexibility, pain
-  points and notes are still page-local (no API), and the toast says so.
+  kept, otherwise SGD is sent. Priorities use the twelve canonical factor keys;
+  the adapter preserves saved weights and gives newly selected priorities weight 1.
+  Urgency/brand selects use canonical API values with readable labels. Pain points
+  and notes persist too; existing JSON pain-point arrays are preserved until edited.
+  Older budget-only profiles may return the JSONB pain-point default `{}`; the
+  adapter sends JSON-encoded empty text for that value (and JSON null), while
+  preserving supported unchanged string/array values.
   Brand is required only when adding a
   device: a saved device without a catalogue link comes back with its whole
   name in the model field.
@@ -425,16 +430,15 @@ as one deliberate change across all components, not piecemeal.
   add a second page-level sign-out button.
 - **Not yet migrated:** `pages/ThingieMagiggie.tsx`. When you touch it, move it
   onto the shared components.
-- `DeviceResponse` includes the budget and currency, which `deviceFromApi`
-  always takes from the response. It does not yet include the product
-  category, the `phone` specs or the other device preferences, and there is
-  no endpoint for them. Until the backend adds them, pass them to
-  `deviceFromApi` via `extras`. When the backend adds them, update
+- `DeviceResponse` includes budget, currency, upgrade urgency, brand flexibility,
+  weighted priorities, pain points and notes. `deviceFromApi` always takes these
+  from the response; `extras.preferences` has been removed. Product category and
+  `phone` specs still come from `extras`. When the backend adds them, update
   `DeviceResponse` / `deviceFromApi` in one place.
-- Priority and urgency option lists in `devices/deviceOptions.ts` are the
-  prototype's display labels. The authoritative preference vocabulary is
-  `ai/app/factors.py` (root `AGENTS.md`). Map labels to it when wiring to the
-  API; do not change the vocabulary from the frontend.
+- `devices/deviceOptions.ts` maps priority labels to the twelve factors and
+  defines canonical urgency/brand-flexibility select values. The authoritative
+  vocabulary remains `ai/app/factors.py` and its Java mirrors (root `AGENTS.md`).
+  Do not introduce unsupported choices from prototype labels.
 
 ---
 

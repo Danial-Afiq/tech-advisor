@@ -39,8 +39,8 @@ import {
  * Signed out: local demo devices. Signed in: devices load from
  * `GET /api/devices`, new devices are saved with `POST /api/devices`, edits
  * with `PUT /api/devices/{id}` and removals with `DELETE /api/devices/{id}`.
- * Saving upgrade preferences sends the budget and currency with
- * `PUT /api/devices/{id}`; the other preferences are still local-only. Signed in,
+ * Saving upgrade preferences persists every field with
+ * `PUT /api/devices/{id}`. Signed in,
  * the device form suggests smartphones from `GET /api/catalogue/smartphones`
  * and prefills their specs.
  */
@@ -110,7 +110,6 @@ export default function DevicesPageTest() {
   // The saved row, plus what the backend doesn't store yet.
   const fromSaved = (draft: Device, saved: DeviceResponse): Device => ({
     ...deviceFromApi(saved, {
-      preferences: draft.upgradePreferences,
       primary: draft.primary,
       image: draft.image,
     }),
@@ -143,10 +142,10 @@ export default function DevicesPageTest() {
   };
 
   /**
-   * Signed in, the budget and currency are saved with the rest of the device
+   * Signed in, all preferences are saved with the rest of the device
    * (`PUT /api/devices/{id}`), which also re-runs its recommendations. The
-   * other preferences have no API yet and stay on this page. Throws on API
-   * failure so `UpgradePreferencesModal` stays open and shows it.
+   * response supplies the saved preferences. Throws on API failure so
+   * `UpgradePreferencesModal` stays open and shows it.
    */
   const savePreferences = async (
     device: Device,
@@ -161,7 +160,7 @@ export default function DevicesPageTest() {
     pushToast(
       "Upgrade profile saved",
       account
-        ? `The budget for ${name(next)} was saved to your account. Your other preferences apply on this page only for now.`
+        ? `The upgrade preferences for ${name(next)} were saved to your account.`
         : `These preferences now apply only to ${name(next)}.`
     );
   };

@@ -11,11 +11,13 @@ import com.springboot.backend.repository.DevicePreferenceRepository;
 import com.springboot.backend.repository.ProductRepository;
 import com.springboot.backend.repository.UserDeviceRepository;
 import com.springboot.backend.repository.UserRepository;
+import com.springboot.backend.recommendation.classification.Factors;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.springboot.backend.exception.InvalidDeviceRequestException;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.JsonNode;
 
 import java.util.List;
 import java.util.Map;
@@ -75,7 +77,7 @@ public class DeviceService {
                 userDeviceRepository.save(device);
 
         DevicePreference preference =
-                applyBudget(savedDevice.getId(), request);
+                applyPreferences(savedDevice.getId(), request);
 
         eventPublisher.publishEvent(
                 new DeviceInventoryChanged(savedDevice.getId(), DeviceInventoryChanged.Change.ADDED)
@@ -162,7 +164,7 @@ public class DeviceService {
                 userDeviceRepository.save(device);
 
         DevicePreference preference =
-                applyBudget(savedDevice.getId(), request);
+                applyPreferences(savedDevice.getId(), request);
 
         eventPublisher.publishEvent(
                 new DeviceInventoryChanged(savedDevice.getId(), DeviceInventoryChanged.Change.UPDATED)
@@ -286,33 +288,39 @@ public class DeviceService {
     }
 
     /**
-     * Creates or updates the device's preferences when the request carries a
-     * budget. A null budget leaves existing preferences as they are, so an edit
-     * that does not mention the budget does not wipe it.
+     * Upserts preferences only after the device's ownership has been checked.
+     * Omitted fields preserve saved values. The first save requires a budget;
+     * later requests can update individual preferences without resending it.
      *
      * @return the device's preferences after the change, or null if it has none
      */
-    private DevicePreference applyBudget(
+    private DevicePreference applyPreferences(
             Long deviceId,
             DeviceRequest request) {
 
-        if (request.getBudget() == null) {
-            return findPreference(deviceId);
+        DevicePreference preference = findPreference(deviceId);
+        boolean supplied = request.getBudget() != null || request.getCurrency() != null
+                || request.getUpgradeUrgency() != null || request.getBrandFlexibility() != null
+                || request.getPriorities() != null || request.getPainPoints() != null || request.getNotes() != null;
+        if (!supplied) return preference;
+
+        if (preference == null) {
+            if (request.getBudget() == null) {
+                throw new InvalidDeviceRequestException("A budget is required when first saving upgrade preferences");
+            }
+            preference = new DevicePreference(deviceId, request.getBudget(), "SGD");
         }
 
-        DevicePreference preference = devicePreferenceRepository
-                .findById(deviceId)
-                .orElseGet(() -> new DevicePreference(
-                        deviceId,
-                        request.getBudget(),
-                        "SGD"
-                ));
-
-        preference.setBudget(request.getBudget());
+        if (request.getBudget() != null) preference.setBudget(request.getBudget());
 
         if (request.getCurrency() != null) {
             preference.setCurrency(request.getCurrency());
         }
+        if (request.getUpgradeUrgency() != null) preference.setUpgradeUrgency(request.getUpgradeUrgency());
+        if (request.getBrandFlexibility() != null) preference.setBrandFlexibility(request.getBrandFlexibility());
+        if (request.getPriorities() != null) preference.setPriorities(request.getPriorities());
+        if (request.getPainPoints() != null) preference.setPainPoints(request.getPainPoints());
+        if (request.getNotes() != null) preference.setNotes(request.getNotes());
 
         devicePreferenceRepository.save(preference);
         return preference;
@@ -331,16 +339,41 @@ public class DeviceService {
 
     private void validateJsonFields(DeviceRequest request) {
         try {
-                if (request.getUseCases() != null) {
+            if (request.getUseCases() != null) {
                 jsonMapper.readTree(request.getUseCases());
-                }
-                if (request.getSpecOverrides() != null) {
+            }
+            if (request.getSpecOverrides() != null) {
                 jsonMapper.readTree(request.getSpecOverrides());
+            }
+            if (request.getPriorities() != null) {
+                JsonNode priorities = jsonMapper.readTree(request.getPriorities());
+                if (priorities == null || !priorities.isObject()) {
+                    throw new InvalidDeviceRequestException("Priorities must be a JSON object of factor names and integer weights");
                 }
+                for (Map.Entry<String, JsonNode> entry : priorities.properties()) {
+                    if (!Factors.isFactor(entry.getKey()) || !entry.getValue().isIntegralNumber()
+                            || !entry.getValue().canConvertToInt()) {
+                        throw new InvalidDeviceRequestException("Priorities must use supported factors and integer weights");
+                    }
+                }
+            }
+            if (request.getPainPoints() != null) {
+                JsonNode painPoints = jsonMapper.readTree(request.getPainPoints());
+                if (painPoints == null || !(painPoints.isString() || painPoints.isArray())) {
+                    throw new InvalidDeviceRequestException("Pain points must be JSON-encoded text or an array of text");
+                }
+                if (painPoints.isArray()) {
+                    for (JsonNode point : painPoints) {
+                        if (!point.isString()) {
+                            throw new InvalidDeviceRequestException("Each pain point must be text");
+                        }
+                    }
+                }
+            }
         } catch (tools.jackson.core.JacksonException exception) {
-                throw new InvalidDeviceRequestException(
-                        "Use cases and spec overrides must contain valid JSON"
-                );
+            throw new InvalidDeviceRequestException(
+                    "Use cases, spec overrides, priorities and pain points must contain valid JSON"
+            );
         }
-        }
+    }
 }
