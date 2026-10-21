@@ -12,8 +12,15 @@ import static org.junit.jupiter.api.Assertions.*;
  * JPA entity to fall back on, same reasoning SmartphoneCatalogSinkTests already follows for
  * phone_variants. advance()'s own rule is pure and covered directly in
  * MobileApiSmartphoneSourceTests; this covers only the SQL round-trip advance() feeds into.
+ *
+ * properties = "ingestion.reconciliation-enabled=false" matches SmartphoneCatalogSinkTests'
+ * exact config, not a new one - CI's shared Postgres service has a fixed connection budget,
+ * and a mismatched config here would spin up a whole separate cached Spring context (and
+ * Hikari pool) instead of reusing the one that config already pays for. Confirmed live: a
+ * bare @SpringBootTest with no properties was the one new config in the entire suite and
+ * tipped a real CI run over "FATAL: sorry, too many clients already".
  */
-@SpringBootTest
+@SpringBootTest(properties = "ingestion.reconciliation-enabled=false")
 class MobileApiSmartphoneSourceCursorTests {
     @Autowired MobileApiSmartphoneSource source;
     @Autowired JdbcTemplate db;
