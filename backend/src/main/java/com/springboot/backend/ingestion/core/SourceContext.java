@@ -29,7 +29,7 @@ public final class SourceContext implements AutoCloseable {
         this(clock, ownershipCheck, (RunLog.ProductTarget) null);
     }
     public static final class TransportFailure extends RuntimeException {
-        TransportFailure() { super("Source transport failed"); }
+        public TransportFailure() { super("Source transport failed"); }
     }
     public SourceContext(Clock clock, Runnable ownershipCheck, RunLog.ProductTarget product) {
         this(clock, ownershipCheck, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
@@ -50,6 +50,7 @@ public final class SourceContext implements AutoCloseable {
         }
     }
     public Instant now() { return clock.instant(); }
+    public int remainingRequests() { return Math.max(0, 10 - requests); }
     public void check() {
         if (closed.get() || Thread.currentThread().isInterrupted() || System.nanoTime() >= deadline)
             throw new IllegalStateException("Source cancelled or deadline exceeded");

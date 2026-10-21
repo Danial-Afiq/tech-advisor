@@ -35,6 +35,7 @@ function searchApiServer(post: (init: RequestInit) => { ok: boolean; status?: nu
     const data: Record<string, unknown> = {
       '/sources': [
         { sourceId: 'searchapi-google-product-reviews', enabled, simulation: false, nextAllowedAt: null },
+        { sourceId: 'techapi-soc-benchmarks', enabled: true, simulation: false, nextAllowedAt: null },
         { sourceId: 'simulated-release', enabled: true, simulation: true, nextAllowedAt: null },
       ],
       '/schedule': { enabled: false, intervalHours: 336, activeRunId: null },
@@ -89,6 +90,15 @@ describe('Ingestion admin', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Catalogue' }))
 
     expect(await screen.findByText('catalogue route')).toBeInTheDocument()
+  })
+
+  it('shows a clear label for TechAPI benchmark ingestion', async () => {
+    signInAsAdmin()
+    vi.stubGlobal('fetch', searchApiServer(() => ({ ok: true, data: {} })))
+
+    withAppRoutes()
+
+    expect(await screen.findByRole('checkbox', { name: 'TechAPI processor benchmarks' })).toBeEnabled()
   })
 
   it('clears the session when manual ingestion is forbidden', async () => {

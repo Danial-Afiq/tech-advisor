@@ -23,7 +23,10 @@ type Run = { runId: string; status: string; triggerType: string; requestedAt: st
 type Schedule = { enabled: boolean; intervalHours: number; nextScheduledAt: string | null; activeRunId: string | null }
 type ProductCandidate = { externalProductId: string; title: string }
 const SEARCHAPI_SOURCE = 'searchapi-google-product-reviews'
-const sourceLabel = (id: string) => id === SEARCHAPI_SOURCE ? 'SearchAPI customer reviews' : id
+const TECHAPI_SOURCE = 'techapi-soc-benchmarks'
+const sourceLabel = (id: string) => id === SEARCHAPI_SOURCE
+  ? 'SearchAPI customer reviews'
+  : id === TECHAPI_SOURCE ? 'TechAPI processor benchmarks' : id
 const when = (value: string | null) => value ? new Date(value).toLocaleString() : '—'
 
 /**

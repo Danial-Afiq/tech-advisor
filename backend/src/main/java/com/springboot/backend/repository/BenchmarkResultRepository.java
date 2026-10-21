@@ -2,11 +2,15 @@ package com.springboot.backend.repository;
 
 import com.springboot.backend.model.BenchmarkResult;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface BenchmarkResultRepository extends JpaRepository<BenchmarkResult, Long> {
+
+    Optional<BenchmarkResult> findFirstByProductIdAndBenchmarkNameOrderByObservedAtDescIdDesc(
+            Long productId, String benchmarkName);
 
     /**
      * The most recent observation of each benchmark for one product.

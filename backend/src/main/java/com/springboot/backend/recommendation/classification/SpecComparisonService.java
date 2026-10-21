@@ -113,7 +113,9 @@ public class SpecComparisonService {
 
         for (BenchmarkResult candidateResult : candidateBenchmarks) {
             BenchmarkResult ownedResult = ownedByName.get(candidateResult.getBenchmarkName());
-            if (ownedResult == null) {
+            if (ownedResult == null
+                    || ownedResult.isHigherIsBetter() != candidateResult.isHigherIsBetter()
+                    || !sameUnit(ownedResult.getUnit(), candidateResult.getUnit())) {
                 continue;
             }
 
@@ -146,6 +148,11 @@ public class SpecComparisonService {
                 SpecFactorCatalog.BENCHMARK_SPEC,
                 new AssessRequest.SpecDelta(ownedTotal, candidateTotal, round1(uplift)));
         return round1(uplift);
+    }
+
+    private static boolean sameUnit(String first, String second) {
+        if (first == null || second == null) return first == second;
+        return first.trim().equalsIgnoreCase(second.trim());
     }
 
     /**

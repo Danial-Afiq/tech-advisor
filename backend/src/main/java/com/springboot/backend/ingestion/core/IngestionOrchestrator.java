@@ -42,7 +42,8 @@ public class IngestionOrchestrator {
     }
     public void scheduled() {
         var ids = registry.select(null);
-        store.admit(ids, "scheduler", null, null, true, ids.stream().allMatch(id -> registry.get(id).simulation()));
+        var sources = ids.stream().map(registry::get).toList();
+        store.admitScheduled(sources);
         kick();
     }
     public void kick() {
@@ -60,6 +61,7 @@ public class IngestionOrchestrator {
     }
     private void execute(RunLog run, String owner) {
         var ownershipLost = new AtomicBoolean();
+        Map<String, Duration> successfulSourceIntervals = new LinkedHashMap<>();
         // Guards run/result counters shared with the source worker thread.
         var runLock = new Object();
         Runnable check = () -> {
@@ -130,11 +132,13 @@ public class IngestionOrchestrator {
                 }
                 synchronized (runLock) {
                     result.finishedAt = clock.instant(); store.progress(run, owner);
+                    if ("SUCCESS".equals(result.status)) adapter.scheduleInterval()
+                            .ifPresent(interval -> successfulSourceIntervals.put(id, interval));
                 }
             }
             run.status = run.skippedSourceCount == run.sourceIds.size() ? "SKIPPED"
                     : run.errorCount == 0 ? "SUCCESS" : run.processedPayloadCount > 0 ? "PARTIAL_FAILURE" : "FAILED";
-            store.finish(run, owner);
+            store.finish(run, owner, successfulSourceIntervals);
         } finally { heartbeat.cancel(false); }
     }
     static Duration failureCooldown(IngestionSource source, Throwable error) {

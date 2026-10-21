@@ -18,14 +18,9 @@ public class RunStore {
     // TEMPORARY override, 27 Sep 2026 - NOT the real production cadence. Set to 2 days
     // specifically so the newly-enabled MobileAPI source can gather real data to inspect
     // while the smartphone schema is still expected to change (model-variation handling).
-    // This is a single global interval shared by every enabled source (see AGENTS.md
-    // 16.5/16.9) - there is no per-source schedule in this codebase, so changing it affects
-    // whichever sources are enabled, not just MobileAPI. Nothing else is enabled right now
-    // (INGESTION_ENABLED_SOURCES is blank), so today the blast radius is MobileAPI only, but
-    // that stops being true the moment a second source is turned on. Revert to the real
-    // 14-day value once the schema settles - same pattern as the 24h->14-day history this
-    // constant already has once (AGENTS.md 16.5), do not let this become a second stale
-    // "temporary" that nobody reverts.
+    // This remains the shared wake-up interval (see AGENTS.md 16.5). Sources without an
+    // override run at this cadence; a source may declare a longer interval and is filtered
+    // from intervening shared slots using persisted CoordinatorState.nextSourceDue.
     public static final Duration INTERVAL = Duration.ofDays(2);
     public static final Duration LEASE = Duration.ofSeconds(90);
     private final JdbcTemplate db;
@@ -44,6 +39,9 @@ public class RunStore {
                     + "('INGESTION_COORDINATOR','READY','Reserved scheduler state','{}') ON CONFLICT DO NOTHING");
             var state = json.readValue(db.queryForObject("SELECT metadata::text FROM system_log "
                     + "WHERE component='INGESTION_COORDINATOR' FOR UPDATE", String.class), CoordinatorState.class);
+            if (state.nextAllowed == null) state.nextAllowed = new HashMap<>();
+            if (state.nextSourceDue == null) state.nextSourceDue = new HashMap<>();
+            if (state.sourceCursors == null) state.sourceCursors = new HashMap<>();
             if (state.anchor == null && settings.anchor() != null) {
                 state.anchor = settings.anchor(); state.nextDue = state.anchor;
             }
@@ -63,8 +61,32 @@ public class RunStore {
 
     public RunLog admit(List<String> ids, String actor, String key, String reason, boolean scheduled,
                         boolean simulation, RunLog.ProductTarget product) {
+        return admit(ids, actor, key, reason, scheduled, simulation, product, Map.of());
+    }
+
+    public RunLog admitScheduled(List<IngestionSource> sources) {
+        var intervals = new LinkedHashMap<String, Duration>();
+        var simulation = new HashMap<String, Boolean>();
+        for (var source : sources) simulation.put(source.sourceId(), source.simulation());
+        for (var source : sources) source.scheduleInterval()
+                .ifPresent(interval -> intervals.put(source.sourceId(), interval));
+        return admit(sources.stream().map(IngestionSource::sourceId).toList(), "scheduler", null, null,
+                true, false, null, intervals, simulation);
+    }
+
+    private RunLog admit(List<String> ids, String actor, String key, String reason, boolean scheduled,
+                         boolean simulation, RunLog.ProductTarget product,
+                         Map<String, Duration> sourceIntervals) {
+        return admit(ids, actor, key, reason, scheduled, simulation, product, sourceIntervals, Map.of());
+    }
+
+    private RunLog admit(List<String> ids, String actor, String key, String reason, boolean scheduled,
+                         boolean simulation, RunLog.ProductTarget product,
+                         Map<String, Duration> sourceIntervals,
+                         Map<String, Boolean> sourceSimulation) {
         return locked(state -> {
             Instant now = clock.instant();
+            List<String> selectedIds = ids;
             recover(state, now);
             if (!scheduled) {
                 var existing = db.query("SELECT metadata::text FROM system_log WHERE component='INGESTION_RUN' "
@@ -83,22 +105,45 @@ public class RunStore {
                 if (scheduled) return null;
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Active run: " + state.activeRunId);
             }
+            Instant scheduledFor = null;
+            long missedSlots = 0;
+            boolean runSimulation = simulation;
+            if (scheduled) {
+                missedSlots = Duration.between(state.nextDue, now).dividedBy(INTERVAL);
+                scheduledFor = state.nextDue.plus(INTERVAL.multipliedBy(missedSlots));
+                state.nextDue = scheduledFor.plus(INTERVAL);
+                Instant firstDue = state.anchor == null ? scheduledFor : state.anchor;
+                selectedIds = ids.stream().filter(id -> !sourceIntervals.containsKey(id)
+                                || !now.isBefore(state.nextSourceDue.getOrDefault(id, firstDue)))
+                        .toList();
+                if (selectedIds.isEmpty()) return null;
+                runSimulation = selectedIds.stream()
+                        .allMatch(id -> sourceSimulation.getOrDefault(id, false));
+            }
             var run = new RunLog();
-            run.runId = UUID.randomUUID().toString(); run.sourceIds = new ArrayList<>(ids);
+            run.runId = UUID.randomUUID().toString(); run.sourceIds = new ArrayList<>(selectedIds);
             run.triggerType = scheduled ? "SCHEDULED" : "MANUAL";
             run.requestedBy = actor; run.reason = reason; run.idempotencyKey = key;
-            run.requestedAt = now; run.simulation = simulation;
+            run.requestedAt = now; run.simulation = runSimulation;
             run.product = product;
             if (scheduled) {
-                run.missedSlots = Duration.between(state.nextDue, now).dividedBy(INTERVAL);
-                run.scheduledFor = state.nextDue.plus(INTERVAL.multipliedBy(run.missedSlots));
-                state.nextDue = run.scheduledFor.plus(INTERVAL);
+                run.missedSlots = missedSlots;
+                run.scheduledFor = scheduledFor;
             }
             db.update("INSERT INTO system_log(component,status,message,metadata) VALUES "
                     + "('INGESTION_RUN',?,'Ingestion execution',?::jsonb)", run.status, json.writeValueAsString(run));
             state.activeRunId = run.runId; state.owner = null; state.leaseUntil = now.plus(LEASE);
             return run;
         });
+    }
+
+    public long sourceCursor(String sourceId) {
+        return locked(state -> state.sourceCursors.getOrDefault(sourceId, 0L));
+    }
+
+    public void sourceCursor(String sourceId, long cursor) {
+        if (cursor < 0) throw new IllegalArgumentException("Source cursor cannot be negative");
+        locked(state -> { state.sourceCursors.put(sourceId, cursor); return null; });
     }
 
     private boolean sameProduct(RunLog.ProductTarget first, RunLog.ProductTarget second) {
@@ -148,10 +193,19 @@ public class RunStore {
     }
 
     public void finish(RunLog run, String owner) {
+        finish(run, owner, Map.of());
+    }
+
+    public void finish(RunLog run, String owner, Map<String, Duration> successfulSourceIntervals) {
         locked(state -> {
             check(state, run.runId, owner);
             run.finishedAt = clock.instant();
             run.durationMs = Duration.between(run.startedAt, run.finishedAt).toMillis();
+            if ("SCHEDULED".equals(run.triggerType)) successfulSourceIntervals.forEach((sourceId, interval) -> {
+                if (interval.isZero() || interval.isNegative())
+                    throw new IllegalArgumentException("Source schedule interval must be positive");
+                state.nextSourceDue.put(sourceId, run.finishedAt.plus(interval));
+            });
             write(run); clear(state); return null;
         });
     }

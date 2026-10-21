@@ -1,6 +1,7 @@
 package com.springboot.backend.ingestion.core;
 
 import java.time.Duration;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /** Implement fetching and translation only; runner owns admission, timing and logs. */
@@ -8,6 +9,8 @@ public interface IngestionSource {
     String sourceId();
     default boolean simulation() { return false; }
     default Duration cooldown() { return Duration.ofMinutes(15); }
+    /** Empty means this source follows the shared ingestion cadence. */
+    default Optional<Duration> scheduleInterval() { return Optional.empty(); }
     /**
      * Execution order within one run when multiple sources are selected -
      * lower runs first. Deliberately explicit rather than left to fall out

@@ -12,6 +12,7 @@ import com.springboot.backend.ingestion.run.RunStore;
 import com.springboot.backend.ingestion.searchapi.ProductMatcher;
 import com.springboot.backend.ingestion.searchapi.SearchApiRepository;
 import com.springboot.backend.ingestion.searchapi.SearchApiSource;
+import com.springboot.backend.ingestion.techapi.TechApiBenchmarkSource;
 import java.security.Principal;
 import java.time.Clock;
 import java.time.Instant;
@@ -151,6 +152,22 @@ class IngestionControllerTests {
         assertEquals(202, response.getStatusCode().value());
         assertEquals("/api/admin/ingestion/runs/run-1", response.getHeaders().getLocation().toString());
         assertSame(run, response.getBody());
+    }
+
+    @Test void administratorCanTriggerTechApiBenchmarkIngestionManually() {
+        when(registry.select(List.of(TechApiBenchmarkSource.ID)))
+                .thenReturn(List.of(TechApiBenchmarkSource.ID));
+        var run = new RunLog(); run.runId = "techapi-run";
+        when(runner.manual(List.of(TechApiBenchmarkSource.ID), "admin",
+                "techapi-key", "refresh benchmarks", null)).thenReturn(run);
+
+        var response = controller.start(new IngestionController.Request(
+                List.of(TechApiBenchmarkSource.ID), "refresh benchmarks", null, null),
+                "techapi-key", () -> "admin");
+
+        assertEquals(202, response.getStatusCode().value());
+        assertEquals("/api/admin/ingestion/runs/techapi-run",
+                response.getHeaders().getLocation().toString());
     }
 
     @Test void getReturnsWhateverTheStoreHasForThatRunId() {

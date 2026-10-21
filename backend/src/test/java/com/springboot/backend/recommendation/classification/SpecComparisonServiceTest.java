@@ -25,8 +25,13 @@ class SpecComparisonServiceTest {
     }
 
     private static BenchmarkResult benchmark(long productId, String name, double score, boolean higherIsBetter) {
+        return benchmark(productId, name, score, "points", higherIsBetter);
+    }
+
+    private static BenchmarkResult benchmark(
+            long productId, String name, double score, String unit, boolean higherIsBetter) {
         return new BenchmarkResult(
-                productId, name, BigDecimal.valueOf(score), "points", higherIsBetter, "test", OffsetDateTime.now());
+                productId, name, BigDecimal.valueOf(score), unit, higherIsBetter, "test", OffsetDateTime.now());
     }
 
     private SpecComparison compare(Phone owned, Phone candidate) {
@@ -174,6 +179,23 @@ class SpecComparisonServiceTest {
 
         assertNull(result.benchmarkUpliftPct(), "no shared benchmark means no uplift figure");
         assertTrue(result.skippedSpecs().contains(SpecFactorCatalog.BENCHMARK_SPEC));
+    }
+
+    @Test
+    void incompatibleUnitsOrDirectionsAreNeverCompared() {
+        SpecComparison wrongUnit = service.compare(
+                phone(1, 4000, 8, 200), Map.of(), phone(2, 4000, 8, 200),
+                List.of(benchmark(1, "same-name", 100, "seconds", false)),
+                List.of(benchmark(2, "same-name", 50, "points", false)),
+                null, null, "SGD");
+        SpecComparison wrongDirection = service.compare(
+                phone(1, 4000, 8, 200), Map.of(), phone(2, 4000, 8, 200),
+                List.of(benchmark(1, "same-name", 100, "points", false)),
+                List.of(benchmark(2, "same-name", 50, "points", true)),
+                null, null, "SGD");
+
+        assertNull(wrongUnit.benchmarkUpliftPct());
+        assertNull(wrongDirection.benchmarkUpliftPct());
     }
 
     @Test
