@@ -108,6 +108,53 @@ class TechApiBenchmarkSinkTests {
         assertEquals(candidateId, resumed.phones().getFirst().productId());
     }
 
+    @Test
+    void repositoryReportsCatalogueAndBenchmarkCoverage() {
+        assertFalse(techApiPhones.state().initialBackfillComplete);
+        assertTrue(techApiPhones.maximumEligibleProductId() >= candidateId);
+        assertTrue(techApiPhones.phonesThrough(ownedId).stream()
+                .anyMatch(phone -> phone.productId() == ownedId));
+        assertTrue(techApiPhones.allPhones().stream()
+                .anyMatch(phone -> phone.productId() == candidateId));
+
+        long observationsBefore = techApiPhones.observationCount();
+        long productsBefore = techApiPhones.coveredProductCount();
+        assertFalse(techApiPhones.hasCompleteCoverage(ownedId));
+
+        sink.accept("run-1", benchmark(ownedId, TechApiBenchmarkSource.GEEKBENCH_SINGLE, "1000"));
+        assertFalse(techApiPhones.hasCompleteCoverage(ownedId));
+        sink.accept("run-1", benchmark(ownedId, TechApiBenchmarkSource.GEEKBENCH_MULTI, "2000"));
+
+        assertTrue(techApiPhones.hasCompleteCoverage(ownedId));
+        assertEquals(observationsBefore + 2, techApiPhones.observationCount());
+        assertEquals(productsBefore + 1, techApiPhones.coveredProductCount());
+    }
+
+    @Test
+    void sinkRejectsUnsupportedInputsAndDeduplicatesOtherSources() {
+        var simulatedSource = new IngestionSource() {
+            @Override public String sourceId() { return "simulation"; }
+            @Override public boolean simulation() { return true; }
+            @Override public void ingest(SourceContext context, java.util.function.Consumer<Payload> output) {}
+        };
+        assertFalse(sink.supports(simulatedSource, benchmark(ownedId, "single", "1000").body()));
+        assertFalse(sink.supports(SOURCE,
+                new Payload.Price(Long.toString(ownedId), null, BigDecimal.TEN, "SGD")));
+
+        var invalidReference = new Payload(
+                TechApiBenchmarkSource.ID, "invalid-reference", Instant.now(),
+                new Payload.Benchmark("external-id", "single", BigDecimal.TEN, "points"));
+        assertThrows(IllegalStateException.class,
+                () -> sink.accept("run-invalid", invalidReference));
+
+        var thirdParty = new Payload(
+                "manual-benchmark", "manual-1", Instant.parse("2026-10-19T00:00:00Z"),
+                new Payload.Benchmark(Long.toString(ownedId), "manual", BigDecimal.TEN,
+                        "points", true, null));
+        assertEquals(IngestionSink.Result.ACCEPTED, sink.accept("run-1", thirdParty));
+        assertEquals(IngestionSink.Result.DUPLICATE, sink.accept("run-2", thirdParty));
+    }
+
     private long product(String model) {
         long productId = db.queryForObject("""
                 INSERT INTO products(brand,model_name,category,status)
