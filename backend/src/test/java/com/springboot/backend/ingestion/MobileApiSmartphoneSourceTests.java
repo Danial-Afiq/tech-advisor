@@ -24,13 +24,13 @@ class MobileApiSmartphoneSourceTests {
     private final ObjectMapper json = new ObjectMapper();
 
     @Test void sourceIdIsStableAndValidForTheRegistry() {
-        var source = new MobileApiSmartphoneSource("", "");
+        var source = new MobileApiSmartphoneSource("", "", null);
         assertEquals("mobileapi-smartphone", source.sourceId());
         assertTrue(source.sourceId().matches("[a-z0-9-]{1,80}"));
     }
 
     @Test void noApiKeyConfiguredEmitsNothingRatherThanFailing() throws Exception {
-        var source = new MobileApiSmartphoneSource("", "");
+        var source = new MobileApiSmartphoneSource("", "", null);
         var context = new SourceContext(Clock.systemUTC(), () -> {});
         List<Payload> emitted = new ArrayList<>();
         try {
@@ -142,5 +142,29 @@ class MobileApiSmartphoneSourceTests {
         assertNull(MobileApiSmartphoneSource.text(device("{}"), "name"));
         assertNull(MobileApiSmartphoneSource.text(device("{\"name\": null}"), "name"));
         assertEquals("G5", MobileApiSmartphoneSource.text(device("{\"name\": \"G5\"}"), "name"));
+    }
+
+    // Bugfix (ingestion_cursors): the default/automatic mode used to call the exact same
+    // URL every run - no page parameter existed at all - so a scheduled run never
+    // discovered anything beyond whatever the first page happened to be. advance() is the
+    // pure rule that makes successive runs actually sweep forward instead.
+
+    @Test void advancePagesForwardWithinTheSameYearWhileMorePagesRemain() {
+        var next = MobileApiSmartphoneSource.advance(new MobileApiSmartphoneSource.Cursor(2026, 3), 2026, true);
+        assertEquals(new MobileApiSmartphoneSource.Cursor(2026, 4), next);
+    }
+
+    @Test void advanceRestartsAtPageOneOfTheSameYearOnceTheSweepIsComplete() {
+        // The only way a device added to an earlier page of a year already fully swept is
+        // ever noticed - without this, a finished sweep would just stop discovering anything.
+        var next = MobileApiSmartphoneSource.advance(new MobileApiSmartphoneSource.Cursor(2026, 24), 2026, false);
+        assertEquals(new MobileApiSmartphoneSource.Cursor(2026, 1), next);
+    }
+
+    @Test void advanceResetsToPageOneTheMomentTheCalendarYearRollsOver() {
+        // A cursor left over from last year must not keep paging through a year that's no
+        // longer "now" - the new year's releases must start appearing without a manual step.
+        var next = MobileApiSmartphoneSource.advance(new MobileApiSmartphoneSource.Cursor(2026, 15), 2027, true);
+        assertEquals(new MobileApiSmartphoneSource.Cursor(2027, 1), next);
     }
 }
