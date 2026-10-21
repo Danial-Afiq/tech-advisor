@@ -3,6 +3,8 @@ import type { SmartphoneCatalogueItem } from "../../api/catalogue";
 import {
   EMPTY_FILTERS,
   applyFilters,
+  boundsForRange,
+  catalogueItemPrice,
   filterChoices,
   formToRequest,
   itemToForm,
@@ -11,6 +13,7 @@ import {
   pageButtons,
   pageCount,
   pageOf,
+  priceRangeValue,
   sortItems,
 } from "./catalogueAdmin";
 
@@ -35,6 +38,8 @@ const phone = (patch: Partial<SmartphoneCatalogueItem>): SmartphoneCatalogueItem
   ipRating: "IP68",
   os: "iOS 17",
   softwareSupportYears: 6,
+  latestPrice: null,
+  currency: null,
   ...patch,
 });
 
@@ -143,5 +148,55 @@ describe("catalogue form", () => {
     expect(body.status).toBe("VERIFIED");
     expect(body.releaseDate).toBeNull();
     expect(body.ramGb).toBeNull();
+  });
+});
+
+describe("catalogue prices", () => {
+  const cheap = phone({ id: 11, latestPrice: 499, currency: "SGD" });
+  const dear = phone({ id: 12, latestPrice: "1299.50", currency: "SGD" });
+  const none = phone({ id: 13 });
+  const priced = [none, dear, cheap];
+
+  it("sorts by price either way with unpriced entries last", () => {
+    expect(sortItems(priced, "price-asc").map((i) => i.id)).toEqual([11, 12, 13]);
+    expect(sortItems(priced, "price-desc").map((i) => i.id)).toEqual([12, 11, 13]);
+  });
+
+  it("filters entries with and without a price", () => {
+    expect(applyFilters(priced, { ...EMPTY_FILTERS, price: "unpriced" })).toEqual([none]);
+    expect(applyFilters(priced, { ...EMPTY_FILTERS, price: "priced" })).toEqual([dear, cheap]);
+  });
+
+  it("formats the price like recommendation cards, or null without one", () => {
+    expect(catalogueItemPrice(dear)).toMatch(/^S?\$1,299\.50$/);
+    expect(catalogueItemPrice(none)).toBeNull();
+  });
+});
+
+describe("catalogue price ranges", () => {
+  const at = (id: number, latestPrice: number | null) => phone({ id, latestPrice, currency: "SGD" });
+  const list = [at(1, 300), at(2, 500), at(3, 999), at(4, 2400), at(5, null)];
+  const ids = (minPrice: string, maxPrice: string) =>
+    applyFilters(list, { ...EMPTY_FILTERS, minPrice, maxPrice }).map((i) => i.id);
+
+  it("keeps priced entries within inclusive bounds", () => {
+    expect(ids("0", "500")).toEqual([1, 2]);
+    expect(ids("500", "1000")).toEqual([2, 3]);
+    expect(ids("2000", "")).toEqual([4]);
+    expect(ids("", "400")).toEqual([1]);
+    expect(ids("", "")).toEqual([1, 2, 3, 4, 5]);
+    expect(ids("abc", "")).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("maps presets to editable bounds and back", () => {
+    const blank = { minPrice: "", maxPrice: "" };
+    expect(boundsForRange("500-1000", blank)).toEqual({ minPrice: "500", maxPrice: "1000" });
+    expect(boundsForRange("2000-", blank)).toEqual({ minPrice: "2000", maxPrice: "" });
+    expect(boundsForRange("", { minPrice: "1", maxPrice: "2" })).toEqual(blank);
+    expect(boundsForRange("custom", { minPrice: "1", maxPrice: "2" })).toEqual({ minPrice: "1", maxPrice: "2" });
+
+    expect(priceRangeValue(EMPTY_FILTERS)).toBe("");
+    expect(priceRangeValue({ ...EMPTY_FILTERS, minPrice: "500", maxPrice: "1000" })).toBe("500-1000");
+    expect(priceRangeValue({ ...EMPTY_FILTERS, minPrice: "650", maxPrice: "1000" })).toBe("custom");
   });
 });

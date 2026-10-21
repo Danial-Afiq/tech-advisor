@@ -121,7 +121,9 @@ them. Never show placeholder numbers as if they were real.
 - `devices.ts` has `listDevices` / `createDevice` / `updateDevice` / `deleteDevice`.
 - `catalogue.ts` has `listSmartphones` (`GET /api/catalogue/smartphones`) and the
   ADMIN `createSmartphone` / `updateSmartphone` / `deleteSmartphone`
-  (`/api/admin/catalogue/smartphones[/{id}]`).
+  (`/api/admin/catalogue/smartphones[/{id}]`), plus the read-only
+  `listSmartphonePrices` / `listSmartphoneBenchmarks` (`.../{id}/prices`,
+  `.../{id}/benchmarks`).
 - `database.ts` has `listDatabaseTables` (`GET /api/admin/database/tables`).
 - `session.ts` stores the JWT.
 
@@ -362,11 +364,16 @@ as one deliberate change across all components, not piecemeal.
   ingestion adds a validated product picker to the same authenticated page.
 - `pages/AdminCatalogue.tsx` is the separate ADMIN-only `/admin/catalogue` page.
   It loads the whole catalogue once and searches (brand, model, chipset, OS, ID),
-  filters (brand, status, OS family, complete/missing specs), sorts and pages it
+  filters (brand, status, OS family, complete/missing specs, has/no price, and a
+  price range whose presets fill editable inclusive min/max bounds), sorts
+  (including latest price, unpriced last) and pages it
   client-side (`components/admin/catalogueAdmin.ts`; 10/25/50/100 per page).
   `CatalogueEntryModal` adds or edits an entry (product fields plus
   `PhoneSpecFields` without a baseline; blank specs are sent as `null`), and
-  delete asks for confirmation first. "Show visualisation of all tables" opens
+  delete asks for confirmation first. Editing also shows
+  `CatalogueHistorySection`: read-only price history (current price, variant,
+  source) and benchmark results from the ADMIN `.../{id}/prices` and
+  `.../{id}/benchmarks` routes. "Show visualisation of all tables" opens
   `DatabaseTablesPanel`, one card per table from `GET /api/admin/database/tables`.
   Catalogue GET routes are available to authenticated USER and ADMIN accounts,
   while mutations remain ADMIN-only.

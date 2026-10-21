@@ -1955,8 +1955,18 @@ The list route returns only complete product/phone pairs so a legacy orphan row
 cannot break the whole catalogue response. The `/admin/catalogue` frontend
 (ticket "Manually manage devices in catalogue in admin view") lists the catalogue
 with client-side search, brand/status/OS/missing-spec filters, sorting and
-pagination, and adds, edits and deletes entries through those ADMIN routes (no
-backend change to them). Its "Show visualisation of all tables" button opens a
+pagination, and adds, edits and deletes entries through those ADMIN routes. The
+catalogue read/update responses also carry read-only `latestPrice` and `currency`
+(null without price history), chosen by the same latest-observation rule as
+candidate shortlisting and the dashboard (`observed_at DESC, id DESC`); the admin
+table shows them in a Price column with price sorts, a has/no-price filter and an
+inclusive price range (presets that fill editable min/max bounds; prices compared
+as stored, whatever the currency). Prices cannot be edited through this API.
+The Edit modal also shows read-only history from two ADMIN-only routes,
+`GET /api/admin/catalogue/smartphones/{id}/prices` (with the variant label when
+the observation is SKU-level) and `.../{id}/benchmarks`, newest first and capped
+at 50 rows (`AdminCatalogueHistoryController`/`CatalogueHistoryService`); 404 for
+a non-smartphone id. Manual price/benchmark corrections are not implemented yet. Its "Show visualisation of all tables" button opens a
 side panel of cards, one per table, from `GET /api/admin/database/tables`
 (ADMIN-only, `AdminDatabaseController`/`DatabaseSchemaService`): table names,
 columns, types, primary keys, foreign-key targets and exact row counts read from

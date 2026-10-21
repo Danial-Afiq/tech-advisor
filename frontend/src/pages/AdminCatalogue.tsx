@@ -17,17 +17,24 @@ import {
   EMPTY_FILTERS,
   PAGE_SIZES,
   SORT_OPTIONS,
+  ANY_PRICE_RANGE,
+  CUSTOM_PRICE_RANGE,
+  PRICE_RANGES,
   applyFilters,
+  boundsForRange,
+  catalogueItemPrice,
   filterChoices,
   formToRequest,
   missingSpecCount,
   pageCount,
   pageOf,
+  priceRangeValue,
   sortItems,
 } from "../components/admin/catalogueAdmin";
 import type {
   CatalogueFilters,
   CatalogueFormValues,
+  PriceAvailability,
   SpecCompleteness,
 } from "../components/admin/catalogueAdmin";
 import { AdminShell } from "../components/layout/AdminShell";
@@ -164,7 +171,7 @@ export default function AdminCatalogue() {
 
           <Card>
             <div className="card-body gap-0 p-[18px]">
-              <div className="grid grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))] gap-x-3 max-[980px]:grid-cols-2 max-[620px]:grid-cols-1">
+              <div className="grid grid-cols-[minmax(0,2fr)_repeat(5,minmax(0,1fr))] gap-x-3 max-[980px]:grid-cols-2 max-[620px]:grid-cols-1">
                 <Field label="Search">
                   <Input
                     type="search"
@@ -205,9 +212,55 @@ export default function AdminCatalogue() {
                     onChange={(e) => updateFilters({ specs: e.target.value as SpecCompleteness })}
                   />
                 </Field>
+                <Field label="Price">
+                  <Select
+                    value={filters.price}
+                    options={[
+                      { value: "", label: "Any" },
+                      { value: "priced", label: "Has a price" },
+                      { value: "unpriced", label: "No price" },
+                    ]}
+                    onChange={(e) => updateFilters({ price: e.target.value as PriceAvailability })}
+                  />
+                </Field>
               </div>
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div className="flex flex-wrap items-end gap-3">
+                  <Field label="Price range">
+                    <Select
+                      value={priceRangeValue(filters)}
+                      options={[
+                        { value: ANY_PRICE_RANGE, label: "Any price" },
+                        ...PRICE_RANGES,
+                        { value: CUSTOM_PRICE_RANGE, label: "Custom" },
+                      ]}
+                      onChange={(e) => updateFilters(boundsForRange(e.target.value, filters))}
+                    />
+                  </Field>
+                  <Field label="Min price">
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      step="any"
+                      placeholder="No min"
+                      className="w-[110px]"
+                      value={filters.minPrice}
+                      onChange={(e) => updateFilters({ minPrice: e.target.value })}
+                    />
+                  </Field>
+                  <Field label="Max price">
+                    <Input
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      step="any"
+                      placeholder="No max"
+                      className="w-[110px]"
+                      value={filters.maxPrice}
+                      onChange={(e) => updateFilters({ maxPrice: e.target.value })}
+                    />
+                  </Field>
                   <Field label="Sort by">
                     <Select
                       value={sort}
@@ -268,6 +321,7 @@ export default function AdminCatalogue() {
                           <th className={head}>Model</th>
                           <th className={head}>Release</th>
                           <th className={head}>Status</th>
+                          <th className={head}>Price</th>
                           <th className={head}>Chipset</th>
                           <th className={head}>RAM</th>
                           <th className={head}>Storage</th>
@@ -298,6 +352,9 @@ export default function AdminCatalogue() {
                                 >
                                   {item.status}
                                 </span>
+                              </td>
+                              <td className={`${cell} whitespace-nowrap`}>
+                                {value(catalogueItemPrice(item))}
                               </td>
                               <td className={cell}>{value(item.chipset)}</td>
                               <td className={cell}>{value(item.ramGb, " GB")}</td>

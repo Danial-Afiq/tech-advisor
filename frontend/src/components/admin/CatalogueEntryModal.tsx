@@ -5,13 +5,15 @@ import { PhoneSpecFields } from "../devices/PhoneSpecFields";
 import { Button } from "../ui/Button";
 import { Field, FormError, FormGrid, Input, Select } from "../ui/Form";
 import { Modal, ModalActions } from "../ui/Modal";
+import { CatalogueHistorySection } from "./CatalogueHistorySection";
 import { CATALOGUE_STATUSES, itemToForm } from "./catalogueAdmin";
 import type { CatalogueFormValues } from "./catalogueAdmin";
 
 /**
  * Add or edit one catalogue smartphone: the `products` fields plus every
  * `phone` spec (reusing the device form's `PhoneSpecFields`). An emptied
- * spec is saved as null, i.e. unknown.
+ * spec is saved as null, i.e. unknown. Editing also shows the entry's
+ * read-only price and benchmark history.
  */
 export function CatalogueEntryModal({
   item,
@@ -92,6 +94,8 @@ export function CatalogueEntryModal({
           values={values.specs}
           onChange={(key, value) => set({ specs: { ...values.specs, [key]: value } })}
         />
+
+        {item && <CatalogueHistorySection productId={item.id} />}
 
         <FormError message={error} />
         <ModalActions>

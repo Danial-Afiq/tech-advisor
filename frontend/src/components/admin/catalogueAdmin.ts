@@ -5,6 +5,7 @@ import type {
 import { catalogueSpecs, formToSpecs, specsToForm } from "../devices/catalogue";
 import type { SpecFormValues } from "../devices/catalogue";
 import { PHONE_SPEC_KEYS } from "../devices/phoneSpecs";
+import { formatRecommendationPrice } from "../recommendations/recommendationPresentation";
 
 /**
  * Search, filter, sort and paging for the admin catalogue table. All of it is
@@ -17,6 +18,7 @@ export const PAGE_SIZES = [10, 25, 50, 100] as const;
 export const ALL = "";
 
 export type SpecCompleteness = "" | "complete" | "missing";
+export type PriceAvailability = "" | "priced" | "unpriced";
 
 export type CatalogueFilters = {
   query: string;
@@ -24,6 +26,10 @@ export type CatalogueFilters = {
   status: string;
   osFamily: string;
   specs: SpecCompleteness;
+  price: PriceAvailability;
+  /** Inclusive price bounds as typed; blank means no bound. */
+  minPrice: string;
+  maxPrice: string;
 };
 
 export const EMPTY_FILTERS: CatalogueFilters = {
@@ -32,6 +38,47 @@ export const EMPTY_FILTERS: CatalogueFilters = {
   status: ALL,
   osFamily: ALL,
   specs: "",
+  price: "",
+  minPrice: "",
+  maxPrice: "",
+};
+
+/** Preset price ranges; picking one fills the editable min/max bounds. */
+export const PRICE_RANGES = [
+  { value: "0-500", label: "0 – 500", min: "0", max: "500" },
+  { value: "500-1000", label: "500 – 1,000", min: "500", max: "1000" },
+  { value: "1000-1500", label: "1,000 – 1,500", min: "1000", max: "1500" },
+  { value: "1500-2000", label: "1,500 – 2,000", min: "1500", max: "2000" },
+  { value: "2000-", label: "2,000 and above", min: "2000", max: "" },
+] as const;
+
+export const ANY_PRICE_RANGE = "";
+export const CUSTOM_PRICE_RANGE = "custom";
+
+/** The preset matching the typed bounds, "" for none, else "custom". */
+export function priceRangeValue(filters: CatalogueFilters): string {
+  const min = filters.minPrice.trim();
+  const max = filters.maxPrice.trim();
+  if (!min && !max) return ANY_PRICE_RANGE;
+  const preset = PRICE_RANGES.find((r) => r.min === min && r.max === max);
+  return preset ? preset.value : CUSTOM_PRICE_RANGE;
+}
+
+/** The bounds a range choice sets; "custom" keeps what was typed. */
+export function boundsForRange(
+  value: string,
+  current: Pick<CatalogueFilters, "minPrice" | "maxPrice">
+): Pick<CatalogueFilters, "minPrice" | "maxPrice"> {
+  if (value === ANY_PRICE_RANGE) return { minPrice: "", maxPrice: "" };
+  const preset = PRICE_RANGES.find((r) => r.value === value);
+  return preset ? { minPrice: preset.min, maxPrice: preset.max } : current;
+}
+
+const bound = (text: string) => {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const n = Number(trimmed);
+  return Number.isNaN(n) ? null : n;
 };
 
 type SortOption = {
@@ -80,6 +127,16 @@ export const SORT_OPTIONS: SortOption[] = [
     label: "Oldest release",
     compare: (a, b) =>
       nullsLast(releaseTime(a.releaseDate), releaseTime(b.releaseDate), false) || byName(a, b),
+  },
+  {
+    value: "price-asc",
+    label: "Lowest price",
+    compare: (a, b) => nullsLast(a.latestPrice, b.latestPrice, false) || byName(a, b),
+  },
+  {
+    value: "price-desc",
+    label: "Highest price",
+    compare: (a, b) => nullsLast(a.latestPrice, b.latestPrice, true) || byName(a, b),
   },
   {
     value: "ram-desc",
@@ -142,6 +199,18 @@ export function applyFilters(
     if (filters.osFamily && osFamily(item.os) !== filters.osFamily) return false;
     if (filters.specs === "complete" && missingSpecCount(item) > 0) return false;
     if (filters.specs === "missing" && missingSpecCount(item) === 0) return false;
+    if (filters.price === "priced" && item.latestPrice === null) return false;
+    if (filters.price === "unpriced" && item.latestPrice !== null) return false;
+    const min = bound(filters.minPrice);
+    const max = bound(filters.maxPrice);
+    if (min !== null || max !== null) {
+      // A price range only matches priced entries. Prices are compared as
+      // stored, whatever their currency, like the rest of the system.
+      if (item.latestPrice === null) return false;
+      const price = Number(item.latestPrice);
+      if (min !== null && price < min) return false;
+      if (max !== null && price > max) return false;
+    }
     if (words.length === 0) return true;
     const haystack = searchText(item);
     return words.every((word) => haystack.includes(word));
@@ -152,6 +221,12 @@ export function sortItems(items: SmartphoneCatalogueItem[], sort: string) {
   const option = SORT_OPTIONS.find((o) => o.value === sort) ?? SORT_OPTIONS[0];
   return [...items].sort(option.compare);
 }
+
+/** "S$849.00", or null when the entry has no price history. */
+export const catalogueItemPrice = (item: SmartphoneCatalogueItem) =>
+  item.latestPrice === null
+    ? null
+    : formatRecommendationPrice(Number(item.latestPrice), item.currency);
 
 export const pageCount = (total: number, size: number) =>
   Math.max(1, Math.ceil(total / size));
