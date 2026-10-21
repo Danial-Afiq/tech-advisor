@@ -1966,8 +1966,8 @@ The Edit modal also shows read-only history from two ADMIN-only routes,
 `GET /api/admin/catalogue/smartphones/{id}/prices` (with the variant label when
 the observation is SKU-level) and `.../{id}/benchmarks`, newest first and capped
 at 50 rows (`AdminCatalogueHistoryController`/`CatalogueHistoryService`); 404 for
-a non-smartphone id. Manual price/benchmark corrections are not implemented yet. Its "Show visualisation of all tables" button opens a
-side panel of cards, one per table, from `GET /api/admin/database/tables`
+a non-smartphone id. Manual price/benchmark corrections are not implemented yet.
+The page's "Show visualisation of all tables" button opens a side panel of cards, one per table, from `GET /api/admin/database/tables`
 (ADMIN-only, `AdminDatabaseController`/`DatabaseSchemaService`): table names,
 columns, types, primary keys, foreign-key targets and exact row counts read from
 `information_schema`. It never returns row contents.
