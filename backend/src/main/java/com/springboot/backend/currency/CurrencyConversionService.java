@@ -50,9 +50,24 @@ public class CurrencyConversionService {
 
     public List<ConversionResult> convertAll(
             List<Price> prices, String targetCurrency) {
+        return convertAll(prices, targetCurrency, false);
+    }
+
+    public List<ConversionResult> convertAllForComparison(
+            List<Price> prices, String targetCurrency) {
+        return convertAll(prices, targetCurrency, true);
+    }
+
+    private List<ConversionResult> convertAll(
+            List<Price> prices,
+            String targetCurrency,
+            boolean allowAnyProviderCurrency) {
         String target = normalise(targetCurrency);
         boolean targetSupported =
-                target != null && SUPPORTED_CURRENCIES.contains(target);
+                target != null
+                        && (allowAnyProviderCurrency
+                        ? isIsoCode(target)
+                        : SUPPORTED_CURRENCIES.contains(target));
         boolean needsRates = targetSupported && prices.stream().anyMatch(price -> {
             String source = normalise(price.currency());
             return price.amount() != null

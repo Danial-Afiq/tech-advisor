@@ -17,8 +17,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Exercises the shortlisting query against real PostgreSQL, because the parts
- * most worth testing - {@code DISTINCT ON}, the inner join, numeric comparison
- * - are the parts an in-memory stand-in would not reproduce faithfully.
+ * most worth testing - {@code DISTINCT ON}, the inner join, and the complete
+ * repository-to-pruning path - are not reproduced by an in-memory stand-in.
  *
  * <p>Runs inside a transaction that rolls back, and refuses to run at all
  * outside a dedicated {@code *_test} database, since it seeds catalogue rows.

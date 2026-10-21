@@ -23,10 +23,7 @@ public class DevicePreference {
     @Column(nullable = false)
     private BigDecimal budget;
 
-    /**
-     * Persisted but not yet used for conversion - budget and price are
-     * compared as bare numbers. See CandidatePruningService.
-     */
+    /** Currency used to compare candidate prices with this device's budget. */
     @Column(nullable = false)
     private String currency = "SGD";
 

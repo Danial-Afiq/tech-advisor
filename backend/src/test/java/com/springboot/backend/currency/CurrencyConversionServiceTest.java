@@ -35,6 +35,23 @@ class CurrencyConversionServiceTest {
     }
 
     @Test
+    void comparisonCanUseAProviderCurrencyOutsideTheDisplayOptions() {
+        when(clock.instant()).thenReturn(START);
+        when(client.latestRates()).thenReturn(rates("0.7400", "3.2000", "0.5700"));
+        var service = new CurrencyConversionService(client, clock);
+
+        var result = service.convertAllForComparison(
+                List.of(new CurrencyConversionService.Price(
+                        new BigDecimal("100.00"), "USD")),
+                "EUR"
+        ).getFirst();
+
+        assertThat(result.amount()).isEqualByComparingTo("91.89");
+        assertThat(result.currency()).isEqualTo("EUR");
+        assertThat(result.status()).isEqualTo(CurrencyConversionService.Status.CONVERTED);
+    }
+
+    @Test
     void sameCurrencyReturnsOriginalWithoutFetchingRates() {
         var service = new CurrencyConversionService(client, Clock.fixed(START, ZoneOffset.UTC));
 

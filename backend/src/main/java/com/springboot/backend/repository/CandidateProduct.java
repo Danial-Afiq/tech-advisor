@@ -3,8 +3,9 @@ package com.springboot.backend.repository;
 import java.math.BigDecimal;
 
 /**
- * A product that survived deterministic shortlisting, with the latest price
- * the filter already had to read in order to apply the budget ceiling.
+ * A product being considered by deterministic shortlisting. Repository
+ * projections carry the stored latest price; CandidatePruningService returns
+ * the same shape with price and currency normalized to the device budget.
  *
  * <p>The price is carried deliberately. Downstream scoring needs price-vs-budget
  * as a finished number, and re-reading it per candidate would repeat work this

@@ -1,5 +1,7 @@
 package com.springboot.backend.recommendation;
 
+import com.springboot.backend.currency.CurrencyConversionService;
+import com.springboot.backend.currency.CurrencyConversionService.Price;
 import com.springboot.backend.exception.ResourceNotFoundException;
 import com.springboot.backend.model.DevicePreference;
 import com.springboot.backend.model.Product;
@@ -13,6 +15,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -23,7 +28,8 @@ import java.util.List;
  * budget are exact facts; a language model asked to honour them is both
  * unreliable and expensive, since every product that survives costs embedding
  * comparisons, retrieval and prompt tokens downstream. Everything here is
- * ordinary relational querying - no embeddings, no retrieval, no model call.
+ * deterministic querying and currency conversion - no embeddings, retrieval,
+ * or model call.
  */
 @Service
 public class CandidatePruningService {
@@ -33,26 +39,69 @@ public class CandidatePruningService {
     private final UserDeviceRepository userDeviceRepository;
     private final DevicePreferenceRepository devicePreferenceRepository;
     private final ProductRepository productRepository;
+    private final CurrencyConversionService currencyConversionService;
 
     public CandidatePruningService(
             UserDeviceRepository userDeviceRepository,
             DevicePreferenceRepository devicePreferenceRepository,
-            ProductRepository productRepository) {
+            ProductRepository productRepository,
+            CurrencyConversionService currencyConversionService) {
 
         this.userDeviceRepository = userDeviceRepository;
         this.devicePreferenceRepository = devicePreferenceRepository;
         this.productRepository = productRepository;
+        this.currencyConversionService = currencyConversionService;
     }
 
     @Transactional(readOnly = true)
     public List<CandidateProduct> getViableCandidates(Long userDeviceId) {
         Context context = resolve(userDeviceId);
 
-        List<CandidateProduct> candidates = productRepository.findCompatibleCandidates(
-                context.category(), context.preference().getBudget(), context.ownedProductId());
+        List<CandidateProduct> candidates = productRepository.findPricedCandidates(
+                context.category(), context.ownedProductId());
+        if (candidates.isEmpty()) {
+            return candidates;
+        }
 
-        warnOnCurrencyMismatch(candidates, context.preference());
-        return candidates;
+        List<CurrencyConversionService.ConversionResult> conversions =
+                currencyConversionService.convertAllForComparison(
+                        candidates.stream()
+                                .map(candidate -> new Price(
+                                        candidate.getLatestPrice(),
+                                        candidate.getCurrency()))
+                                .toList(),
+                        context.preference().getCurrency()
+                );
+
+        BigDecimal budget = context.preference().getBudget();
+        List<CandidateProduct> affordable = new ArrayList<>();
+        for (int index = 0; index < candidates.size(); index++) {
+            CandidateProduct candidate = candidates.get(index);
+            var conversion = conversions.get(index);
+            if (conversion.status() == CurrencyConversionService.Status.UNAVAILABLE
+                    || conversion.amount() == null) {
+                LOG.warn(
+                        "Candidate {} excluded because {} could not be converted to budget currency {}",
+                        candidate.getProductId(),
+                        candidate.getCurrency(),
+                        context.preference().getCurrency()
+                );
+                continue;
+            }
+            if (conversion.amount().compareTo(budget) <= 0) {
+                affordable.add(new BudgetCandidate(
+                        candidate.getProductId(),
+                        candidate.getBrand(),
+                        candidate.getModelName(),
+                        conversion.amount(),
+                        conversion.currency()
+                ));
+            }
+        }
+        affordable.sort(Comparator
+                .comparing(CandidateProduct::getLatestPrice)
+                .thenComparing(CandidateProduct::getProductId));
+        return affordable;
     }
 
     /**
@@ -83,29 +132,17 @@ public class CandidatePruningService {
         return new Context(owned.getCategory(), owned.getId(), preference);
     }
 
-    /**
-     * Budget and price are compared as bare numbers on the assumption that the
-     * system runs in a single currency. That assumption is not enforced
-     * anywhere upstream - the ingestion price payload accepts any ISO code - so
-     * a mismatch is surfaced here rather than passing silently. Converting
-     * would mean inventing an exchange rate, which is not this layer's call.
-     */
-    private void warnOnCurrencyMismatch(
-            List<CandidateProduct> candidates, DevicePreference preference) {
-
-        String budgetCurrency = preference.getCurrency();
-        if (budgetCurrency == null) {
-            return;
-        }
-
-        candidates.stream()
-                .map(CandidateProduct::getCurrency)
-                .filter(currency -> currency != null && !budgetCurrency.equalsIgnoreCase(currency.trim()))
-                .distinct()
-                .forEach(currency -> LOG.warn(
-                        "Candidate priced in {} compared against a {} budget without conversion; "
-                                + "single-currency assumption may not hold",
-                        currency.trim(), budgetCurrency));
+    private record BudgetCandidate(
+            Long productId,
+            String brand,
+            String modelName,
+            BigDecimal latestPrice,
+            String currency) implements CandidateProduct {
+        @Override public Long getProductId() { return productId; }
+        @Override public String getBrand() { return brand; }
+        @Override public String getModelName() { return modelName; }
+        @Override public BigDecimal getLatestPrice() { return latestPrice; }
+        @Override public String getCurrency() { return currency; }
     }
 
     private record Context(String category, Long ownedProductId, DevicePreference preference) {}

@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 20 October 2026
+> **Last consolidated:** 21 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -52,10 +52,9 @@ When something conflicts, use this order:
   quotes for a particular configuration or retailer.
   - MobileAPI supplies general model specifications; SearchAPI supplies one
     representative model price.
-  - SCRUM-116 implements display-only conversion for SGD, USD, MYR and GBP.
-    Original `price_history` amounts/currencies remain unchanged. Deterministic
-    budget filtering still compares stored bare amounts and must not be presented
-    as currency-normalized.
+  - SCRUM-116 implements display conversion for SGD, USD, MYR and GBP and
+    currency-normalized budget filtering. Original `price_history`
+    amounts/currencies remain unchanged.
 - Older Architecture sections that describe factor-tagged chunks, a separate evidence-grade cache, multiple model calls, `released_at`, or global `user_profiles` are **superseded** by the current plan.
 - Current source code uses **Spring Boot 4.1.1 + Java 21**, even though an older Architecture document says Spring Boot 3.x.
 
@@ -181,8 +180,8 @@ a working end-to-end product within the remaining sprint. The existing
 `phone_variants` table, nullable variant foreign keys and supporting code remain
 for backward compatibility, but no current application flow should build new
 functionality around them unless explicitly requested. Prices are therefore
-indicative rather than exact quotations; SGD normalization is separate planned
-work, not completed functionality.
+indicative rather than exact quotations. Conversion is applied when prices are
+displayed or compared with a device budget; stored observations are unchanged.
 
 ## 1.2 Core product behaviour
 
@@ -575,23 +574,25 @@ If the candidate has no meaningful path for this owned device/user:
 
 Before any of the above runs, the catalogue is reduced to a compatible and
 affordable candidate set by `recommendation/CandidatePruningService`, backed by
-`ProductRepository.findCompatibleCandidates(...)`.
+`ProductRepository.findPricedCandidates(...)` and `CurrencyConversionService`.
 
-Rules, all enforced in SQL:
+Rules enforced in SQL:
 - candidate `products.category` equals the owned device's category,
-- the product's latest representative model-level `price_history` observation is `<=`
-  `device_preferences.budget` (inclusive),
 - the currently owned `product_id` is excluded,
 - products with **no** price history are excluded - affordability cannot be
   verified, so they are not candidates,
 - products with `status <> 'VERIFIED'` are excluded.
 
+Java converts each latest price into `device_preferences.currency`, then applies
+the inclusive `<= device_preferences.budget` ceiling and orders candidates by
+the converted price. Same-currency comparisons need no rate lookup. A stale
+cached rate is acceptable; if conversion is unavailable, the foreign-currency
+candidate fails closed and is excluded rather than compared as a bare number.
+
 The representative price is the latest observation selected by `DISTINCT ON
 (product_id) ... ORDER BY product_id, observed_at DESC, id DESC`. The `id DESC`
 tiebreaker is required: without it two observations sharing an `observed_at`
-resolve arbitrarily and the step stops being reproducible. This is still a raw
-stored-currency budget comparison; display conversion does not change shortlisting
-(§27.9).
+resolve arbitrarily and the step stops being reproducible (§27.9).
 
 This step performs **no** embeddings, retrieval or model calls, and must stay
 that way - bounding the candidate set is what bounds every downstream AI cost.
@@ -1550,7 +1551,7 @@ model, persisted by `PriceHistorySink` against `product_id`. MobileAPI supplies
 general specifications and does not write prices. A cache-hit SearchAPI run
 does not create another observation because it skips the shopping call.
 
-`ProductRepository.findCompatibleCandidates` and the dashboard deliberately
+`ProductRepository.findPricedCandidates` and the dashboard deliberately
 select the latest observation per general `product_id`. That one value is used
 for budget filtering, comparisons, display and price sorting. It is an
 **indicative price**, not an exact quote for every RAM/storage configuration,
@@ -3298,9 +3299,9 @@ handler — the generic `IllegalArgumentException` mapping in
   it **Indicative price** and the page shows one visible disclaimer that prices
   may vary by storage configuration, retailer, region and availability.
 - Every option ends `created_at DESC, id DESC` so ties are reproducible.
-- Prices are compared as raw stored numbers: a mixed-currency catalogue can
-  sort incorrectly. SGD normalization is agreed planned work in a separate
-  Jira ticket, not part of this implementation (§27.9).
+- Dashboard price sorts use converted display amounts. Recommendation
+  shortlisting separately normalizes candidate prices into the device budget
+  currency before applying the ceiling (§27.9).
 - Frontend keeps `sort` in the URL query string (`useSearchParams`); changing it
   copies all other query parameters, deletes `page`, and omits `sort` for the
   default. Unknown URL values fall back to the default. Active client-side
@@ -3608,11 +3609,12 @@ This is schema readiness only. GPU ingestion, business logic, recommendation rul
 
 ## 27.9 Display currency conversion — IMPLEMENTED (SCRUM-116)
 
-Candidate shortlisting compares `device_preferences.budget` against
-`price_history.price` as **bare numbers, with no conversion**. SCRUM-116 does not
-change that deterministic rule: cross-currency budget normalization remains
-future work and `CandidatePruningService` continues to warn when candidate and
-budget currencies differ.
+Candidate shortlisting loads each product's latest stored observation, converts
+it into `device_preferences.currency` using the shared rate snapshot, and only
+keeps converted amounts at or below the budget. It also passes the normalized
+amount/currency into deterministic price scoring. Same-currency values do not
+fetch rates. When neither a current nor stale rate can convert a foreign price,
+the candidate is excluded; the system never compares mismatched bare numbers.
 
 Customer-facing recommendation prices are converted on demand by Spring Boot.
 `CurrencyConversionService` fetches one SGD-based rate set from Frankfurter v2
