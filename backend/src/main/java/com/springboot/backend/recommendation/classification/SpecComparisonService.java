@@ -151,7 +151,7 @@ public class SpecComparisonService {
     }
 
     private static boolean sameUnit(String first, String second) {
-        if (first == null || second == null) return first == second;
+        if (first == null || second == null) return first == null && second == null;
         return first.trim().equalsIgnoreCase(second.trim());
     }
 

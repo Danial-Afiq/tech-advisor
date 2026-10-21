@@ -449,7 +449,7 @@ public class TechApiBenchmarkSource implements IngestionSource {
         if (value == null) return "";
         String ascii = Normalizer.normalize(value, Normalizer.Form.NFKD)
                 .replaceAll("\\p{M}+", "").toLowerCase(java.util.Locale.ROOT);
-        return ascii.replaceAll("[^a-z0-9]+", "-").replaceAll("^-|-$", "");
+        return ascii.replaceAll("[^a-z0-9]+", "-").replaceAll("(^-)|(-$)", "");
     }
 
     private static String text(JsonNode node, String field) {
