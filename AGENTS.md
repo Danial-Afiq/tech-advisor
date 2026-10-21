@@ -2142,6 +2142,27 @@ never being provisioned, not a missing sink anymore.
 - MobileAPI.dev isn't in the candidate list below (this section predates
   that decision) — added here for traceability, not because §17.1's "not
   fully confirmed" status has changed.
+- **Bugfix (ingestion_cursors, V12, bugfix/smartphone-ingestion):** the
+  default/automatic mode (`sources.mobileapi.year` unset) used to call the
+  exact same URL on every single run — no `page` parameter existed
+  anywhere in the code — so a scheduled run never discovered a device
+  beyond whatever the first page of the default listing happened to be.
+  Confirmed live that the default listing isn't even "newest first"
+  either, so nothing short of a human manually changing
+  `sources.mobileapi.year` and restarting ever moved coverage at all.
+  Default mode now sweeps page-by-page through the *current calendar
+  year's* `by-year` listing, one page per run (still exactly 1 HTTP
+  request), with progress tracked in the new `ingestion_cursors` table
+  (one row per `sourceId()`, source-defined JSONB `state`). A completed
+  sweep restarts at page 1 of the same year automatically — the only way
+  a device added to an earlier page of a year already fully swept is
+  ever noticed — and a stored cursor whose year no longer matches "now"
+  resets to page 1 of the new year the instant the calendar rolls over,
+  so a new year's releases start appearing with no manual step.
+  `sources.mobileapi.year`, when explicitly set, keeps the original
+  single fixed-page request shape unchanged — a deliberate manual
+  override (e.g. pinning a demo to one past year), not the path this bug
+  was in, and not cursor-tracked.
 - **Launch events (feat/3.9-ai-ml-triggers):** the sink now upserts inside one
   transaction and, the first time a `(brand, model_name)` row is *inserted*
   (`RETURNING (xmax = 0)`), records a `PRODUCT_LAUNCH` market event through
@@ -2324,6 +2345,7 @@ V8__add_phone_variants.sql             # ticket 1.8 — phone_variants, user_dev
 V9__link_price_history_to_phone_variants.sql  # ticket 1.8 — price_history.phone_variant_id
 V10__add_starred_to_recommendations.sql       # ticket 4.4 — recommendations.starred (§14.12)
 V11__create_notifications.sql                 # ticket 4.4.2 — notifications (§14.14)
+V12__add_ingestion_cursors.sql                # bugfix/smartphone-ingestion — ingestion_cursors (§17.1.1)
 ```
 
 `V5` makes `users.password_hash` **NOT NULL**, so every seed, fixture, or test
