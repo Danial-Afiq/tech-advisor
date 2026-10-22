@@ -12,11 +12,14 @@ import com.springboot.backend.ingestion.run.RunStore;
 import com.springboot.backend.ingestion.searchapi.ProductMatcher;
 import com.springboot.backend.ingestion.searchapi.SearchApiRepository;
 import com.springboot.backend.ingestion.searchapi.SearchApiSource;
+import com.springboot.backend.ingestion.techapi.TechApiBenchmarkSource;
 import java.security.Principal;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -153,6 +156,22 @@ class IngestionControllerTests {
         assertSame(run, response.getBody());
     }
 
+    @Test void administratorCanTriggerTechApiBenchmarkIngestionManually() {
+        when(registry.select(List.of(TechApiBenchmarkSource.ID)))
+                .thenReturn(List.of(TechApiBenchmarkSource.ID));
+        var run = new RunLog(); run.runId = "techapi-run";
+        when(runner.manual(List.of(TechApiBenchmarkSource.ID), "admin",
+                "techapi-key", "refresh benchmarks", null)).thenReturn(run);
+
+        var response = controller.start(new IngestionController.Request(
+                List.of(TechApiBenchmarkSource.ID), "refresh benchmarks", null, null),
+                "techapi-key", () -> "admin");
+
+        assertEquals(202, response.getStatusCode().value());
+        assertEquals("/api/admin/ingestion/runs/techapi-run",
+                response.getHeaders().getLocation().toString());
+    }
+
     @Test void getReturnsWhateverTheStoreHasForThatRunId() {
         var run = new RunLog(); run.runId = "run-1";
         when(store.get("run-1")).thenReturn(run);
@@ -203,6 +222,29 @@ class IngestionControllerTests {
         simulatedRow.put("sourceId", "simulated-release"); simulatedRow.put("enabled", false);
         simulatedRow.put("simulation", true); simulatedRow.put("nextAllowedAt", null);
         assertEquals(List.of(mobileApiRow, simulatedRow), rows);
+    }
+
+    @Test void sourcesIncludesTechApiInitialBackfillProgress() {
+        var state = new CoordinatorState();
+        when(store.state()).thenReturn(state);
+        var techApi = mock(IngestionSource.class);
+        when(techApi.sourceId()).thenReturn(TechApiBenchmarkSource.ID);
+        when(techApi.scheduleInterval()).thenReturn(Optional.of(Duration.ofDays(14)));
+        when(techApi.progress()).thenReturn(Optional.of(new IngestionSource.Progress(
+                "INITIAL_BACKFILL", 40, 100, 12, 6)));
+        when(registry.all()).thenReturn(List.of(techApi));
+        when(registry.enabled(TechApiBenchmarkSource.ID)).thenReturn(true);
+
+        var row = controller.sources().getFirst();
+
+        assertEquals("INITIAL_BACKFILL", row.get("phase"));
+        assertEquals(40L, row.get("completedUnits"));
+        assertEquals(100L, row.get("totalUnits"));
+        assertEquals(12L, row.get("observationsIngested"));
+        assertEquals(6L, row.get("productsCovered"));
+        assertFalse(row.containsKey("nextScheduledAt"));
+        assertFalse(row.containsKey("initialBackfillComplete"));
+        assertFalse(row.containsKey("initialBackfillCompletedAt"));
     }
 
     @Test void unavailableRespondsWith503AndAClearMessage() {

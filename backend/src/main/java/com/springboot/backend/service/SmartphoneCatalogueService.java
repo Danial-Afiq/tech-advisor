@@ -5,12 +5,16 @@ import com.springboot.backend.dto.SmartphoneCatalogueResponse;
 import com.springboot.backend.exception.ResourceNotFoundException;
 import com.springboot.backend.model.Phone;
 import com.springboot.backend.model.Product;
+import com.springboot.backend.repository.LatestPrice;
 import com.springboot.backend.repository.PhoneRepository;
 import com.springboot.backend.repository.ProductRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 public class SmartphoneCatalogueService {
@@ -47,11 +51,15 @@ public class SmartphoneCatalogueService {
 
     @Transactional(readOnly = true)
     public List<SmartphoneCatalogueResponse> list() {
+        Map<Long, LatestPrice> prices = products.findLatestPrices(Product.CATEGORY_SMARTPHONE)
+                .stream()
+                .collect(Collectors.toMap(LatestPrice::getProductId, Function.identity()));
         return products
                 .findAllByCategoryOrderByBrandAscModelNameAsc(Product.CATEGORY_SMARTPHONE)
                 .stream()
                 .flatMap(product -> phones.findById(product.getId())
-                        .map(phone -> new SmartphoneCatalogueResponse(product, phone))
+                        .map(phone -> new SmartphoneCatalogueResponse(product, phone)
+                                .withLatestPrice(prices.get(product.getId())))
                         .stream())
                 .toList();
     }
@@ -59,7 +67,7 @@ public class SmartphoneCatalogueService {
     @Transactional(readOnly = true)
     public SmartphoneCatalogueResponse get(Long id) {
         Product product = findSmartphone(id);
-        return new SmartphoneCatalogueResponse(product, findPhone(id));
+        return withLatestPrice(new SmartphoneCatalogueResponse(product, findPhone(id)));
     }
 
     @Transactional
@@ -76,7 +84,7 @@ public class SmartphoneCatalogueService {
         product.setStatus(request.status());
         applySpecs(phone, request);
 
-        return new SmartphoneCatalogueResponse(product, phone);
+        return withLatestPrice(new SmartphoneCatalogueResponse(product, phone));
     }
 
     @Transactional
@@ -84,6 +92,10 @@ public class SmartphoneCatalogueService {
         Product product = findSmartphone(id);
         phones.delete(findPhone(id));
         products.delete(product);
+    }
+
+    private SmartphoneCatalogueResponse withLatestPrice(SmartphoneCatalogueResponse response) {
+        return response.withLatestPrice(products.findLatestPrice(response.id()).orElse(null));
     }
 
     private Product findSmartphone(Long id) {

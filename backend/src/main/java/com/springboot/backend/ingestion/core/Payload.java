@@ -43,8 +43,12 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
      * sink's job, same division of responsibility as productReference always had.
      */
     public record Price(String productReference, String variantReference, BigDecimal amount, String currency) implements Body {}
-    public record Benchmark(String productReference, String name, BigDecimal score, String unit)
-            implements Body {}
+    public record Benchmark(String productReference, String name, BigDecimal score, String unit,
+                            boolean higherIsBetter, String provenance) implements Body {
+        public Benchmark(String productReference, String name, BigDecimal score, String unit) {
+            this(productReference, name, score, unit, true, null);
+        }
+    }
 
     public void validate(String expectedSource) {
         if (!expectedSource.equals(sourceId) || externalId == null || externalId.isBlank()
@@ -90,7 +94,9 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
                     throw new IllegalArgumentException("Invalid price");
             }
             case Benchmark b -> {
-                if (blank(b.productReference()) || blank(b.name()) || b.score() == null || blank(b.unit()))
+                if (blank(b.productReference()) || blank(b.name()) || b.score() == null
+                        || b.score().signum() <= 0 || blank(b.unit())
+                        || b.provenance() != null && b.provenance().isBlank())
                     throw new IllegalArgumentException("Invalid benchmark");
             }
         }

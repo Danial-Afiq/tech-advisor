@@ -49,7 +49,12 @@ class OpenApiSchemaModelTests {
                 "simulated-prices",
                 true,
                 false,
-                nextAllowedAt);
+                nextAllowedAt,
+                "INITIAL_BACKFILL",
+                20L,
+                100L,
+                12L,
+                6L);
 
         assertAll(
                 () -> assertEquals("admin@example.com", session.username()),
@@ -62,6 +67,8 @@ class OpenApiSchemaModelTests {
                 () -> assertEquals("simulated-prices", source.sourceId()),
                 () -> assertTrue(source.enabled()),
                 () -> assertFalse(source.simulation()),
-                () -> assertEquals(nextAllowedAt, source.nextAllowedAt()));
+                () -> assertEquals(nextAllowedAt, source.nextAllowedAt()),
+                () -> assertEquals("INITIAL_BACKFILL", source.phase()),
+                () -> assertEquals(20L, source.completedUnits()));
     }
 }

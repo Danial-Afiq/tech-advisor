@@ -42,6 +42,8 @@ const phone = (
   ipRating: null,
   os: null,
   softwareSupportYears: null,
+  latestPrice: null,
+  currency: null,
   ...specs,
 });
 

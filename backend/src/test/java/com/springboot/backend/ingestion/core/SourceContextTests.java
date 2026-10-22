@@ -6,11 +6,24 @@ import java.io.*;
 import java.net.URI;
 import java.net.http.*;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 class SourceContextTests {
+    @Test void customRequestAndExecutionBudgetsAreValidatedAndApplied() {
+        var client = mock(HttpClient.class);
+        try (var context = new SourceContext(
+                Clock.systemUTC(), () -> {}, client, 63, Duration.ofSeconds(93))) {
+            assertEquals(63, context.remainingRequests());
+        }
+        assertThrows(IllegalArgumentException.class, () ->
+                new SourceContext(Clock.systemUTC(), () -> {}, client, 0, Duration.ofSeconds(1)));
+        assertThrows(IllegalArgumentException.class, () ->
+                new SourceContext(Clock.systemUTC(), () -> {}, client, 1, Duration.ZERO));
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(ints={400,401,403,500,502})
     @SuppressWarnings("unchecked")

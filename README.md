@@ -290,9 +290,9 @@ The simulator / admin path is useful for reliable demos when live data is insuff
 ## Data ingestion
 
 The ingestion runner implementation and source integration guide are in
-[docs/ingestion.md](docs/ingestion.md). It supports an anchored 14-day schedule,
-asynchronous admin-triggered runs, typed source payloads, and persistent execution
-history. Local simulated sources demonstrate the pipeline; production admin
+[docs/ingestion.md](docs/ingestion.md). It supports an anchored shared schedule,
+independent per-source intervals, asynchronous admin-triggered runs, typed source
+payloads, and persistent execution history. Local simulated sources demonstrate the pipeline; production admin
 activation depends on the account authentication integration. The admin panel is
 available at `/admin/ingestion`.
 
@@ -301,6 +301,12 @@ to existing VERIFIED smartphones, discovers/caches Google product tokens, dedupl
 reviews, batch-embeds through FastAPI and stores them in pgvector. It uses the existing
 runner and makes no LLM calls. See [the complete SearchAPI live-test guide](docs/searchapi-review-ingestion.md)
 for configuration, local-only seeding, admin triggering, SQL and semantic retrieval checks.
+
+The opt-in `techapi-soc-benchmarks` source enriches VERIFIED catalogue phones with
+raw Geekbench single-core and multi-core observations from TechAPI's released GitHub
+dataset. These are representative processor-level scores, not handset measurements,
+and refresh independently every 14 days. See the
+[TechAPI benchmark ingestion guide](docs/techapi-benchmark-ingestion.md).
 
 The current architecture defines two main ingestion paths:
 
