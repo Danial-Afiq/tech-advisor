@@ -65,8 +65,8 @@ public class DeviceRequest {
 
     /**
      * Upgrade budget for this device. Optional, but a device is not evaluated
-     * for recommendations until it has one (AGENTS.md §27.10). Null leaves any
-     * existing preferences untouched.
+     * for recommendations until it has one (AGENTS.md §27.10). Null preserves
+     * the saved budget; other supplied preference fields can still be updated.
      */
     @Schema(
             description = "Device-specific upgrade budget; recommendations require a budget.",
@@ -90,6 +90,31 @@ public class DeviceRequest {
             message = "Currency must be a 3-letter ISO code"
     )
     private String currency;
+
+    @Schema(description = "Device-specific urgency; omitted values keep the saved value.",
+            allowableValues = {"NOT_URGENT", "SOMEWHAT_URGENT", "URGENT", "CRITICAL"})
+    @Pattern(regexp = "NOT_URGENT|SOMEWHAT_URGENT|URGENT|CRITICAL",
+            message = "Unsupported upgrade urgency")
+    private String upgradeUrgency;
+
+    @Schema(description = "Willingness to change brand for this device.",
+            allowableValues = {"EXTREMELY_FLEXIBLE", "FLEXIBLE", "SOMEWHAT_FLEXIBLE", "NOT_FLEXIBLE"})
+    @Pattern(regexp = "EXTREMELY_FLEXIBLE|FLEXIBLE|SOMEWHAT_FLEXIBLE|NOT_FLEXIBLE",
+            message = "Unsupported brand flexibility")
+    private String brandFlexibility;
+
+    @Schema(description = "JSON-encoded object of supported recommendation factors and integer weights. "
+            + "Omit to preserve; send {} to clear. A budget is required when first creating preferences.",
+            example = "{\"battery\":5,\"camera\":4}")
+    private String priorities;
+
+    @Schema(description = "JSON-encoded text or array of text pain points. Omit to preserve; send \"\" or [] to clear.",
+            example = "\"Battery drains too quickly\"")
+    private String painPoints;
+
+    @Schema(description = "Optional notes for replacing this device. Omit to preserve; send an empty string to clear.",
+            example = "Avoid launch-day pricing.")
+    private String notes;
 
     public Long getProductId() {
         return productId;
@@ -162,4 +187,15 @@ public class DeviceRequest {
     public void setCurrency(String currency) {
         this.currency = currency;
     }
+
+    public String getUpgradeUrgency() { return upgradeUrgency; }
+    public void setUpgradeUrgency(String upgradeUrgency) { this.upgradeUrgency = upgradeUrgency; }
+    public String getBrandFlexibility() { return brandFlexibility; }
+    public void setBrandFlexibility(String brandFlexibility) { this.brandFlexibility = brandFlexibility; }
+    public String getPriorities() { return priorities; }
+    public void setPriorities(String priorities) { this.priorities = priorities; }
+    public String getPainPoints() { return painPoints; }
+    public void setPainPoints(String painPoints) { this.painPoints = painPoints; }
+    public String getNotes() { return notes; }
+    public void setNotes(String notes) { this.notes = notes; }
 }

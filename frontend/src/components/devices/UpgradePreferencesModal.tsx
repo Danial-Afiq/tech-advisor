@@ -49,6 +49,10 @@ export function UpgradePreferencesModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const save = async () => {
+    if (!prefs.urgency || !prefs.brandFlex) {
+      setError("Choose upgrade urgency and brand flexibility before saving.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {

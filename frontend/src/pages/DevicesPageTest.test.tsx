@@ -66,6 +66,11 @@ const apiDevice = {
   specOverrides: "{}",
   budget: null as number | null,
   currency: null as string | null,
+  upgradeUrgency: "NOT_URGENT",
+  brandFlexibility: "FLEXIBLE",
+  priorities: '{"value":1,"performance":1,"longevity":1}',
+  painPoints: '""',
+  notes: "",
   current: true,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
@@ -200,7 +205,7 @@ describe("DevicesPageTest", () => {
         })
       )
     );
-    expect(await screen.findByText(/budget for Test Laptop was saved to your account/)).toBeInTheDocument();
+    expect(await screen.findByText(/upgrade preferences for Test Laptop were saved to your account/)).toBeInTheDocument();
     expect(screen.getByText("S$3,000")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
@@ -211,6 +216,58 @@ describe("DevicesPageTest", () => {
     renderPage();
 
     expect(await screen.findByText("No budget set")).toBeInTheDocument();
+  });
+
+  it("persists the full profile and restores it after a reload without changing another device", async () => {
+    const user = userEvent.setup();
+    const saved = {
+      ...apiDevice,
+      budget: 1500,
+      currency: "USD",
+      upgradeUrgency: "URGENT",
+      brandFlexibility: "NOT_FLEXIBLE",
+      priorities: '{"camera":4,"battery":1}',
+      painPoints: '"Battery drains quickly"',
+      notes: "Avoid launch pricing.",
+    };
+    const other = { ...apiDevice, id: 10, customName: "Second phone" };
+    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
+    mocks.listDevices.mockResolvedValue([
+      { ...apiDevice, budget: 1500, currency: "USD", priorities: '{"camera":4}' }, other,
+    ]);
+    mocks.updateDevice.mockResolvedValue(saved);
+    const page = renderPage();
+
+    await screen.findByRole("heading", { name: /Test Laptop/ });
+    await user.click(screen.getAllByRole("button", { name: "Upgrade preferences" })[0]);
+    await user.click(screen.getByRole("button", { name: "Battery life" }));
+    await user.selectOptions(screen.getByLabelText("Upgrade urgency"), "URGENT");
+    await user.selectOptions(screen.getByLabelText("Brand flexibility for this replacement"), "NOT_FLEXIBLE");
+    await user.type(screen.getByLabelText("Current pain points"), "Battery drains quickly");
+    await user.type(screen.getByLabelText("Anything else for this device?"), "Avoid launch pricing.");
+    await user.click(screen.getByRole("button", { name: "Save upgrade profile" }));
+
+    await waitFor(() => expect(mocks.updateDevice).toHaveBeenCalledWith("9", expect.objectContaining({
+      budget: 1500, currency: "USD", upgradeUrgency: "URGENT", brandFlexibility: "NOT_FLEXIBLE",
+      painPoints: saved.painPoints, notes: saved.notes,
+    })));
+    const request = mocks.updateDevice.mock.calls[0][1];
+    expect(JSON.parse(request.priorities)).toEqual({ camera: 4, battery: 1 });
+    expect(screen.getByText("No budget set")).toBeInTheDocument();
+    expect(mocks.updateDevice).toHaveBeenCalledTimes(1);
+
+    page.unmount();
+    mocks.listDevices.mockResolvedValue([saved, other]);
+    renderPage();
+    await screen.findByRole("heading", { name: /Test Laptop/ });
+    await user.click(screen.getAllByRole("button", { name: "Upgrade preferences" })[0]);
+    expect(screen.getByLabelText("Maximum budget")).toHaveValue("1500");
+    expect(screen.getByLabelText("Upgrade urgency")).toHaveValue("URGENT");
+    expect(screen.getByLabelText("Brand flexibility for this replacement")).toHaveValue("NOT_FLEXIBLE");
+    expect(screen.getByRole("button", { name: "Camera" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Battery life" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Current pain points")).toHaveValue("Battery drains quickly");
+    expect(screen.getByLabelText("Anything else for this device?")).toHaveValue("Avoid launch pricing.");
   });
 
   it("keeps the upgrade profile open when the backend rejects the budget", async () => {
@@ -228,6 +285,35 @@ describe("DevicesPageTest", () => {
     expect(screen.getByRole("button", { name: "Save upgrade profile" })).toBeInTheDocument();
     expect(screen.queryByText("Upgrade profile saved")).not.toBeInTheDocument();
     expect(screen.getByText("No budget set")).toBeInTheDocument();
+  });
+
+  it("saves an older budget-only profile without resending unsupported empty pain points", async () => {
+    const user = userEvent.setup();
+    const legacy = {
+      ...apiDevice, budget: 1800, currency: "USD", upgradeUrgency: null,
+      brandFlexibility: null, priorities: "{}", painPoints: "{}", notes: null,
+    };
+    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
+    mocks.listDevices.mockResolvedValue([legacy]);
+    mocks.updateDevice.mockResolvedValue({
+      ...legacy, upgradeUrgency: "NOT_URGENT", brandFlexibility: "FLEXIBLE", painPoints: '""', notes: "",
+    });
+    renderPage();
+
+    await screen.findByText("USD 1,800");
+    await user.click(screen.getByRole("button", { name: "Upgrade preferences" }));
+    await user.click(screen.getByRole("button", { name: "Save upgrade profile" }));
+    expect(mocks.updateDevice).not.toHaveBeenCalled();
+    expect(screen.getByText("Choose upgrade urgency and brand flexibility before saving.")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Upgrade urgency"), "NOT_URGENT");
+    await user.selectOptions(screen.getByLabelText("Brand flexibility for this replacement"), "FLEXIBLE");
+    await user.click(screen.getByRole("button", { name: "Save upgrade profile" }));
+    await waitFor(() => expect(mocks.updateDevice).toHaveBeenCalledWith("9", expect.objectContaining({
+      budget: 1800, currency: "USD", upgradeUrgency: "NOT_URGENT", brandFlexibility: "FLEXIBLE",
+      priorities: "{}", painPoints: '""', notes: "",
+    })));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("adds a catalogue phone and shows catalogue specs on linked devices", async () => {

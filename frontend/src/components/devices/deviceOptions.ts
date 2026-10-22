@@ -12,27 +12,35 @@ export const DEVICE_ICONS: Record<string, string> = {
 };
 export const DEVICE_TYPES = Object.keys(DEVICE_ICONS);
 export const CONDITIONS: Condition[] = ["Excellent", "Good", "Fair", "Poor"];
-export const PRIORITIES = [
-  "Value for money",
-  "Performance",
-  "Longevity",
-  "Battery life",
-  "Camera",
-  "Portability",
-  "Quiet operation",
-  "Display quality",
-];
+/** Labels mapped to the existing Java/Python factor vocabulary. */
+export const PRIORITY_FACTORS: Record<string, string> = {
+  "Value for money": "value",
+  Performance: "performance",
+  Longevity: "longevity",
+  "Battery life": "battery",
+  Camera: "camera",
+  Portability: "portability",
+  "Display quality": "display",
+  "Build quality": "build_quality",
+  "Thermal management": "thermals",
+  "Software support": "software_support",
+  Connectivity: "connectivity",
+  Audio: "audio",
+};
+export const PRIORITIES = Object.keys(PRIORITY_FACTORS);
 export const URGENCIES = [
-  "Only when worthwhile",
-  "I like staying current",
-  "Only if current device struggles",
-  "Replace only when necessary",
+  { value: "", label: "Choose urgency" },
+  { value: "NOT_URGENT", label: "Not urgent" },
+  { value: "SOMEWHAT_URGENT", label: "Somewhat urgent" },
+  { value: "URGENT", label: "Urgent" },
+  { value: "CRITICAL", label: "Critical" },
 ];
 export const BRAND_FLEX = [
-  "Open to alternatives",
-  "Prefer same brand",
-  "Same ecosystem if possible",
-  "No preference",
+  { value: "", label: "Choose brand flexibility" },
+  { value: "EXTREMELY_FLEXIBLE", label: "Extremely flexible" },
+  { value: "FLEXIBLE", label: "Flexible" },
+  { value: "SOMEWHAT_FLEXIBLE", label: "Somewhat flexible" },
+  { value: "NOT_FLEXIBLE", label: "Not flexible" },
 ];
 
 export const deviceIcon = (type: string) => DEVICE_ICONS[type] ?? "🔌";
@@ -51,8 +59,8 @@ export const defaultPrefs = (): UpgradePreferences => ({
   budget: null,
   currency: null,
   priorities: ["Value for money", "Performance", "Longevity"],
-  urgency: "Only when worthwhile",
-  brandFlex: "Open to alternatives",
+  urgency: "NOT_URGENT",
+  brandFlex: "FLEXIBLE",
   painPoints: "",
   notes: "",
 });

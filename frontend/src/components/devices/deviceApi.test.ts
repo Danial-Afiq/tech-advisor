@@ -5,7 +5,6 @@ import {
   normalizePhoneSpecs,
 } from "./deviceApi";
 import type { DeviceResponse } from "./deviceApi";
-import { defaultPrefs } from "./deviceOptions";
 
 const base: DeviceResponse = {
   id: 7,
@@ -20,6 +19,11 @@ const base: DeviceResponse = {
   specOverrides: "{}",
   budget: null,
   currency: null,
+  upgradeUrgency: null,
+  brandFlexibility: null,
+  priorities: null,
+  painPoints: null,
+  notes: null,
   current: true,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
@@ -81,12 +85,11 @@ describe("deviceFromApi", () => {
   });
 
   it("reads the saved budget and sends it back with its currency", () => {
-    const device = deviceFromApi(
-      { ...base, budget: 1500, currency: "USD" },
-      { preferences: { ...defaultPrefs(), budget: 999, priorities: ["Camera"] } }
-    );
+    const device = deviceFromApi({
+      ...base, budget: 1500, currency: "USD", priorities: '{"camera":4}',
+    });
 
-    // The response's budget wins; other preferences come from extras.
+    // Every persisted preference comes from the response.
     expect(device.upgradePreferences).toMatchObject({
       budget: 1500,
       currency: "USD",
@@ -118,6 +121,57 @@ describe("deviceFromApi", () => {
       upgradePreferences: { ...device.upgradePreferences, budget: 800 },
     });
     expect(request).toMatchObject({ budget: 800, currency: "SGD" });
+  });
+
+  it("round-trips canonical preferences without losing weighted priorities or pain-point arrays", () => {
+    const device = deviceFromApi({
+      ...base,
+      budget: 1234.56,
+      currency: "USD",
+      upgradeUrgency: "URGENT",
+      brandFlexibility: "SOMEWHAT_FLEXIBLE",
+      priorities: '{"battery":5,"camera":4,"software_support":2}',
+      painPoints: '["Battery drains quickly","Camera struggles at night"]',
+      notes: "Keep it for four years.\nAvoid launch pricing.",
+    });
+    expect(device.upgradePreferences).toMatchObject({
+      priorities: ["Battery life", "Camera", "Software support"],
+      urgency: "URGENT",
+      brandFlex: "SOMEWHAT_FLEXIBLE",
+      painPoints: "Battery drains quickly; Camera struggles at night",
+      notes: "Keep it for four years.\nAvoid launch pricing.",
+    });
+    const request = deviceToRequest(device);
+    expect(JSON.parse(request.priorities!)).toEqual({ battery: 5, camera: 4, software_support: 2 });
+    expect(JSON.parse(request.painPoints!)).toEqual(["Battery drains quickly", "Camera struggles at night"]);
+    expect(request).toMatchObject({
+      budget: 1234.56, currency: "USD", upgradeUrgency: "URGENT",
+      brandFlexibility: "SOMEWHAT_FLEXIBLE", notes: device.upgradePreferences.notes,
+    });
+
+    // Editing selection preserves existing weights, assigns new ones equally,
+    // and turns edited prose into a valid JSON string.
+    device.upgradePreferences.priorities = ["Camera", "Performance"];
+    device.upgradePreferences.painPoints = 'A new "pain point"\nwith a newline';
+    const edited = deviceToRequest(device);
+    expect(JSON.parse(edited.priorities!)).toEqual({ camera: 4, performance: 1 });
+    expect(JSON.parse(edited.painPoints!)).toBe(device.upgradePreferences.painPoints);
+  });
+
+  it("keeps an empty saved priority selection empty after a reload", () => {
+    const device = deviceFromApi({ ...base, budget: 800, currency: "SGD", priorities: "{}" });
+    expect(device.upgradePreferences.priorities).toEqual([]);
+    expect(deviceToRequest(device).priorities).toBe("{}");
+  });
+
+  it.each(["{}", "null"])("normalizes legacy empty pain points %s before saving", (painPoints) => {
+    const device = deviceFromApi({
+      ...base, budget: 800, currency: "USD", priorities: "{}", painPoints,
+    });
+    expect(device.upgradePreferences.painPoints).toBe("");
+    expect(deviceToRequest(device)).toMatchObject({
+      budget: 800, currency: "USD", priorities: "{}", painPoints: '""',
+    });
   });
 
   it("saves comma-separated use cases as distinct JSON array entries", () => {
