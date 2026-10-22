@@ -19,6 +19,8 @@ export function CatalogueSearchInput({
   hint,
   placeholder,
   required,
+  disabled,
+  maxLength,
 }: {
   id: string;
   value: string;
@@ -30,6 +32,8 @@ export function CatalogueSearchInput({
   hint?: ReactNode;
   placeholder?: string;
   required?: boolean;
+  disabled?: boolean;
+  maxLength?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -75,6 +79,8 @@ export function CatalogueSearchInput({
           aria-describedby={hint ? hintId : undefined}
           autoComplete="off"
           required={required}
+          disabled={disabled}
+          maxLength={maxLength}
           value={value}
           placeholder={placeholder}
           onChange={(e) => {

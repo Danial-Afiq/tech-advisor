@@ -422,7 +422,11 @@ as one deliberate change across all components, not piecemeal.
   role. The backend stores only email + password, so there is no name field.
 - `IngestionAdmin.tsx` uses the shared UI components and the application's ADMIN
   session only. It has no ingestion-specific password gate. SearchAPI review
-  ingestion adds a validated product picker to the same authenticated page.
+  ingestion adds a validated product picker to the same authenticated page. The
+  phone field uses `CatalogueSearchInput` to resolve partial text to an exact
+  verified catalogue name before provider discovery. Lookup/run errors are kept
+  separate from the two-second status poll, so a successful poll cannot erase an
+  action error before the administrator can read it.
   While TechAPI's initial backfill is running, the page shows its durable
   processed/total progress, stored observations and covered products. That
   progress card is hidden after the source enters incremental monitoring;

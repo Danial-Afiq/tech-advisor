@@ -10,16 +10,8 @@ import tools.jackson.databind.JsonNode;
 /** Fail closed on unknown suffixes and equally specific distinct Google identities. */
 public final class ProductMatcher {
     private ProductMatcher() {}
-    /** Admin-entered canonical identity: the first word is the brand, the rest is the model. */
+    /** Canonical catalogue identity used for a provider search. */
     public record ProductName(String brand, String model) {
-        public static ProductName parse(String value) {
-            String normalized = value == null ? "" : value.replaceAll("[\\p{Z}\\s]+", " ").trim();
-            int separator = normalized.indexOf(' ');
-            if (separator < 1 || separator == normalized.length() - 1)
-                throw new IllegalArgumentException("Enter both the smartphone brand and model");
-            return new ProductName(normalized.substring(0, separator), normalized.substring(separator + 1));
-        }
-
         public String canonicalName() { return brand + " " + model; }
     }
     /**
@@ -82,8 +74,13 @@ public final class ProductMatcher {
     }
 
     public static List<Candidate> candidates(String brand, String model, JsonNode results) {
-        return validMatches(brand, model, results).values().stream().limit(20)
+        return candidateMatches(brand, model, results).stream()
                 .map(match -> new Candidate(match.externalId(), match.title())).toList();
+    }
+
+    /** Validated picker matches, including the server-only tokens discarded by the response DTO. */
+    public static List<Match> candidateMatches(String brand, String model, JsonNode results) {
+        return validMatches(brand, model, results).values().stream().limit(20).toList();
     }
 
     private static Map<String, Match> validMatches(String brand, String model, JsonNode results) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch, ApiError } from './api/client'
 import { getSession, clearSession } from './api/session'
@@ -14,6 +14,9 @@ import { Field, FormError, Input } from './components/ui/Form'
 import { LoadingBlock } from './components/ui/LoadingBlock'
 import { PageHeader } from './components/ui/PageHeader'
 import { Tag } from './components/ui/Tag'
+import { CatalogueSearchInput } from './components/devices/CatalogueSearchInput'
+import { catalogueName, matchCatalogue } from './components/devices/catalogue'
+import { useSmartphoneCatalogue } from './components/devices/useSmartphoneCatalogue'
 
 type Source = { sourceId: string; enabled: boolean; simulation: boolean; nextAllowedAt: string | null;
   phase?: 'INITIAL_BACKFILL' | 'INCREMENTAL'; completedUnits?: number;
@@ -56,11 +59,21 @@ export default function IngestionAdmin() {
   const [productName, setProductName] = useState('')
   const [candidates, setCandidates] = useState<ProductCandidate[]>([])
   const [externalProductId, setExternalProductId] = useState('')
-  const [error, setError] = useState('')
+  const [statusError, setStatusError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [finding, setFinding] = useState(false)
   const searchApiSelected = selected.includes(SEARCHAPI_SOURCE)
   const techApi = sources.find(source => source.sourceId === TECHAPI_SOURCE)
+  const catalogue = useSmartphoneCatalogue(!!account && account.role === 'ADMIN' && searchApiSelected)
+  const verifiedCatalogue = useMemo(
+    () => catalogue.items.filter(item => item.status === 'VERIFIED'),
+    [catalogue.items],
+  )
+  const productSuggestions = useMemo(
+    () => matchCatalogue(verifiedCatalogue, productName),
+    [productName, verifiedCatalogue],
+  )
 
   const request = useCallback(<T,>(path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) =>
     apiFetch<T>(`/api/admin/ingestion${path}`, init), [])
@@ -79,7 +92,7 @@ export default function IngestionAdmin() {
     let stopped = false
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
-      try { await refresh(); setError('') }
+      try { await refresh(); setStatusError('') }
       catch (e) {
         if (stopped) return
         if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
@@ -87,7 +100,7 @@ export default function IngestionAdmin() {
           setAccount(null)
           void navigate('/login', { replace: true })
         }
-        else setError((e as Error).message)
+        else setStatusError((e as Error).message)
       }
       finally { if (!stopped) { setReady(true); timer = setTimeout(poll, 2000) } }
     }
@@ -98,12 +111,12 @@ export default function IngestionAdmin() {
   async function start() {
     if (!account) return
     if (searchApiSelected && !productName.trim()) {
-      setError('Enter the smartphone name to import its customer reviews.'); return
+      setActionError('Enter the smartphone name to import its customer reviews.'); return
     }
     if (searchApiSelected && !externalProductId) {
-      setError('Find matching products and select one before starting ingestion.'); return
+      setActionError('Find matching products and select one before starting ingestion.'); return
     }
-    setSubmitting(true); setError('')
+    setSubmitting(true); setActionError('')
     const payload = { sources: [...selected].sort((a, b) => a.localeCompare(b)), reason: reason.trim() || null,
       ...(searchApiSelected ? { productName: productName.trim(), externalProductId } : {}) }
     const body = JSON.stringify(payload)
@@ -119,7 +132,7 @@ export default function IngestionAdmin() {
         void navigate('/login', { replace: true })
         return
       }
-      setError((e as Error).message)
+      setActionError((e as Error).message)
       await refresh().catch(() => {})
     }
     finally { setSubmitting(false) }
@@ -127,13 +140,14 @@ export default function IngestionAdmin() {
 
   async function findProducts() {
     if (!account || !productName.trim()) {
-      setError('Enter the smartphone brand and full model name first.'); return
+      setActionError('Enter the smartphone brand and full model name first.'); return
     }
-    setFinding(true); setError(''); setCandidates([]); setExternalProductId('')
+    setFinding(true); setActionError(''); setCandidates([]); setExternalProductId('')
     try {
       const found = await request<ProductCandidate[]>('/searchapi/candidates', { method: 'POST',
         body: { productName: productName.trim() } })
       setCandidates(found)
+      setActionError('')
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
         clearSession()
@@ -141,7 +155,7 @@ export default function IngestionAdmin() {
         void navigate('/login', { replace: true })
         return
       }
-      setError((e as Error).message)
+      setActionError((e as Error).message)
     }
     finally { setFinding(false) }
   }
@@ -169,7 +183,7 @@ export default function IngestionAdmin() {
       <div className="mx-auto max-w-[1100px]">
         <PageHeader eyebrow="Tech Advisor · Admin" title="Market data ingestion"
           description="Import market updates and customer reviews for your catalogue." />
-        <FormError message={error} />
+        <FormError message={actionError || statusError} />
         {!ready ? <LoadingBlock label="Loading ingestion status…" /> : <>
           <div className="grid grid-cols-3 gap-4 max-[700px]:grid-cols-1">
             <Card><div className="card-body gap-1 p-[18px]">
@@ -241,16 +255,18 @@ export default function IngestionAdmin() {
               </fieldset>
 
               {searchApiSelected && <div className="grid gap-3 rounded-[12px] border border-white/[0.09] p-4">
-                <Field label="Smartphone name">
-                  <Input id="ingestion-product-name" value={productName} maxLength={200} required
-                    disabled={submitting || finding || !!schedule?.activeRunId} aria-describedby="ingestion-product-help"
-                    onChange={e => { setProductName(e.target.value); setCandidates([]); setExternalProductId('') }}
+                <Field label="Smartphone name" htmlFor="ingestion-product-name">
+                  <CatalogueSearchInput id="ingestion-product-name" value={productName} maxLength={200} required
+                    disabled={submitting || finding || !!schedule?.activeRunId}
+                    suggestions={productSuggestions}
+                    onChange={value => { setProductName(value); setCandidates([]); setExternalProductId(''); setActionError('') }}
+                    onPick={item => { setProductName(catalogueName(item)); setCandidates([]); setExternalProductId(''); setActionError('') }}
+                    hint={catalogue.status === 'loading' ? 'Loading verified smartphones…'
+                      : catalogue.status === 'unavailable' ? 'Catalogue suggestions are unavailable; enter the exact full name.'
+                      : productName.trim() && productSuggestions.length === 0 ? 'No verified catalogue smartphone matches this text.'
+                      : 'Choose a verified catalogue smartphone, then select its SearchAPI listing.'}
                     placeholder="For example, Apple iPhone 16 Pro" />
                 </Field>
-                <small id="ingestion-product-help" className="text-[12px] text-[#8fa0b8]">
-                  Enter the brand followed by the full model, already ingested via MobileAPI, then find and select
-                  the SearchAPI product whose reviews you want.
-                </small>
                 <Button type="button" variant="secondary" className="justify-self-start" loading={finding}
                   disabled={submitting || finding || !!schedule?.activeRunId || !productName.trim()}
                   onClick={() => void findProducts()}>

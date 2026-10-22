@@ -50,25 +50,38 @@ It rejects accessories, refurbished or used listings, conflicting models, repeat
 core tokens, and unknown suffixes. Untargeted ingestion chooses the valid identity
 with the fewest extra variant words and rejects equally specific distinct matches.
 
-The admin picker returns at most 20 valid titles and external product IDs. Product
-tokens never reach the browser. The selected ID is stored in run metadata, included
-in idempotency checks, and revalidated by the worker before its token is cached.
-A missing or stale selection fails closed. A name with no eligible catalogue match
-fails closed too — ingest the device via MobileAPI first; this source never creates
-a `products`/`phone` row. An existing ineligible catalogue row is never promoted.
+The admin picker offers verified catalogue matches while the admin types, then the
+backend resolves the submitted name to one existing `VERIFIED` smartphone
+and uses that row's canonical brand/model for the provider query. This prevents a
+free-text SearchAPI hit from looking selectable when the catalogue cannot accept the
+run, and avoids spending a provider request for an unknown or ineligible product.
+It returns at most 20 valid titles and external product IDs. Product tokens never
+reach the browser. SearchAPI can return product rows either at top-level
+`shopping_results` or inside `categorized_shopping_results`; both documented shapes
+are flattened before matching. The selected ID is stored in run metadata, included
+in idempotency checks, while its validated token remains in a ten-minute in-memory
+backend cache. The worker consumes that exact token instead of repeating the unstable
+Shopping lookup. A backend restart or expired entry falls back to the previous
+worker-side lookup and revalidation. A missing or stale selection fails closed. A
+name with no eligible catalogue match
+fails closed too — ingest the device via MobileAPI first or add/correct it through
+the admin catalogue; this source never creates a `products`/`phone` row. An existing
+ineligible catalogue row is never promoted.
 
 Mappings are scoped by product, provider, canonical name, `gl`, `hl`, and location.
 A canonical-name or locale change misses the cache. Only a clear HTTP 400 saying a
 cached `product_token` is invalid or expired causes invalidation and one rediscovery.
-A newly discovered invalid token fails without another loop. There is no token TTL.
+A newly discovered invalid token fails without another loop. The persistent mapping
+has no token TTL; only the picker cache has the ten-minute expiry.
 
 Request use per product is fixed:
 
 - cached token: two review searches;
 - uncached token: one Shopping discovery plus two review searches;
-- named admin flow: one additional Shopping preview search.
+- named admin flow with a warm picker cache: one Shopping search plus two review searches.
 
-There is no pagination. Invalid-token recovery may add the single rediscovery within
+There is no pagination. A restart or expired picker entry may add one worker-side
+Shopping lookup. Invalid-token recovery may add the single rediscovery within
 the shared cap. Do not add preview, validation, or pagination calls without reviewing
 SearchAPI quota impact.
 
@@ -167,7 +180,7 @@ Then start the frontend with `npm run dev`, open
 
 1. Sign in through `/login` with the configured ADMIN account.
 2. Check **SearchAPI customer reviews**.
-3. Enter the brand and full model name.
+3. Type part of the name and choose the exact verified catalogue smartphone.
 4. Select **Find matching products**.
 5. Choose one exact SearchAPI product.
 6. Select **Run now** and inspect the result/history.
@@ -219,8 +232,11 @@ It complements `searchapi-smoke.ps1`, which checks the HTTP/admin ingestion work
 ## Failures and troubleshooting
 
 - **Source disabled:** add the source ID to `INGESTION_ENABLED_SOURCES` and restart.
-- **No matching smartphone:** use brand plus the full model and choose a returned
-  valid identity; accessories and conflicting variants are deliberately rejected.
+- **No catalogue smartphone:** use the row's full catalogue name and confirm it is a
+  `VERIFIED` smartphone; otherwise ingest it via MobileAPI or correct it in Catalogue.
+- **No SearchAPI listing:** the catalogue match succeeded but the provider returned no
+  acceptable listing in either supported result shape; retry later. Accessories and
+  conflicting variants are deliberately rejected.
 - **Empty successful run:** SearchAPI returned no reviews that passed normalization.
 - **401/403:** check `SEARCHAPI_API_KEY`; provider messages and credentials are not
   copied into run history.

@@ -27,6 +27,11 @@ function searchApiServer(
   techApiPhase: 'INITIAL_BACKFILL' | 'INCREMENTAL' = 'INITIAL_BACKFILL',
 ) {
   return vi.fn(async (url: string, init: RequestInit = {}) => {
+    if (url.endsWith('/api/catalogue/smartphones')) return { ok: true, json: async () => [
+      { id: 42, brand: 'Apple', modelName: 'iPhone 16 Pro', status: 'VERIFIED' },
+      { id: 43, brand: 'Apple', modelName: 'iPhone 17 Pro Max', status: 'VERIFIED' },
+      { id: 44, brand: 'Oppo', modelName: 'Find X9 Pro', status: 'VERIFIED' },
+    ] }
     const path = url.split('/api/admin/ingestion')[1]
     if (path === '/searchapi/candidates' && init.method === 'POST') return { ok: true, json: async () => [
       { externalProductId: 'iphone-128', title: 'Apple iPhone 16 Pro 128GB' },
@@ -150,7 +155,7 @@ describe('Ingestion admin', () => {
 
     withAppRoutes()
     await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
-    await userEvent.type(screen.getByRole('textbox', { name: 'Smartphone name' }), 'Apple iPhone 16 Pro')
+    await userEvent.type(screen.getByRole('combobox', { name: 'Smartphone name' }), 'Apple iPhone 16 Pro')
     await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
 
     expect(await screen.findByText('login route')).toBeInTheDocument()
@@ -169,11 +174,32 @@ describe('Ingestion admin', () => {
 
     withAppRoutes()
     await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
-    await userEvent.type(screen.getByRole('textbox', { name: 'Smartphone name' }), 'Apple iPhone 16 Pro')
+    await userEvent.type(screen.getByRole('combobox', { name: 'Smartphone name' }), 'Apple iPhone 16 Pro')
     await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('SearchAPI is unavailable.')
     expect(getSession()).toMatchObject({ role: 'ADMIN' })
+  })
+
+  it('keeps a lookup error visible after the background status poll succeeds', async () => {
+    signInAsAdmin()
+    const successfulRequests = searchApiServer(() => ({ ok: true, data: {} }))
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      if (url.endsWith('/searchapi/candidates')) {
+        return { ok: false, status: 502, json: async () => ({ error: 'SearchAPI returned no listings.' }) }
+      }
+      return successfulRequests(url, init)
+    }))
+
+    withAppRoutes()
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
+    await userEvent.type(screen.getByRole('combobox', { name: 'Smartphone name' }), 'Apple iPhone 17 Pro Max')
+    await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('SearchAPI returned no listings.')
+
+    await new Promise(resolve => setTimeout(resolve, 2100))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('SearchAPI returned no listings.')
   })
 
   it('sends the real bearer token and idempotency key, with no CSRF header', async () => {
@@ -210,10 +236,10 @@ describe('Ingestion admin', () => {
     const fetcher = searchApiServer(() => ({ ok: true, data: { runId: 'new' } }))
     vi.stubGlobal('fetch', fetcher)
     withRouter(<IngestionAdmin />)
-    expect(screen.queryByRole('textbox', { name: 'Smartphone name' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Smartphone name' })).not.toBeInTheDocument()
     await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
     expect(screen.getByRole('button', { name: 'Run now' })).toBeDisabled()
-    await userEvent.type(screen.getByRole('textbox', { name: 'Smartphone name' }), '  Apple iPhone 16 Pro  ')
+    await userEvent.type(screen.getByRole('combobox', { name: 'Smartphone name' }), '  Apple iPhone 16 Pro  ')
     await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
     expect(await screen.findByRole('radio', { name: /Apple iPhone 16 Pro 128GB/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Run now' })).toBeDisabled()
@@ -228,6 +254,24 @@ describe('Ingestion admin', () => {
     expect(screen.getByRole('cell', { name: 'Apple iPhone 16 Pro' })).toBeInTheDocument()
   })
 
+  it('lets an admin resolve a partial name through the verified catalogue', async () => {
+    signInAsAdmin()
+    const fetcher = searchApiServer(() => ({ ok: true, data: { runId: 'new' } }))
+    vi.stubGlobal('fetch', fetcher)
+    withRouter(<IngestionAdmin />)
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
+    const input = screen.getByRole('combobox', { name: 'Smartphone name' })
+    await userEvent.type(input, 'oppo find')
+    await userEvent.click(await screen.findByRole('option', { name: /Oppo Find X9 Pro/ }))
+    expect(input).toHaveValue('Oppo Find X9 Pro')
+    await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
+
+    await screen.findByRole('radio', { name: /Apple iPhone 16 Pro 128GB/ })
+    const lookup = fetcher.mock.calls.find(([url, init]) => url.endsWith('/searchapi/candidates') && init?.method === 'POST')
+    expect(JSON.parse(lookup?.[1]?.body as string)).toEqual({ productName: 'Oppo Find X9 Pro' })
+  })
+
   it('omits the phone when SearchAPI is unchecked and preserves ordinary source submissions', async () => {
     signInAsAdmin()
     const fetcher = searchApiServer(() => ({ ok: true, data: { runId: 'new' } }))
@@ -235,9 +279,9 @@ describe('Ingestion admin', () => {
     withRouter(<IngestionAdmin />)
     const checkbox = await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' })
     await userEvent.click(checkbox)
-    await userEvent.type(screen.getByRole('textbox', { name: 'Smartphone name' }), 'Apple iPhone 16 Pro')
+    await userEvent.type(screen.getByRole('combobox', { name: 'Smartphone name' }), 'Apple iPhone 16 Pro')
     await userEvent.click(checkbox)
-    expect(screen.queryByRole('textbox', { name: 'Smartphone name' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Smartphone name' })).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('checkbox', { name: /simulated-release/ }))
     await userEvent.click(screen.getByRole('button', { name: 'Run now' }))
     await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true))
@@ -252,7 +296,7 @@ describe('Ingestion admin', () => {
     vi.stubGlobal('fetch', fetcher)
     withRouter(<IngestionAdmin />)
     await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
-    const input = screen.getByRole('textbox', { name: 'Smartphone name' })
+    const input = screen.getByRole('combobox', { name: 'Smartphone name' })
     await userEvent.type(input, 'Unknown phone')
     await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
     await userEvent.click(await screen.findByRole('radio', { name: /128GB/ }))
@@ -277,6 +321,6 @@ describe('Ingestion admin', () => {
     vi.stubGlobal('fetch', searchApiServer(() => ({ ok: true, data: {} }), false))
     withRouter(<IngestionAdmin />)
     expect(await screen.findByRole('checkbox', { name: /SearchAPI customer reviews/ })).toBeDisabled()
-    expect(screen.queryByRole('textbox', { name: 'Smartphone name' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: 'Smartphone name' })).not.toBeInTheDocument()
   })
 })
