@@ -1,6 +1,7 @@
 package com.springboot.backend.ingestion.core;
 
 import com.springboot.backend.ingestion.SmartphoneCatalogSink;
+import com.springboot.backend.ingestion.config.IngestionSettings;
 import com.springboot.backend.ingestion.run.RunLog;
 import com.springboot.backend.ingestion.run.RunStore;
 import java.math.BigDecimal;
@@ -15,6 +16,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.*;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -85,6 +87,8 @@ class IngestionIntegrationTests {
     @Autowired IngestionOrchestrator runner;
     @Autowired MutableClock clock;
     @Autowired JdbcTemplate db;
+    @Autowired PlatformTransactionManager transactions;
+    @Autowired IngestionSettings settings;
     @Autowired WebApplicationContext web;
     MockMvc mvc;
 
@@ -117,6 +121,48 @@ class IngestionIntegrationTests {
         // pointing at AGENTS.md 16.5. Currently 2 days - a documented TEMPORARY override, not
         // the real 14-day target. Update this alongside AGENTS.md 16.5 when it next changes.
         assertEquals(Duration.ofDays(2), RunStore.INTERVAL);
+    }
+    @Test void independentSourceCadencePersistsAndDoesNotChangeTheGlobalCadence() {
+        var regular = source("regular-source", Optional.empty(), true);
+        var fortnightly = source("fortnightly-source", Optional.of(Duration.ofDays(14)));
+
+        var first = store.admitScheduled(List.of(regular, fortnightly));
+        assertEquals(List.of("regular-source", "fortnightly-source"), first.sourceIds);
+        assertFalse(first.simulation);
+        var claimed = store.claim("owner-1");
+        claimed.status = "SUCCESS";
+        store.finish(claimed, "owner-1", Map.of(fortnightly.sourceId(), Duration.ofDays(14)));
+
+        var restarted = new RunStore(db, transactions, clock, settings);
+        assertEquals(ANCHOR.plus(Duration.ofDays(14)),
+                restarted.state().nextSourceDue.get("fortnightly-source"));
+        assertEquals(ANCHOR.plus(RunStore.INTERVAL), restarted.state().nextDue);
+
+        clock.now.set(ANCHOR.plus(RunStore.INTERVAL));
+        var second = restarted.admitScheduled(List.of(regular, fortnightly));
+        assertEquals(List.of("regular-source"), second.sourceIds);
+        assertTrue(second.simulation);
+        var secondClaim = restarted.claim("owner-2");
+        secondClaim.status = "SUCCESS";
+        restarted.finish(secondClaim, "owner-2");
+
+        clock.now.set(ANCHOR.plus(Duration.ofDays(14)));
+        var dueAgain = restarted.admitScheduled(List.of(regular, fortnightly));
+        assertTrue(dueAgain.sourceIds.contains("fortnightly-source"));
+    }
+
+    @Test void failedScheduledSourceDoesNotCountAsItsFortnightlyRefresh() {
+        var fortnightly = source("fortnightly-source", Optional.of(Duration.ofDays(14)));
+        var first = store.admitScheduled(List.of(fortnightly));
+        var claimed = store.claim("owner-1");
+        claimed.status = "FAILED";
+        store.finish(claimed, "owner-1");
+        assertFalse(store.state().nextSourceDue.containsKey("fortnightly-source"));
+
+        clock.now.set(ANCHOR.plus(RunStore.INTERVAL));
+        var retry = store.admitScheduled(List.of(fortnightly));
+        assertNotNull(retry);
+        assertEquals(List.of("fortnightly-source"), retry.sourceIds);
     }
     @Test void downtimeCoalescesAndExpiredOwnerCannotWrite() {
         // 3 missed intervals plus a bit, expressed relative to INTERVAL so this test's intent
@@ -275,5 +321,16 @@ class IngestionIntegrationTests {
             Thread.sleep(50);
         }
         fail("Run did not finish"); return null;
+    }
+    private IngestionSource source(String id, Optional<Duration> interval) {
+        return source(id, interval, false);
+    }
+    private IngestionSource source(String id, Optional<Duration> interval, boolean simulation) {
+        return new IngestionSource() {
+            public String sourceId() { return id; }
+            public boolean simulation() { return simulation; }
+            public Optional<Duration> scheduleInterval() { return interval; }
+            public void ingest(SourceContext context, java.util.function.Consumer<Payload> output) {}
+        };
     }
 }

@@ -423,6 +423,11 @@ as one deliberate change across all components, not piecemeal.
 - `IngestionAdmin.tsx` uses the shared UI components and the application's ADMIN
   session only. It has no ingestion-specific password gate. SearchAPI review
   ingestion adds a validated product picker to the same authenticated page.
+  While TechAPI's initial backfill is running, the page shows its durable
+  processed/total progress, stored observations and covered products. That
+  progress card is hidden after the source enters incremental monitoring;
+  fortnightly scheduling and run outcomes remain visible through the normal
+  schedule summary and ingestion log.
 - `pages/AdminCatalogue.tsx` is the separate ADMIN-only `/admin/catalogue` page.
   It loads the whole catalogue once and searches (brand, model, chipset, OS, ID),
   filters (brand, status, OS family, complete/missing specs, has/no price, and a
