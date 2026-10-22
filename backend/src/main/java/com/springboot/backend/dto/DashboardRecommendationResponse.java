@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 
 @Schema(
         description =
@@ -60,6 +61,25 @@ public record DashboardRecommendationResponse(
         )
         boolean starred,
 
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+
+        @Schema(
+                description =
+                        "Numeric specs the deterministic verdict compared, from "
+                                + "input_snapshot.computed.spec_deltas, biggest change first. "
+                                + "deltaPct is direction-corrected with the verdict's own "
+                                + "rules: positive always means the suggested product is "
+                                + "better on that spec"
+        )
+        List<SpecChange> specChanges
 ) {
+    /**
+     * @param spec     the {@code phone} column (e.g. {@code battery_mah}), or
+     *                 {@code benchmark_score}
+     * @param deltaPct signed percentage change; positive means better
+     */
+    public record SpecChange(
+            @Schema(example = "battery_mah") String spec,
+            @Schema(example = "54.3") double deltaPct) {
+    }
 }

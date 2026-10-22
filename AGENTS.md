@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 21 October 2026
+> **Last consolidated:** 23 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -1461,10 +1461,19 @@ Fields:
 - `category`
 - `release_date`
 - `status`
+- `image_url` (V13, nullable) — product thumbnail from the specifications source
 - `created_at`
 - `updated_at`
 
 Canonical field is **`release_date`**.
+
+`image_url` holds MobileAPI's listing thumbnail (`image_url`, e.g.
+`https://api.mobileapi.dev/devices/{id}/thumb.png`). It is public, uncredentialed and
+loaded directly by the browser, so only absolute https URLs are stored; anything else
+becomes null rather than rejecting the specifications. A re-ingest without an image
+keeps the stored one. It is returned read-only as `imageUrl` by the catalogue API and
+is not editable through the admin CRUD. Whether MobileAPI's terms require attribution
+for displayed images has not been checked yet (§17.2).
 
 Current core category:
 - `SMARTPHONE`
@@ -2158,6 +2167,13 @@ never being provisioned, not a missing sink anymore.
 - MobileAPI.dev isn't in the candidate list below (this section predates
   that decision) — added here for traceability, not because §17.1's "not
   fully confirmed" status has changed.
+- **Product images (V13, feat/declutter-device-ui):** `Payload.Specifications` gained a
+  nullable `imageUrl` (`URI`); a 7-argument constructor without it remains for sources
+  that have no images. `validate()` rejects a non-https value, and the adapter maps
+  the listing's `image_url` through `MobileApiSmartphoneSource.imageUrl`, which drops
+  a missing/unusable link instead of losing the device. No extra HTTP request: the
+  list response already carries it. The sink writes `products.image_url` with
+  `COALESCE(EXCLUDED.image_url, products.image_url)`.
 - **Bugfix (ingestion_cursors, V12, bugfix/smartphone-ingestion):** the
   default/automatic mode (`sources.mobileapi.year` unset) used to call the
   exact same URL on every single run — no `page` parameter existed
@@ -2416,6 +2432,7 @@ V9__link_price_history_to_phone_variants.sql  # ticket 1.8 — price_history.pho
 V10__add_starred_to_recommendations.sql       # ticket 4.4 — recommendations.starred (§14.12)
 V11__create_notifications.sql                 # ticket 4.4.2 — notifications (§14.14)
 V12__add_ingestion_cursors.sql                # bugfix/smartphone-ingestion — ingestion_cursors (§17.1.1)
+V13__add_product_image_url.sql                # feat/declutter-device-ui — products.image_url (§14.4)
 ```
 
 `V5` makes `users.password_hash` **NOT NULL**, so every seed, fixture, or test
@@ -2943,7 +2960,10 @@ other users' and removed devices with 404 before preferences are accessed. The
 existing PK/FK enforces one preferences row per owned device; no migration is needed.
 
 All create/update/get/list `DeviceResponse`s return all seven preference fields
-(null when no row exists); listing still loads preferences in one query. The
+(null when no row exists); listing still loads preferences in one query. They also
+return read-only `productCategory` (the linked product's `products.category`, null
+when unlinked) so the frontend knows a linked device's type without waiting for the
+catalogue (`feat/declutter-device-ui`, additive; no migration). The
 `/devices` upgrade-profile modal sends the full profile via the existing PUT and
 uses the server response after save and reload. `deviceOptions.ts` maps priority
 labels to the twelve canonical factors and uses canonical urgency/flexibility values.
@@ -3421,6 +3441,41 @@ handler — the generic `IllegalArgumentException` mapping in
   effect cannot replace a newer sort response. Cards preserve each row's stored
   currency and show "Price unavailable" when there is no price.
 - `DashboardSortIntegrationTest` needs real PostgreSQL (LATERAL, JSONB casts).
+
+### Per-device top picks and spec comparison — IMPLEMENTED (`feat/declutter-device-ui`)
+
+- The dashboard groups the (filtered) list under one heading per owned device, in
+  the order of each device's first row, and shows only the first
+  `TOP_RECOMMENDATIONS_PER_DEVICE` (3, in `recommendationOptions.ts`) of each
+  group; a per-device **Show all n** button reveals the rest. The cap is therefore
+  per device, so the number of cards grows with the number of devices. The "top"
+  is the server's chosen sort, so with Most relevant it is the highest tier/score.
+  It is a frontend presentation cap only: the API, counts, summary cards, filters
+  and Saved view still cover every active row. A card opened from a notification
+  (`?recommendation=`) past the cap expands its device automatically.
+- Each card has a **Compare specs** button that opens a dialog (the shared `Modal`): the owned device's specs
+  (catalogue row + the user's `spec_overrides`) beside the suggested product's
+  catalogue specs, using the existing `GET /api/devices` and
+  `GET /api/catalogue/smartphones`, with rows that differ highlighted. It shows
+  differences only; it does not judge better or worse, which stays with the
+  deterministic verdict. If either side is unknown the panel says so; a failed
+  load is not a page error.
+- `GET /api/dashboard/recommendations` rows carry `specChanges`
+  (`[{spec, deltaPct}]`, biggest change first), read from the persisted
+  `input_snapshot.computed.spec_deltas`. Those hold the *raw* observed change
+  (`factor_analysis.deterministic.factors.*.specs` holds only spec names), so each
+  numeric spec is direction-corrected with `SpecFactorCatalog.NUMERIC_SPECS`'s
+  `higherIsBetter` (plus `benchmark_score`), the rule the verdict scores with:
+  positive = better. Text specs and `price` (budget headroom) are omitted.
+  Older/malformed shapes yield `[]` rather than failing the list
+  (`RecommendationRepository.specChanges`, `DashboardSpecChangesTest`). The card
+  shows the top three as a one-line summary; in the Compare specs dialog the arrow
+  shows which way the value moved (▲ higher, ▼ lower) and the suggested value and
+  arrow are green when better or red when worse, so a lighter phone is a green ▼.
+  Differing text specs (no judgement) are only bolded. This is a
+  display of what the verdict already computed, not a second judgement.
+- Device cards with no saved budget say that one is needed for recommendations
+  (§27.10) and highlight Upgrade preferences.
 
 ## 23.5 Epic 05 — Infrastructure & DevSecOps Guardrails
 `SCRUM-31`

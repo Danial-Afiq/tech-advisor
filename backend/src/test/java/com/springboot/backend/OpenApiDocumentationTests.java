@@ -192,6 +192,7 @@ class OpenApiDocumentationTests {
                 .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.priorities").exists())
                 .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.painPoints").exists())
                 .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.notes").exists())
+                .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.productCategory").exists())
                 .andExpect(jsonPath("$.components.schemas.LoginResponse.properties.role.enum").isArray());
     }
 }

@@ -14,7 +14,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 import com.springboot.backend.dto.DashboardRecommendationResponse;
 import com.springboot.backend.recommendation.RecommendationsPersisted.NotableRecommendation;
+import com.springboot.backend.recommendation.classification.SpecFactorCatalog;
 import com.springboot.backend.recommendation.classification.TierMapper;
+import tools.jackson.databind.JsonNode;
 
 /**
  * Typed-column persistence for {@code recommendations}, plus the degraded-path
@@ -31,7 +33,7 @@ public class RecommendationRepository {
     private final JdbcTemplate db;
     private final TransactionTemplate tx;
     private final ApplicationEventPublisher events;
-    private final JsonMapper json = JsonMapper.builder().findAndAddModules().build();
+    private static final JsonMapper json = JsonMapper.builder().findAndAddModules().build();
 
     public RecommendationRepository(
             JdbcTemplate db, PlatformTransactionManager manager, ApplicationEventPublisher events) {
@@ -130,7 +132,9 @@ public class RecommendationRepository {
                 r.confidence,
                 r.reasoning,
                 r.starred,
-                r.created_at
+                r.created_at,
+                r.input_snapshot -> 'computed' -> 'spec_deltas'
+                    AS spec_deltas
             FROM recommendations r
             JOIN user_devices ud
                 ON ud.id = r.current_device_id
@@ -199,11 +203,57 @@ public class RecommendationRepository {
                             resultSet.getObject(
                                     "created_at",
                                     java.time.OffsetDateTime.class
-                            )
+                            ),
+                            specChanges(resultSet.getString(
+                                    "spec_deltas"
+                            ))
                     ),
             userId
     );
 }
+
+    /**
+     * Numeric spec changes from {@code input_snapshot.computed.spec_deltas}
+     * ({@code {spec: {current, candidate, delta_pct}}}), biggest change first.
+     * The snapshot stores the raw observed change, so each one is
+     * direction-corrected with the same {@link SpecFactorCatalog} rule the verdict
+     * scores with: positive always means the candidate is better. Text specs and
+     * {@code price} (budget headroom, not a spec) are left out. Parsed leniently:
+     * rows written under an older shape yield an empty list rather than failing
+     * the whole dashboard.
+     */
+    static List<DashboardRecommendationResponse.SpecChange> specChanges(String specDeltasJson) {
+        if (specDeltasJson == null) {
+            return List.of();
+        }
+        List<DashboardRecommendationResponse.SpecChange> changes = new java.util.ArrayList<>();
+        try {
+            json.readTree(specDeltasJson).properties().forEach(entry -> {
+                Boolean higherIsBetter = HIGHER_IS_BETTER.get(entry.getKey());
+                JsonNode deltaPct = entry.getValue().path("delta_pct");
+                if (higherIsBetter != null && deltaPct.isNumber()) {
+                    double raw = deltaPct.asDouble();
+                    changes.add(new DashboardRecommendationResponse.SpecChange(
+                            entry.getKey(), higherIsBetter ? raw : -raw));
+                }
+            });
+        } catch (RuntimeException malformed) {
+            return List.of();
+        }
+        changes.sort(java.util.Comparator.comparingDouble(
+                (DashboardRecommendationResponse.SpecChange change) -> -Math.abs(change.deltaPct())));
+        return List.copyOf(changes);
+    }
+
+    /** Scored numeric specs and their direction, straight from the verdict's catalogue. */
+    private static final Map<String, Boolean> HIGHER_IS_BETTER = higherIsBetter();
+
+    private static Map<String, Boolean> higherIsBetter() {
+        Map<String, Boolean> rules = new java.util.HashMap<>();
+        SpecFactorCatalog.NUMERIC_SPECS.forEach(rule -> rules.put(rule.spec(), rule.higherIsBetter()));
+        rules.put(SpecFactorCatalog.BENCHMARK_SPEC, true);
+        return Map.copyOf(rules);
+    }
 
     /**
      * {@link #replaceForDevice} for one candidate of one device, in a single

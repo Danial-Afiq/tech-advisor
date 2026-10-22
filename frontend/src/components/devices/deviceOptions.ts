@@ -9,6 +9,8 @@ export const DEVICE_ICONS: Record<string, string> = {
   Keyboard: "⌨️",
   Mouse: "🖱️",
   Tablet: "◫",
+  // Unlinked devices come back without a stored type (see `deviceFromApi`).
+  Other: "🔌",
 };
 export const DEVICE_TYPES = Object.keys(DEVICE_ICONS);
 export const CONDITIONS: Condition[] = ["Excellent", "Good", "Fair", "Poor"];

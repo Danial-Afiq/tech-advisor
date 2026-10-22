@@ -7,7 +7,6 @@ import { ApiError } from "../api/client";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
-  signIn: vi.fn(),
   signOut: vi.fn(),
   listDevices: vi.fn(),
   createDevice: vi.fn(),
@@ -27,7 +26,6 @@ vi.mock("../api/session", () => ({
 }));
 
 vi.mock("../api/auth", () => ({
-  signIn: mocks.signIn,
   signOut: mocks.signOut,
 }));
 
@@ -78,8 +76,7 @@ const apiDevice = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getSession.mockReturnValue(null);
-  mocks.signIn.mockResolvedValue({ token: "token", email: "user@example.com" });
+  mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
   mocks.signOut.mockImplementation(() => undefined);
   mocks.listDevices.mockResolvedValue([]);
   mocks.createDevice.mockResolvedValue(apiDevice);
@@ -88,52 +85,17 @@ beforeEach(() => {
 });
 
 describe("DevicesPageTest", () => {
-  it("covers signed-out demo, edit, remove and preference flows", async () => {
+  it("signs out from the profile card", async () => {
     const user = userEvent.setup();
     renderPage();
 
-    expect(screen.getByText(/Demo mode/)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /Apple iPhone 13 Pro Max/ })).toBeInTheDocument();
-
-    await user.click(screen.getAllByRole("button", { name: "Edit device" })[0]);
-    expect(screen.getByRole("dialog", { name: "Update device details" })).toBeInTheDocument();
-    const usage = screen.getByLabelText("Main usage");
-    await user.clear(usage);
-    await user.type(usage, "Updated usage");
-    await user.click(screen.getByRole("button", { name: "Save device" }));
-    expect(await screen.findByText("Device updated")).toBeInTheDocument();
-
-    await user.click(screen.getAllByRole("button", { name: "Upgrade preferences" })[0]);
-    expect(screen.getByRole("dialog", { name: /iPhone 13 Pro Max/ })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Save upgrade profile" }));
-    expect(await screen.findByText("Upgrade profile saved")).toBeInTheDocument();
-
-    await user.click(screen.getAllByRole("button", { name: "Remove" })[0]);
-    expect(window.confirm).toHaveBeenCalled();
-    expect(await screen.findByText("Device removed")).toBeInTheDocument();
-  });
-
-  it("signs in and loads account devices", async () => {
-    const user = userEvent.setup();
-    renderPage();
-
-    await user.click(screen.getByRole("button", { name: "Sign in" }));
-    await user.type(screen.getByLabelText("Email"), "user@example.com");
-    await user.type(screen.getByLabelText("Password"), "password123");
-    const signInDialog = screen.getByRole("dialog", { name: "Sign in to save devices" });
-    await user.click(signInDialog.querySelector('button[type="submit"]') as HTMLButtonElement);
-
-    expect(mocks.signIn).toHaveBeenCalledWith("user@example.com", "password123");
-    await waitFor(() => expect(mocks.listDevices).toHaveBeenCalled());
-    expect(screen.queryByText(/Signed in as/)).not.toBeInTheDocument();
     expect(await screen.findByText("No devices yet")).toBeInTheDocument();
-
     await user.click(screen.getByRole("button", { name: "Sign out" }));
     expect(mocks.signOut).toHaveBeenCalled();
+    expect(await screen.findByText("login route")).toBeInTheDocument();
   });
 
   it("loads an existing session and handles a 401 by returning to login", async () => {
-    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockRejectedValue(new ApiError(401, "expired"));
 
     renderPage();
@@ -144,7 +106,6 @@ describe("DevicesPageTest", () => {
 
   it("adds a signed-in device and moves to upgrade preferences", async () => {
     const user = userEvent.setup();
-    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockResolvedValue([]);
     renderPage();
 
@@ -180,7 +141,6 @@ describe("DevicesPageTest", () => {
 
   it("shows the saved budget after a reload and saves a change through the backend", async () => {
     const user = userEvent.setup();
-    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockResolvedValue([{ ...apiDevice, budget: 1800, currency: "SGD" }]);
     mocks.updateDevice.mockResolvedValue({ ...apiDevice, budget: 3000, currency: "SGD" });
     renderPage();
@@ -211,7 +171,6 @@ describe("DevicesPageTest", () => {
   });
 
   it("shows a device without a saved budget as having none", async () => {
-    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockResolvedValue([apiDevice]);
     renderPage();
 
@@ -231,7 +190,6 @@ describe("DevicesPageTest", () => {
       notes: "Avoid launch pricing.",
     };
     const other = { ...apiDevice, id: 10, customName: "Second phone" };
-    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockResolvedValue([
       { ...apiDevice, budget: 1500, currency: "USD", priorities: '{"camera":4}' }, other,
     ]);
@@ -272,7 +230,6 @@ describe("DevicesPageTest", () => {
 
   it("keeps the upgrade profile open when the backend rejects the budget", async () => {
     const user = userEvent.setup();
-    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockResolvedValue([apiDevice]);
     mocks.updateDevice.mockRejectedValue(new ApiError(400, "Budget must not be negative"));
     renderPage();
@@ -293,7 +250,6 @@ describe("DevicesPageTest", () => {
       ...apiDevice, budget: 1800, currency: "USD", upgradeUrgency: null,
       brandFlexibility: null, priorities: "{}", painPoints: "{}", notes: null,
     };
-    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockResolvedValue([legacy]);
     mocks.updateDevice.mockResolvedValue({
       ...legacy, upgradeUrgency: "NOT_URGENT", brandFlexibility: "FLEXIBLE", painPoints: '""', notes: "",
@@ -335,7 +291,6 @@ describe("DevicesPageTest", () => {
       customName: null,
       specOverrides: '{"storage_gb":256}',
     };
-    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockResolvedValue([linked]);
     mocks.listSmartphones.mockResolvedValue([pixel]);
     mocks.createDevice.mockResolvedValue({ ...linked, id: 4, specOverrides: "{}" });
@@ -370,7 +325,6 @@ describe("DevicesPageTest", () => {
 
   it("saves edits to a signed-in device through the backend", async () => {
     const user = userEvent.setup();
-    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockResolvedValue([apiDevice]);
     mocks.updateDevice.mockResolvedValue({
       ...apiDevice,
@@ -397,9 +351,73 @@ describe("DevicesPageTest", () => {
     expect(screen.getByRole("heading", { name: /Test Laptop Pro/ })).toBeInTheDocument();
   });
 
+  it("prefills the edit form with a linked phone's type and saved details", async () => {
+    const user = userEvent.setup();
+    mocks.listDevices.mockResolvedValue([{
+      ...apiDevice,
+      productId: 5,
+      productBrand: "Apple",
+      productModelName: "iPhone 13",
+      productCategory: "SMARTPHONE",
+      customName: null,
+      condition: "FAIR",
+    }]);
+    mocks.listSmartphones.mockResolvedValue([{
+      id: 5, brand: "Apple", modelName: "iPhone 13", releaseDate: null, status: "VERIFIED",
+      chipset: "A15 Bionic", ramGb: 4, cpuGhz: null, storageGb: 128, batteryMah: 3240,
+      wiredChargingWatts: null, wirelessChargingWatts: null, displaySizeInches: null,
+      refreshRateHz: null, weightG: null, cameraSpecs: null, pixelDensity: null,
+      ipRating: null, os: null, softwareSupportYears: null, latestPrice: null, currency: null,
+    }]);
+    renderPage();
+
+    await screen.findByRole("heading", { name: /iPhone 13/ });
+    await screen.findByText(/listed/); // catalogue specs have reached the card
+    await user.click(screen.getByRole("button", { name: "Edit device" }));
+
+    expect(screen.getByLabelText("Device type")).toHaveValue("Phone");
+    expect(screen.getByLabelText("Brand")).toHaveValue("Apple");
+    expect(screen.getByLabelText("Model / configuration")).toHaveValue("iPhone 13");
+    expect(screen.getByLabelText("Condition")).toHaveValue("Fair");
+    expect(screen.getByLabelText("Purchase date")).toHaveValue("2025-01-01");
+    expect(screen.getByDisplayValue("3240")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("A15 Bionic")).toBeInTheDocument();
+  });
+
+  it("knows a linked device is a phone before the catalogue has loaded", async () => {
+    const user = userEvent.setup();
+    mocks.listDevices.mockResolvedValue([{
+      ...apiDevice,
+      productId: 5,
+      productBrand: "Apple",
+      productModelName: "iPhone 13",
+      productCategory: "SMARTPHONE",
+      customName: null,
+    }]);
+    mocks.listSmartphones.mockReturnValue(new Promise(() => {}));
+    renderPage();
+
+    await screen.findByRole("heading", { name: /iPhone 13/ });
+    await user.click(screen.getByRole("button", { name: "Edit device" }));
+
+    expect(screen.getByLabelText("Device type")).toHaveValue("Phone");
+    expect(screen.getByRole("heading", { name: /Specifications/ })).toBeInTheDocument();
+  });
+
+  it("keeps an unlinked device's unknown type instead of defaulting to Desktop PC", async () => {
+    const user = userEvent.setup();
+    mocks.listDevices.mockResolvedValue([apiDevice]);
+    renderPage();
+
+    await screen.findByRole("heading", { name: /Test Laptop/ });
+    await user.click(screen.getByRole("button", { name: "Edit device" }));
+
+    expect(screen.getByLabelText("Device type")).toHaveValue("Other");
+    expect(screen.getByLabelText("Model / configuration")).toHaveValue("Test Laptop");
+  });
+
   it("removes a signed-in device through the backend", async () => {
     const user = userEvent.setup();
-    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockResolvedValue([apiDevice]);
     mocks.deleteDevice.mockResolvedValue(undefined);
     renderPage();
@@ -414,7 +432,6 @@ describe("DevicesPageTest", () => {
 
   it("keeps the device and says so when the backend can't remove it", async () => {
     const user = userEvent.setup();
-    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockResolvedValue([apiDevice]);
     mocks.deleteDevice.mockRejectedValue(new ApiError(0, "Can't reach the server."));
     renderPage();
@@ -429,7 +446,6 @@ describe("DevicesPageTest", () => {
 
   it("drops a device the backend says is already gone", async () => {
     const user = userEvent.setup();
-    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockResolvedValue([apiDevice]);
     mocks.deleteDevice.mockRejectedValue(new ApiError(404, "Device not found"));
     renderPage();
@@ -443,7 +459,6 @@ describe("DevicesPageTest", () => {
 
   it("keeps the edit form open when the backend rejects an edit", async () => {
     const user = userEvent.setup();
-    mocks.getSession.mockReturnValue({ token: "token", email: "user@example.com" });
     mocks.listDevices.mockResolvedValue([apiDevice]);
     mocks.updateDevice.mockRejectedValue(new ApiError(400, "Invalid device"));
     renderPage();
