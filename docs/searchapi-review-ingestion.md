@@ -119,7 +119,7 @@ SEARCHAPI_API_KEY=your-private-key
 SEARCHAPI_GL=sg
 SEARCHAPI_HL=en
 SEARCHAPI_LOCATION=Singapore
-SEARCHAPI_MAX_PRODUCTS_PER_RUN=1
+SEARCHAPI_MAX_PRODUCTS_PER_RUN=3
 
 INGESTION_ENABLED_SOURCES=searchapi-google-product-reviews
 INGESTION_SCHEDULING_ENABLED=false
@@ -137,7 +137,7 @@ EMBEDDER=model2vec
 VITE_API_BASE_URL=http://localhost:18087
 ```
 
-`SEARCHAPI_MAX_PRODUCTS_PER_RUN` defaults to 1 and accepts at most 3 — the real
+`SEARCHAPI_MAX_PRODUCTS_PER_RUN` defaults to 3 and accepts at most 3 — the real
 ceiling under `SourceContext`'s 10-request-per-run budget, since each uncached
 product costs 3 requests (1 discovery + 2 review searches). Enabling the
 source without `SEARCHAPI_API_KEY` fails startup. `ADMIN_PASSWORD` must be at

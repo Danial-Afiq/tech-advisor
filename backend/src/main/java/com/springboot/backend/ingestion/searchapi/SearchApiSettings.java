@@ -9,7 +9,7 @@ public record SearchApiSettings(
         @DefaultValue("sg") String gl,
         @DefaultValue("en") String hl,
         @DefaultValue("Singapore") String location,
-        @DefaultValue("1") int maxProductsPerRun) {
+        @DefaultValue("3") int maxProductsPerRun) {
     public SearchApiSettings {
         // Upper bound of 3, not arbitrary: SourceContext caps this source at 10 HTTP requests per
         // run, and each uncached product costs exactly 3 (1 discover + 2 review-page fetches) -
