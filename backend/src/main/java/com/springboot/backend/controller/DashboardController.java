@@ -22,6 +22,10 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import com.springboot.backend.dto.RecommendationDismissalRequest;
+import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 
 import java.util.List;
 
@@ -193,6 +197,59 @@ public class DashboardController {
                 authentication.getName(),
                 recommendationId,
                 false
+        );
+
+        return ResponseEntity.noContent().build();
+    }
+
+        @PostMapping(
+            "/recommendations/{recommendationId}/dismiss"
+    )
+    @Operation(
+            summary = "Dismiss a dashboard recommendation",
+            description =
+                    "Dismisses one active recommendation belonging "
+                            + "to the authenticated user and records "
+                            + "a structured reason with an optional "
+                            + "comment. The product is excluded until "
+                            + "the configured cooldown expires."
+    )
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "204",
+                    description = "Recommendation dismissed"
+            ),
+            @ApiResponse(
+                    responseCode = "400",
+                    description =
+                            "Dismissal request is invalid",
+                    content = @Content
+            ),
+            @ApiResponse(
+                    responseCode = "401",
+                    description =
+                            "Bearer token is missing or invalid",
+                    content = @Content
+            ),
+            @ApiResponse(
+                    responseCode = "404",
+                    description =
+                            "No active recommendation with this "
+                                    + "ID belongs to the user",
+                    content = @Content
+            )
+    })
+    public ResponseEntity<Void> dismissRecommendation(
+            Authentication authentication,
+            @PathVariable long recommendationId,
+            @Valid @RequestBody
+            RecommendationDismissalRequest request) {
+
+        dashboardService.dismissRecommendation(
+                authentication.getName(),
+                recommendationId,
+                request.reason(),
+                request.comment()
         );
 
         return ResponseEntity.noContent().build();

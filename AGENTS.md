@@ -2990,6 +2990,7 @@ JWT_EXPIRATION_SECONDS    # optional; defaults to 3600 and must be positive
 ADMIN_EMAIL               # required bootstrap administrator email
 ADMIN_PASSWORD            # required; minimum 12 characters
 RECOMMENDATION_AI_ASSESSMENT_ENABLED # optional, commented out; default true (§18.12)
+RECOMMENDATION_DISMISSAL_COOLDOWN_DAYS # optional, commented out; default 30
 NOTIFICATIONS_MAX_PER_USER # optional, commented out; default 10 (§14.14)
 ```
 
@@ -3065,6 +3066,7 @@ SPRING_DATASOURCE_PASSWORD
 CORS_ALLOWED_ORIGINS
 JWT_SECRET
 JWT_EXPIRATION_SECONDS  # optional; defaults to 3600 and must be positive
+RECOMMENDATION_DISMISSAL_COOLDOWN_DAYS # optional; defaults to 30 and must be positive
 ADMIN_EMAIL             # required bootstrap administrator email
 ADMIN_PASSWORD          # required; minimum 12 characters
 AI_SERVICE_TOKEN        # Spring's half of the shared secret for POST /assess

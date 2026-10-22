@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   listDashboardRecommendations: vi.fn(),
   setRecommendationStarred: vi.fn(),
+  dismissRecommendation: vi.fn(),
   signOut: vi.fn(),
 }));
 
@@ -27,6 +28,7 @@ vi.mock("../api/dashboard", async (importOriginal) => ({
   listDashboardRecommendations:
     mocks.listDashboardRecommendations,
   setRecommendationStarred: mocks.setRecommendationStarred,
+  dismissRecommendation: mocks.dismissRecommendation,
 }));
 
 vi.mock("../api/notifications", async (importOriginal) => ({
@@ -180,6 +182,7 @@ beforeEach(() => {
 
   mocks.listDashboardRecommendations.mockResolvedValue([]);
   mocks.setRecommendationStarred.mockResolvedValue(undefined);
+  mocks.dismissRecommendation.mockResolvedValue(undefined);
 });
 
 describe("DashboardPage", () => {
@@ -524,6 +527,145 @@ describe("DashboardPage", () => {
     expect(
       await screen.findByText("login route")
     ).toBeInTheDocument();
+  });
+
+  it("submits dismissal feedback and removes the recommendation", async () => {
+    mocks.listDashboardRecommendations.mockResolvedValue([
+      recommended,
+    ]);
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Not interested",
+      })
+    );
+
+    const dialog = screen.getByRole("dialog", {
+      name: "Dismiss this recommendation?",
+    });
+
+    const reasonSelect = within(dialog).getByRole(
+      "combobox",
+      { name: "Reason" }
+    );
+
+    expect(
+      within(reasonSelect).getAllByRole("option")
+    ).toHaveLength(5);
+
+    expect(
+      within(reasonSelect).getByRole("option", {
+        name: "Too expensive",
+      })
+    ).toBeInTheDocument();
+
+    expect(
+      within(reasonSelect).getByRole("option", {
+        name: "Missing a required feature",
+      })
+    ).toBeInTheDocument();
+
+    expect(
+      within(reasonSelect).getByRole("option", {
+        name: "Not enough improvement",
+      })
+    ).toBeInTheDocument();
+
+    expect(
+      within(reasonSelect).getByRole("option", {
+        name: "Not interested",
+      })
+    ).toBeInTheDocument();
+
+    expect(
+      within(reasonSelect).getByRole("option", {
+        name: "Other",
+      })
+    ).toBeInTheDocument();
+
+    await user.selectOptions(
+      reasonSelect,
+      "MISSING_REQUIRED_FEATURE"
+    );
+
+    await user.type(
+      within(dialog).getByRole("textbox", {
+        name: "Additional comment (optional)",
+      }),
+      "I need expandable storage"
+    );
+
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Dismiss recommendation",
+      })
+    );
+
+    await waitFor(() => {
+      expect(
+        mocks.dismissRecommendation
+      ).toHaveBeenCalledWith(
+        1,
+        "MISSING_REQUIRED_FEATURE",
+        "I need expandable storage"
+      );
+    });
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "No active recommendations yet",
+      })
+    ).toBeInTheDocument();
+
+    expect(
+      screen.queryByRole("dialog", {
+        name: "Dismiss this recommendation?",
+      })
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the recommendation when dismissal fails", async () => {
+    mocks.listDashboardRecommendations.mockResolvedValue([
+      recommended,
+    ]);
+
+    mocks.dismissRecommendation.mockRejectedValueOnce(
+      new Error("Could not save feedback")
+    );
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Not interested",
+      })
+    );
+
+    const dialog = screen.getByRole("dialog", {
+      name: "Dismiss this recommendation?",
+    });
+
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Dismiss recommendation",
+      })
+    );
+
+    expect(
+      await within(dialog).findByRole("alert")
+    ).toHaveTextContent("Could not save feedback");
+
+    expect(
+      screen.getByRole("region", {
+        name: "Device recommendations",
+      })
+    ).toHaveTextContent("Samsung Galaxy S26");
+
+    expect(dialog).toBeInTheDocument();
   });
 
   describe("sorting", () => {

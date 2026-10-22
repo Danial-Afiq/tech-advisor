@@ -45,3 +45,53 @@ export function setRecommendationStarred(
     { method: starred ? "PUT" : "DELETE" }
   );
 }
+
+export type RecommendationDismissalReason =
+  | "TOO_EXPENSIVE"
+  | "MISSING_REQUIRED_FEATURE"
+  | "NOT_ENOUGH_IMPROVEMENT"
+  | "NOT_INTERESTED"
+  | "OTHER";
+
+export const DISMISSAL_REASON_OPTIONS: readonly {
+  value: RecommendationDismissalReason;
+  label: string;
+}[] = [
+  {
+    value: "TOO_EXPENSIVE",
+    label: "Too expensive",
+  },
+  {
+    value: "MISSING_REQUIRED_FEATURE",
+    label: "Missing a required feature",
+  },
+  {
+    value: "NOT_ENOUGH_IMPROVEMENT",
+    label: "Not enough improvement",
+  },
+  {
+    value: "NOT_INTERESTED",
+    label: "Not interested",
+  },
+  {
+    value: "OTHER",
+    label: "Other",
+  },
+];
+
+export function dismissRecommendation(
+  recommendationId: number,
+  reason: RecommendationDismissalReason,
+  comment?: string
+) {
+  return apiFetch<void>(
+    `/api/dashboard/recommendations/${encodeURIComponent(recommendationId)}/dismiss`,
+    {
+      method: "POST",
+      body: {
+        reason,
+        comment: comment?.trim() || undefined,
+      },
+    }
+  );
+}
