@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 19 October 2026
+> **Last consolidated:** 21 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -1964,7 +1964,7 @@ Cadence is **every 2 days** (`RunStore.INTERVAL`) — **this is a temporary over
 
 **History, so this isn't re-litigated:** the interval was first deliberately changed to every 24 hours on 2026-09-16, purely to make the scheduler observable within a short testing window, then reverted back to 14 days on 2026-09-22 once that testing was done. It was changed again to 2 days on 2026-09-27, this time so the newly-enabled `MobileApiSmartphoneSource` (ticket 1.2) can gather real data while the smartphone schema is still expected to change (model-variation handling isn't settled yet). There is no data migration for either change (no production data depends on the anchor's spacing); it is a plain code constant.
 
-This is a **single global interval shared by every enabled source** — there is no per-source schedule in this codebase (`CoordinatorState.nextDue` is one timestamp for the whole batch, not one per source). Changing it affects every currently-enabled source, not just the one motivating the change. As of this writing `INGESTION_ENABLED_SOURCES` only has MobileAPI turned on, so the practical blast radius is just that source — but that stops being true the instant a second source (e.g. HardwareZone reviews, once it has a sink) gets enabled while this override is still active. Building real per-source scheduling is a legitimate future fix, deliberately not done now while the schema is still moving.
+The shared interval still controls when the single coordinator wakes. Sources may now declare a longer `scheduleInterval()` without creating a second scheduler. `CoordinatorState.nextSourceDue` persists those due times across restarts; an overridden source is omitted from intervening shared runs and advances only after its own scheduled execution succeeds. Failed, interrupted, skipped and manual runs do not count as a successful source refresh. Sources without an override retain the two-day shared behaviour. `techapi-soc-benchmarks` uses this mechanism for an independent 14-day refresh.
 
 - initial anchor: **17 Sep 2026 13:00 SGT / 05:00 UTC**,
 - schedule state is persisted,
@@ -2102,9 +2102,12 @@ NOT a decision: the JWT is kept in `sessionStorage`, isolated in
   PostgreSQL and do not call either provider. ADMIN catalogue CRUD is the
   manual correction/exception path, not another external data provider.
 - **Owner reviews:** SearchAPI Google Product Reviews (§17.4).
-- **Benchmarks:** separate device-level benchmark sources and the existing
-  benchmark enrichment/provenance. MobileAPI.dev is not currently established
-  as a benchmark source.
+- **Benchmarks:** TechAPI's released GitHub `main` dataset supplies raw Geekbench
+  6 CPU single-core and multi-core fields from SoC records. They use the
+  canonical `Geekbench 6 CPU Single-Core` and `Geekbench 6 CPU Multi-Core`
+  identities and remain representative processor-level observations rather
+  than handset measurements.
+  MobileAPI.dev remains the phone-specification source and is not overwritten.
 - **Launch/change feeds and sources for future product categories:** still open.
 
 Keep source adapters replaceable, normalize data through the shared ingestion
@@ -2193,7 +2196,61 @@ never being provisioned, not a missing sink anymore.
   compatibility, but variants are outside the current MVP contract and do not
   change this general-model launch and price flow (§14.5a).
 
-## 17.1.2 Commented-out adapter — smartphone/GPU reviews (ticket 1.4, revised scope, superseded)
+## 17.1.2 Implemented real adapter + sink — TechAPI benchmarks (SCRUM-124)
+
+`TechApiBenchmarkSource` enriches VERIFIED SMARTPHONE catalogue rows with raw
+`geekbench_single` and `geekbench_multi` values from TechAPI's CC BY-SA 4.0
+GitHub dataset. It uses the released `main` branch and has two durable phases.
+The initial one-time backfill pins the `data/soc` Git-tree SHA and local catalogue
+maximum, walks all SoC paths in stable order across bounded runs, and emits every
+valid score for a confidently matching local processor. After completion it
+switches permanently to incremental discovery; the initial cursor never resets.
+
+Incremental runs compare the saved SoC-tree SHA with the current SHA and fetch
+only new or changed blobs. This discovers new benchmark-bearing processors and
+an existing processor gaining a previously absent score. A separate product-ID
+checkpoint processes local phones added after the backfill snapshot, using the
+generated smartphone record only to validate brand/model and its SoC reference.
+All source progress is persisted without a migration in the existing
+`system_log` table under `TECHAPI_BENCHMARK_STATE`: tree revisions, source-path
+cursor, initial progress/completion and catalogue cursor survive restarts.
+
+Matching is exact after conservative normalization of processor identity;
+ambiguous, missing, unverifiable or incompatible records are skipped and logged.
+Apple silicon and shared processors use the same path. The source uses only
+`SourceContext` and keeps its HTTPS, pacing, retry and one-MiB protections.
+Unlike sources using the shared 10-request/60-second defaults, TechAPI sizes its
+bounded request budget to `4 + (3 * TECHAPI_MAX_PRODUCTS_PER_RUN)` and its
+execution budget to that many seconds plus 30 seconds. The retained environment
+variable name now bounds source records or newly added phones per run (1-100).
+It has no application cooldown, allowing consecutive manual batches;
+provider-directed `Retry-After` deferrals still apply. It reads Git tree metadata
+and individual blobs and never downloads the complete TechAPI repository.
+
+`TechApiBenchmarkSink` writes the existing `benchmark_results` table. TechAPI
+scores are treated as static: once a product/benchmark identity has a TechAPI
+observation, later numeric changes are duplicates and never append a refresh.
+A processor record gaining the other missing metric can still insert it. The raw
+fields use the canonical `Geekbench 6 CPU Single-Core` and
+`Geekbench 6 CPU Multi-Core` identities so they align with existing Geekbench 6
+records. `source` preserves the TechAPI raw path, representative-SoC wording and
+CC BY-SA attribution. `observed_at` uses TechAPI's dataset `updated_at` timestamp
+(treated as UTC when it has no offset), falling back to retrieval time only when
+absent or malformed. This is dataset freshness, not a claim about when a
+benchmark measurement was run.
+
+The source declares a 14-day `scheduleInterval()` while the shared coordinator
+continues waking every two days for other sources (§16.5). An incomplete bounded
+initial or incremental cycle remains due at the next shared wake; only completion
+starts the next 14-day wait. Manual runs never move schedule dates. During the
+initial backfill, the admin ingestion page exposes processed/total progress,
+stored observations and covered products. The progress card is hidden after the
+source enters incremental monitoring; scheduling and run history remain visible.
+The source remains opt-in via
+`INGESTION_ENABLED_SOURCES=techapi-soc-benchmarks`; production scheduling and
+deployment settings were not changed. See `docs/techapi-benchmark-ingestion.md`.
+
+## 17.1.3 Commented-out adapter — smartphone/GPU reviews (ticket 1.4, revised scope, superseded)
 
 **Commented out 28 Sep 2026** (every line prefixed `//`, not deleted) —
 ticket 1.4 moved to the SearchAPI approach on `feat/searchapi-review-ingestion`
@@ -3525,10 +3582,11 @@ The team direction for smartphone specifications and pricing is resolved:
 MobileAPI.dev is the intended authoritative ongoing external provider, with
 periodic ingestion into PostgreSQL. The integration is still to be implemented.
 
-Owner reviews use SearchAPI Google Product Reviews (§17.4). Benchmarks remain a
-separate device-level evidence stream using the existing enrichment/provenance;
-MobileAPI.dev is not assumed to provide them. The exact ongoing benchmark-source
-mix, launch/change feeds, and sources for future product categories remain open.
+Owner reviews use SearchAPI Google Product Reviews (§17.4). TechAPI is the chosen
+current source for representative SoC-level raw Geekbench observations (§17.1.2);
+MobileAPI.dev does not provide or get replaced by that enrichment. Additional
+benchmark families, launch/change feeds, and sources for future product categories
+remain open.
 Adapters remain replaceable.
 
 ## 27.2 LLM provider/model — mechanism resolved, choice still open
@@ -4158,7 +4216,7 @@ Recommended doc cleanup:
 
 If only reading one section, read this:
 
-> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203, backed by a generic product catalogue with `phone` and `gpu` subtype tables for schema evolution. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. MobileAPI.dev is the authoritative automated source for smartphone specifications and prices, while authenticated admins can manually correct the catalogue through the dedicated CRUD API. SearchAPI supplies owner reviews, while benchmarks use separate device-level sources. Other live-source choices remain open and adapters remain replaceable.
+> Tech Advisor is a smartphone-first personalised upgrade recommender for CS203, backed by a generic product catalogue with `phone` and `gpu` subtype tables for schema evolution. A user records an owned device and device-specific upgrade preferences. Real-world data such as launches, price changes, specs, benchmarks and owner reviews are ingested. Spring Boot computes objective deltas and a deterministic verdict (`NO_MEANINGFUL_CHANGE`, `WORTH_WATCHING`, `WORTH_CONSIDERING`, `STRONG_UPGRADE_CANDIDATE`). If enough review evidence exists, FastAPI retrieves candidate-specific review chunks with pgvector and makes one LLM reasoning call. The LLM does not choose the verdict; it classifies owner evidence, returns an A–F evidence grade and writes a short explanation. Scraped content is treated as untrusted and delimited against prompt injection. Results and audit context are persisted in PostgreSQL. The frontend is React/TS/Vite on Vercel, backend is Java 21/Spring Boot 4.1.1 on Fly.io, PostgreSQL is Neon in production, Flyway owns schema changes, GitHub Actions owns CI/CD, and all changes go through Jira-linked branches and PRs. MobileAPI.dev is the authoritative automated source for smartphone specifications, while authenticated admins can manually correct the catalogue through the dedicated CRUD API. SearchAPI supplies representative model prices and owner reviews. TechAPI supplies representative SoC-level raw Geekbench observations on an independent 14-day source cadence. Other live-source choices remain open and adapters remain replaceable.
 
 ---
 

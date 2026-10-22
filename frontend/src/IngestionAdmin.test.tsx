@@ -21,7 +21,11 @@ const withAppRoutes = () => render(
 const signInAsAdmin = () => setSession({ token: 'admin-token', email: 'admin@example.com', role: 'ADMIN' })
 
 /** `searchapi/candidates`, `/runs`, `/sources`, `/schedule` fixture server. */
-function searchApiServer(post: (init: RequestInit) => { ok: boolean; status?: number; data: unknown }, enabled = true) {
+function searchApiServer(
+  post: (init: RequestInit) => { ok: boolean; status?: number; data: unknown },
+  enabled = true,
+  techApiPhase: 'INITIAL_BACKFILL' | 'INCREMENTAL' = 'INITIAL_BACKFILL',
+) {
   return vi.fn(async (url: string, init: RequestInit = {}) => {
     const path = url.split('/api/admin/ingestion')[1]
     if (path === '/searchapi/candidates' && init.method === 'POST') return { ok: true, json: async () => [
@@ -35,6 +39,9 @@ function searchApiServer(post: (init: RequestInit) => { ok: boolean; status?: nu
     const data: Record<string, unknown> = {
       '/sources': [
         { sourceId: 'searchapi-google-product-reviews', enabled, simulation: false, nextAllowedAt: null },
+        { sourceId: 'techapi-soc-benchmarks', enabled: true, simulation: false, nextAllowedAt: null,
+          phase: techApiPhase, completedUnits: 40, totalUnits: 100,
+          observationsIngested: 12, productsCovered: 6 },
         { sourceId: 'simulated-release', enabled: true, simulation: true, nextAllowedAt: null },
       ],
       '/schedule': { enabled: false, intervalHours: 336, activeRunId: null },
@@ -89,6 +96,30 @@ describe('Ingestion admin', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Catalogue' }))
 
     expect(await screen.findByText('catalogue route')).toBeInTheDocument()
+  })
+
+  it('shows a clear label for TechAPI benchmark ingestion', async () => {
+    signInAsAdmin()
+    vi.stubGlobal('fetch', searchApiServer(() => ({ ok: true, data: {} })))
+
+    withAppRoutes()
+
+    expect(await screen.findByRole('checkbox', { name: 'TechAPI processor benchmarks' })).toBeEnabled()
+    expect(screen.getByText('Initial backfill')).toBeInTheDocument()
+    expect(screen.getByText('40 / 100 processor records checked')).toBeInTheDocument()
+    expect(screen.getByRole('progressbar', { name: 'TechAPI initial backfill progress' })).toHaveAttribute('value', '40')
+    expect(screen.getByText('Run TechAPI processor benchmarks again to continue from the saved checkpoint.')).toBeInTheDocument()
+  })
+
+  it('hides the progress card after the initial TechAPI backfill', async () => {
+    signInAsAdmin()
+    vi.stubGlobal('fetch', searchApiServer(() => ({ ok: true, data: {} }), true, 'INCREMENTAL'))
+
+    withAppRoutes()
+
+    expect(await screen.findByRole('checkbox', { name: 'TechAPI processor benchmarks' })).toBeEnabled()
+    expect(screen.queryByText('Initial backfill')).not.toBeInTheDocument()
+    expect(screen.queryByRole('progressbar', { name: 'TechAPI initial backfill progress' })).not.toBeInTheDocument()
   })
 
   it('clears the session when manual ingestion is forbidden', async () => {

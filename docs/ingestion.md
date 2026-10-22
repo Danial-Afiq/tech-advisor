@@ -1,6 +1,6 @@
 # Ingestion runner: operation and source integration
 
-The runner provides a scheduled cadence (currently **2 days**, a temporary override for live data-gathering while the smartphone schema is still moving — see `AGENTS.md` §16.5 for why and when to revert; the real target is 14 days), asynchronous admin requests, source isolation and persistent run history. It includes simulated adapters and the opt-in SearchAPI owner-review source and RAG sink. See [SearchAPI review ingestion](searchapi-review-ingestion.md) for configuration and a complete local live test.
+The runner provides a shared scheduled cadence (currently **2 days**, a temporary override for live data-gathering while the smartphone schema is still moving), optional per-source intervals, asynchronous admin requests, source isolation and persistent run history. TechAPI benchmark ingestion uses the same coordinator but is due only every 14 days. It includes simulated adapters, the opt-in SearchAPI owner-review source and RAG sink, and the opt-in TechAPI source. See [SearchAPI review ingestion](searchapi-review-ingestion.md) and [TechAPI benchmark ingestion](techapi-benchmark-ingestion.md).
 
 ## Shared contract, different payloads
 
@@ -23,7 +23,7 @@ Every `IngestionSource` identifies itself and implements `ingest(context, output
 | `Article` | Title, URL, published time, text, optional product reference | Review/news persistence, product matching, later RAG/sentiment analysis |
 | `Specifications` | Product reference, numeric measurements and explicit units | Typed catalogue updates and domain-specific range validation |
 | `Price` | Product reference, amount, ISO-style currency code | Price history and change detection |
-| `Benchmark` | Product reference, benchmark name, score, unit | Benchmark storage/comparison |
+| `Benchmark` | Product reference, benchmark identity, score, unit, direction and provenance | Benchmark history, deduplication and comparison |
 | `ReviewBatch` | Canonical product ID and up to 100 normalized reviews | Batch embeddings through FastAPI, then atomic review document/chunk persistence |
 
 An RSS article is not forced into specification fields. Sources offering the same type translate to the same body. A source can emit several types. Review collection preserves evidence; sentiment inference belongs downstream. Product resolution and type-specific domain validation remain the sink's responsibility.
@@ -83,9 +83,10 @@ Then add `hackfeed-rss` to `INGESTION_ENABLED_SOURCES`, configure its feed URL, 
 ## Load and failure policy
 
 - One global pipeline claim; sources run sequentially. Admin/scheduled requests share cooldowns.
-- Each source has a 60-second execution budget, 1,000 emitted-item limit, at most 10 HTTP attempts, at least one second between requests, a five-second connect timeout and 20-second request timeout. HTTP response bodies are capped at 1 MiB.
-- HTTP 429/503 receive at most two retries. Long Retry-After values defer the source in persistent coordinator state instead of sleeping indefinitely. A completed source uses its configured cooldown (15 minutes by default); transport/timeouts use one minute; validation/no-match failures use none. Other failures retain the configured cooldown. Demo sources use zero cooldown.
-- A source may override its local cooldown. Provider-directed `Retry-After` still applies.
+- Sources default to a 60-second execution budget and at most 10 HTTP attempts. A source may declare larger positive limits when its bounded workload needs them; `techapi-soc-benchmarks` sizes both limits to its configured source-record/new-phone batch. Every source still has a 1,000 emitted-item limit, at least one second between requests, a five-second connect timeout and 20-second request timeout. HTTP response bodies are capped at 1 MiB.
+- A source with a longer interval may report that a bounded cycle is incomplete. It then remains due at the next shared scheduler wake-up; its longer interval starts only after the cycle completes. TechAPI uses this for resumable initial and incremental batches.
+- HTTP 429/503 receive at most two retries. Long Retry-After values defer the source in persistent coordinator state instead of sleeping indefinitely. A completed source uses its configured cooldown (15 minutes by default); transport/timeouts use one minute; validation/no-match failures use none. Other failures retain the configured cooldown. SearchAPI, TechAPI and demo sources use zero application cooldown.
+- A source may override its local cooldown, request limit and execution budget. Provider-directed `Retry-After` still applies.
 - Adapters must use `SourceContext.get` and call `check()` while processing. On cancellation or ownership loss, stop. The HTTP helper closes responses and cancels its client when the source budget expires. The source executor has no backlog and only one thread, limiting damage from an adapter ignoring interruption.
 - Validation failures increment rejected/error counters and allow later items to proceed. Source exceptions produce bounded sanitized application stack frames; messages, raw response bodies and credentials are excluded. Later sources still execute.
 - Duplicate detection in the runner covers repeated IDs of the same type within one source run. Cross-run deduplication belongs in the durable typed sink. Demo receipts intentionally persist again on each new demo run.
@@ -97,13 +98,13 @@ GETs retain all limits and validate the exact trusted credential destination hos
 
 ## Scheduling and recovery
 
-The schedule was temporarily set to daily on 2026-09-16 (Flyway V3) specifically to make the scheduler observable within a short testing window; that was never the target production cadence. As of 2026-09-22 it is reverted to the real intended cadence: every 14 days, via the `RunStore.INTERVAL` constant rather than a further data migration (no production data depended on the daily anchor). The first run is **17 September 2026 at 13:00 SGT (05:00 UTC)**, then every 14 days from that anchor.
+`RunStore.INTERVAL` is currently two days for the shared ingestion slot. A source may declare a longer interval without creating another scheduler. The coordinator persists each such source's `nextSourceDue`; the source is omitted from intervening shared runs and its due time advances only after that source succeeds in a scheduled run. Manual runs do not move either cadence. `techapi-soc-benchmarks` declares 14 days while sources without an override continue to use the two-day shared slot.
 
 For the local scheduled run, keep the backend, Docker and computer running and awake. Closing the browser is fine. If the backend is offline at the due time, the catch-up runs after recovery. Scheduled results are available at `GET /api/admin/ingestion/runs?trigger=SCHEDULED`. The enabled simulated failure fixture intentionally makes the combined demo run report `PARTIAL_FAILURE` with 3 accepted payloads and 1 exception stack.
 
 Set `INGESTION_SCHEDULING_ENABLED=true`, `INGESTION_ANCHOR` to the first due UTC instant (for example `2026-09-17T05:00:00Z`), and an enabled-source list. Scheduling is disabled in the default production profile and enabled in `ingestion-demo`, unless explicitly overridden by `INGESTION_SCHEDULING_ENABLED=false`. The persisted anchor is authoritative after initialization; changing the environment does not silently reset an existing schedule. A deliberate schedule change needs a reviewed migration of coordinator state.
 
-The next slot is always previous scheduled slot +14 days, independent of duration or manual runs. Spring TaskScheduler arms that instant. A one-time startup recovery check repairs pending dispatch after restarts. One-shot timers wake for the next due slot or active lease expiry; failed database operations are retried after ten minutes instead of polling every ten seconds. No periodic database activity occurs while the scheduler is otherwise idle. Concurrent replicas serialize admission through a short PostgreSQL row lock.
+The next shared slot is always the previous scheduled slot plus `RunStore.INTERVAL`, independent of duration or manual runs. Spring TaskScheduler arms that instant. A one-time startup recovery check repairs pending dispatch after restarts. One-shot timers wake for the next due slot or active lease expiry; failed database operations are retried after ten minutes instead of polling every ten seconds. No second scheduler or polling loop is created for per-source intervals. Concurrent replicas serialize admission through a short PostgreSQL row lock.
 
 If the backend was offline, one run represents the most recent overdue slot; `missedSlots` records older coalesced slots. A due slot waits while another run is active. Run metadata captures actual start and lateness. One durable admission per due slot is guaranteed; exact execution at that instant requires a healthy running process and database.
 

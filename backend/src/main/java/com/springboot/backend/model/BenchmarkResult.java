@@ -37,7 +37,7 @@ public class BenchmarkResult {
 
     private String source;
 
-    /** The source's observation time, not our ingest time. */
+    /** The provider's observation/update time, not necessarily the measurement or ingest time. */
     @Column(name = "observed_at", nullable = false)
     private OffsetDateTime observedAt;
 

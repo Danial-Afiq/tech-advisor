@@ -11,9 +11,12 @@ public class SourceRegistry {
     public SourceRegistry(List<IngestionSource> adapters, IngestionSettings settings) {
         this.settings = settings;
         for (var source : adapters) {
+            var interval = source.scheduleInterval();
             if (!source.sourceId().matches("[a-z0-9-]{1,80}")
                     || sources.putIfAbsent(source.sourceId(), source) != null
-                    || source.cooldown().isNegative())
+                    || source.cooldown().isNegative()
+                    || interval.isPresent()
+                        && (interval.get().isZero() || interval.get().isNegative()))
                 throw new IllegalArgumentException("Invalid or duplicate source ID/policy");
         }
         for (String id : settings.enabledSources())

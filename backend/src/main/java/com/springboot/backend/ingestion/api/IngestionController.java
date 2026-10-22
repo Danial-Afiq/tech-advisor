@@ -87,12 +87,17 @@ public class IngestionController {
             java.time.Instant nextScheduledAt,
             String activeRunId) {}
 
-    @Schema(name = "IngestionSourceResponse", description = "Registered ingestion source and cooldown state.")
+    @Schema(name = "IngestionSourceResponse", description = "Registered ingestion source, schedule and optional progress state.")
     public record SourceResponse(
             @Schema(example = "searchapi-google-product-reviews") String sourceId,
             boolean enabled,
             boolean simulation,
-            java.time.Instant nextAllowedAt) {}
+            java.time.Instant nextAllowedAt,
+            String phase,
+            Long completedUnits,
+            Long totalUnits,
+            Long observationsIngested,
+            Long productsCovered) {}
 
     @Schema(name = "IngestionErrorResponse", description = "Rejected ingestion operation.")
     public record ErrorResponse(
@@ -284,7 +289,7 @@ public class IngestionController {
     @ApiResponses({
             @ApiResponse(
                     responseCode = "200",
-                    description = "Source availability and cooldown state",
+                    description = "Source availability, schedule and optional progress state",
                     content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = SourceResponse.class)))),
             @ApiResponse(responseCode = "401", description = "Authentication required", content = @Content),
             @ApiResponse(responseCode = "403", description = "Caller does not have the ADMIN role", content = @Content),
@@ -296,6 +301,13 @@ public class IngestionController {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("sourceId", source.sourceId()); row.put("enabled", registry.enabled(source.sourceId()));
             row.put("simulation", source.simulation()); row.put("nextAllowedAt", state.nextAllowed.get(source.sourceId()));
+            source.progress().ifPresent(progress -> {
+                row.put("phase", progress.phase());
+                row.put("completedUnits", progress.completedUnits());
+                row.put("totalUnits", progress.totalUnits());
+                row.put("observationsIngested", progress.observationsIngested());
+                row.put("productsCovered", progress.productsCovered());
+            });
             return row;
         }).toList();
     }

@@ -8,4 +8,6 @@ public class CoordinatorState {
     public Instant anchor, nextDue, leaseUntil;
     public String activeRunId, owner;
     public Map<String, Instant> nextAllowed = new HashMap<>();
+    public Map<String, Instant> nextSourceDue = new HashMap<>();
+    public Map<String, Long> sourceCursors = new HashMap<>();
 }
