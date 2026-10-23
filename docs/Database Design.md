@@ -4,7 +4,7 @@
 
 This document defines the canonical Sprint 1 database design for Tech Advisor. It covers the 13 core tables required to support user accounts, owned-device tracking, **device-specific upgrade preferences**, a generic product catalogue with `phone` and `gpu` subtypes, changing market information, RAG-based review retrieval, personalised upgrade recommendations, and ingestion observability.
 
-**Scope:** The current application behaviour remains smartphone-first. The database foundation includes disjoint category-specific `phone` and `gpu` subtype tables; GPU ingestion, recommendation logic, APIs, and UI are not yet implemented. Personalisation belongs to an owned device through `device_preferences`, not to a user-global profile.
+**Scope:** The current application behaviour remains smartphone-first. The database foundation includes disjoint category-specific `phone` and `gpu` subtype tables; GPU ingestion is implemented (ticket 1.3: seed prefill, TechSpot specs, SearchAPI reviews; see AGENTS.md §17.1.4); GPU recommendation logic, user-facing APIs, and UI are not yet implemented. Personalisation belongs to an owned device through `device_preferences`, not to a user-global profile.
 
 ## Design goals
 
