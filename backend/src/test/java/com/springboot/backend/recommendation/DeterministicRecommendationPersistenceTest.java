@@ -212,9 +212,14 @@ class DeterministicRecommendationPersistenceTest {
                 List.of(userDeviceId, secondDevice),
                 run.completed().stream().map(c -> c.evaluation().userDeviceId()).toList(),
                 "every device, in id order");
-        // One user, one candidate: the partial unique index keeps a single ACTIVE
-        // row, so the second device's run supersedes the first device's.
-        assertEquals(1, rowCount(flagship, "ACTIVE"));
+        assertEquals(2, rowCount(flagship, "ACTIVE"),
+                "each owned device keeps its own active recommendation");
+        assertEquals(
+                List.of(userDeviceId, secondDevice),
+                db.queryForList(
+                        "SELECT current_device_id FROM recommendations "
+                                + "WHERE candidate_product_id=? AND status='ACTIVE' ORDER BY current_device_id",
+                        Long.class, flagship));
     }
 
     @Test

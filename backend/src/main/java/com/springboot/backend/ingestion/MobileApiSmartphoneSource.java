@@ -232,7 +232,22 @@ public class MobileApiSmartphoneSource implements IngestionSource {
 
         if (values.isEmpty()) return Optional.empty();
         return Optional.of(new Payload(sourceId, deviceId, observedAt,
-                new Payload.Specifications(deviceId, brand, modelName, chipset, values, units, storageOptions)));
+                new Payload.Specifications(deviceId, brand, modelName, chipset, values, units, storageOptions,
+                        imageUrl(text(device, "image_url")))));
+    }
+
+    /**
+     * The listing's thumbnail (e.g. https://api.mobileapi.dev/devices/31333/thumb.png), or null
+     * when it is missing or not a usable https URL - a bad image link must not cost the specs.
+     */
+    static URI imageUrl(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            URI url = new URI(value.trim());
+            return Payload.isHttpsImageUrl(url) ? url : null;
+        } catch (java.net.URISyntaxException e) {
+            return null;
+        }
     }
 
     private JsonNode fetchList(SourceContext context, Request request) throws Exception {

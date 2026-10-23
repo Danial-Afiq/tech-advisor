@@ -36,7 +36,10 @@ public record SmartphoneCatalogueResponse(
         @Schema(description = "Latest price_history observation, or null when the product has none.")
         BigDecimal latestPrice,
         @Schema(description = "ISO 4217 currency of latestPrice, or null.")
-        String currency
+        String currency,
+        @Schema(description = "Product thumbnail URL (https) from the specifications source, or null.",
+                example = "https://api.mobileapi.dev/devices/31333/thumb.png")
+        String imageUrl
 ) {
     public SmartphoneCatalogueResponse(Product product, Phone phone) {
         this(
@@ -63,7 +66,8 @@ public record SmartphoneCatalogueResponse(
                 product.getCreatedAt(),
                 product.getUpdatedAt(),
                 null,
-                null
+                null,
+                product.getImageUrl()
         );
     }
 
@@ -76,6 +80,6 @@ public record SmartphoneCatalogueResponse(
                 chipset, ramGb, cpuGhz, storageGb, batteryMah, wiredChargingWatts,
                 wirelessChargingWatts, displaySizeInches, refreshRateHz, weightG, cameraSpecs,
                 pixelDensity, ipRating, os, softwareSupportYears, createdAt, updatedAt,
-                price.getPrice(), price.getCurrency());
+                price.getPrice(), price.getCurrency(), imageUrl);
     }
 }

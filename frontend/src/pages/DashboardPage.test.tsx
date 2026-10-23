@@ -16,6 +16,16 @@ const mocks = vi.hoisted(() => ({
   listDashboardRecommendations: vi.fn(),
   setRecommendationStarred: vi.fn(),
   signOut: vi.fn(),
+  listDevices: vi.fn(),
+  listSmartphones: vi.fn(),
+}));
+
+vi.mock("../api/devices", () => ({
+  listDevices: mocks.listDevices,
+}));
+
+vi.mock("../api/catalogue", () => ({
+  listSmartphones: mocks.listSmartphones,
 }));
 
 vi.mock("../api/session", () => ({
@@ -180,6 +190,8 @@ beforeEach(() => {
 
   mocks.listDashboardRecommendations.mockResolvedValue([]);
   mocks.setRecommendationStarred.mockResolvedValue(undefined);
+  mocks.listDevices.mockResolvedValue([]);
+  mocks.listSmartphones.mockResolvedValue([]);
 });
 
 describe("DashboardPage", () => {
@@ -393,6 +405,21 @@ describe("DashboardPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("only offers sidebar items that lead somewhere, each with a visible label", async () => {
+    renderPage();
+
+    await screen.findByRole("heading", {
+      name: "No active recommendations yet",
+    });
+
+    const nav = screen.getByRole("list");
+    expect(within(nav).getAllByRole("button").map((button) => button.textContent)).toEqual([
+      "⌂Dashboard",
+      "▣My devices",
+    ]);
+    expect(screen.queryByRole("button", { name: /Activity|Settings/ })).not.toBeInTheDocument();
+  });
+
   it("signs out from the sidebar and returns to login", async () => {
     const user = userEvent.setup();
 
@@ -419,23 +446,11 @@ describe("DashboardPage", () => {
     renderPage();
 
     expect(
-        await screen.findByText((_, element) => {
-            return (
-            element?.tagName.toLowerCase() === "p" &&
-            element.textContent?.replace(/\s+/g, " ").trim() ===
-                "Samsung Galaxy S26"
-            );
-        })
+        await screen.findByRole("heading", { name: "Samsung Galaxy S26" })
     ).toBeInTheDocument();
 
     expect(
-        screen.getByText((_, element) => {
-            return (
-            element?.tagName.toLowerCase() === "p" &&
-            element.textContent?.replace(/\s+/g, " ").trim() ===
-                "Apple iPhone 18"
-            );
-        })
+        screen.getByRole("heading", { name: "Apple iPhone 18" })
     ).toBeInTheDocument();
 
     expect(
@@ -933,6 +948,140 @@ describe("DashboardPage", () => {
       await screen.findByRole("region", { name: "Device recommendations" });
 
       expect(screen.getByRole("button", { name: "Notifications" })).toHaveAttribute("aria-expanded", "false");
+    });
+  });
+
+  describe("top recommendations per device", () => {
+    const forDevice = (deviceId: number, deviceName: string, count: number, firstId: number) =>
+      Array.from({ length: count }, (_, index): DashboardRecommendation => ({
+        ...worthConsidering,
+        recommendationId: firstId + index,
+        currentDeviceId: deviceId,
+        currentDeviceName: deviceName,
+        candidateProductId: 100 + firstId + index,
+        candidateModelName: `Pick ${firstId + index}`,
+      }));
+
+    it("shows the top picks for every device and expands one device on request", async () => {
+      const user = userEvent.setup();
+      mocks.listDashboardRecommendations.mockResolvedValue([
+        ...forDevice(10, "My current phone", 5, 1),
+        ...forDevice(11, "Second phone", 4, 20),
+      ]);
+
+      renderPage();
+
+      const first = await screen.findByRole("region", { name: "Recommendations for My current phone" });
+      const second = screen.getByRole("region", { name: "Recommendations for Second phone" });
+      expect(within(first).getAllByRole("article")).toHaveLength(3);
+      expect(within(second).getAllByRole("article")).toHaveLength(3);
+      expect(within(first).getByText("Top 3 of 5 recommendations")).toBeInTheDocument();
+      // The count still describes every matching recommendation.
+      expect(screen.getByRole("status")).toHaveTextContent("Showing 9 of 9 recommendations");
+
+      // Server order is kept, so the top three are the first three returned.
+      expect(within(first).getByRole("heading", { name: "Google Pick 3" })).toBeInTheDocument();
+      expect(within(first).queryByRole("heading", { name: "Google Pick 4" })).not.toBeInTheDocument();
+
+      await user.click(within(first).getByRole("button", { name: "Show all 5" }));
+      expect(within(first).getAllByRole("article")).toHaveLength(5);
+      expect(within(second).getAllByRole("article")).toHaveLength(3);
+
+      await user.click(within(first).getByRole("button", { name: "Show top 3" }));
+      expect(within(first).getAllByRole("article")).toHaveLength(3);
+    });
+
+    it("does not offer Show all when a device has only a few recommendations", async () => {
+      mocks.listDashboardRecommendations.mockResolvedValue(forDevice(10, "My current phone", 2, 1));
+
+      renderPage();
+
+      const group = await screen.findByRole("region", { name: "Recommendations for My current phone" });
+      expect(within(group).getAllByRole("article")).toHaveLength(2);
+      expect(within(group).queryByRole("button", { name: /Show all/ })).not.toBeInTheDocument();
+    });
+
+    it("expands a device when the recommendation opened from a notification is past its top picks", async () => {
+      mocks.listDashboardRecommendations.mockResolvedValue(forDevice(10, "My current phone", 5, 1));
+
+      renderPage("/dashboard?recommendation=5");
+
+      const group = await screen.findByRole("region", { name: "Recommendations for My current phone" });
+      expect(within(group).getAllByRole("article")).toHaveLength(5);
+      expect(within(group).getByRole("heading", { name: "Google Pick 5" })).toBeInTheDocument();
+    });
+  });
+
+  describe("spec comparison", () => {
+    const catalogueItem = (id: number, brand: string, modelName: string, batteryMah: number) => ({
+      id, brand, modelName, releaseDate: null, status: "VERIFIED",
+      chipset: "Chip", ramGb: 8, cpuGhz: null, storageGb: 256, batteryMah,
+      wiredChargingWatts: null, wirelessChargingWatts: null, displaySizeInches: null,
+      refreshRateHz: null, weightG: null, cameraSpecs: null, pixelDensity: null,
+      ipRating: null, os: null, softwareSupportYears: null, latestPrice: null, currency: null,
+    });
+
+    it("shows the owned device and the suggested product side by side", async () => {
+      const user = userEvent.setup();
+      mocks.listDashboardRecommendations.mockResolvedValue([{
+        ...recommended,
+        specChanges: [
+          { spec: "battery_mah", deltaPct: 54.3 },
+          { spec: "ram_gb", deltaPct: 33.3 },
+          { spec: "benchmark_score", deltaPct: 20 },
+          // Lighter is better: the backend reports +19.6 for a 240 g -> 193 g change.
+          { spec: "weight_g", deltaPct: 19.6 },
+          { spec: "cpu_ghz", deltaPct: 0.4 },
+        ],
+      }]);
+      mocks.listDevices.mockResolvedValue([{
+        id: 10, productId: 5, productBrand: "Apple", productModelName: "iPhone 13",
+        productCategory: "SMARTPHONE", customName: null, purchaseDate: null, condition: null,
+        satisfactionScore: null, useCases: "[]", specOverrides: '{"ram_gb":6}', budget: 1000,
+        currency: "SGD", upgradeUrgency: null, brandFlexibility: null, priorities: null,
+        painPoints: null, notes: null, current: true, createdAt: "", updatedAt: "",
+      }]);
+      mocks.listSmartphones.mockResolvedValue([
+        { ...catalogueItem(5, "Apple", "iPhone 13", 3240), weightG: 240 },
+        { ...catalogueItem(20, "Samsung", "Galaxy S26", 5000), weightG: 193, imageUrl: "https://img.example/s26.png" },
+      ]);
+
+      renderPage();
+
+      const card = await screen.findByRole("article", { name: "Recommendation for My current phone" });
+      // Top three, and sub-1% changes are noise.
+      expect(await within(card).findByText("Battery 54% better · RAM 33% better · Benchmark 20% better"))
+        .toBeInTheDocument();
+      expect(within(card).getByRole("img", { name: "Samsung Galaxy S26 product image" }))
+        .toHaveAttribute("src", "https://img.example/s26.png");
+      // Battery, RAM (the user's override) and weight differ; chipset and storage match.
+      await user.click(await within(card).findByRole("button", { name: /Compare specs · 3 differences/ }));
+      const dialog = screen.getByRole("dialog", { name: "My current phone vs Samsung Galaxy S26" });
+      const table = within(dialog).getByRole("table");
+      expect(within(table).getByRole("columnheader", { name: "Your device" })).toBeInTheDocument();
+      expect(within(table).getByRole("columnheader", { name: "Suggested" })).toBeInTheDocument();
+      const row = (label: string) => within(table).getByRole("rowheader", { name: label }).closest("tr");
+      const battery = row("Battery");
+      expect(battery).toHaveTextContent("3,240 mAh");
+      expect(battery).toHaveTextContent("5,000 mAh▲ better");
+      expect(row("RAM")).toHaveTextContent("RAM6 GB8 GB▲ better");
+      // The arrow follows the value (it went down); the colour says it is better.
+      expect(row("Weight")).toHaveTextContent("Weight240 g193 g▼ better");
+      expect(within(row("Weight")!).getByText("193 g", { exact: false })).toHaveClass("text-success");
+      expect(row("Storage")).toHaveTextContent("256 GB256 GB");
+    });
+
+    it("says the comparison is unavailable when specs can't be loaded", async () => {
+      mocks.listDashboardRecommendations.mockResolvedValue([recommended]);
+      mocks.listDevices.mockRejectedValue(new Error("offline"));
+      mocks.listSmartphones.mockRejectedValue(new Error("offline"));
+
+      renderPage();
+
+      const card = await screen.findByRole("article", { name: "Recommendation for My current phone" });
+      expect(await within(card).findByText(/not available/)).toBeInTheDocument();
+      // A failed comparison is not a page error.
+      expect(screen.queryByText(/couldn’t load your dashboard/)).not.toBeInTheDocument();
     });
   });
 });

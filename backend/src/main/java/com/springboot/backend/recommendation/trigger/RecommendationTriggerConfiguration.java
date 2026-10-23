@@ -14,9 +14,9 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
  * otherwise land on the ingestion pool.
  *
  * <p>One thread on purpose. Trigger runs queue up and execute one at a time, so
- * two runs touching the same (user, candidate) pair can never race each other on
- * the partial unique index that keeps one {@code ACTIVE} row per pair, and AI
- * calls go out one at a time rather than in bursts.
+ * two runs touching the same (user, device, candidate) tuple can never race each
+ * other on the partial unique index that keeps one {@code ACTIVE} row per tuple,
+ * and AI calls go out one at a time rather than in bursts.
  */
 @Configuration
 @EnableAsync

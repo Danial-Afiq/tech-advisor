@@ -101,6 +101,26 @@ class AssessContractTests {
     }
 
     @Test
+    void unknownDatesSerializeAsExplicitNullContext() {
+        var request = new AssessRequest(
+                "req-dates",
+                new AssessRequest.UserContext(
+                        new AssessRequest.OwnedDevice("Phone", null, "GOOD", 60, List.of()),
+                        new AssessRequest.Preferences(
+                                900.0, "SGD", "NOT_URGENT", "FLEXIBLE", Map.of(), null, null)),
+                new AssessRequest.Candidate(1, "Candidate", null, null),
+                null,
+                new AssessRequest.Analysis("WORTH_WATCHING", 0.58, List.of()),
+                null);
+
+        Map<String, Object> body = asMap(request);
+        Map<String, Object> context = asMap(body.get("user_context"));
+        assertNull(asMap(context.get("owned_device")).get("device_age_months"));
+        assertNull(asMap(body.get("candidate")).get("release_date"));
+        assertNull(asMap(body.get("candidate")).get("age_days"));
+    }
+
+    @Test
     void specDeltaCarriesEitherNumbersOrStrings() {
         // Python declares `float | str | None` for these.
         assertEquals(3700.0, asMap(new AssessRequest.SpecDelta(3700.0, 4900.0, 32.4)).get("current"));

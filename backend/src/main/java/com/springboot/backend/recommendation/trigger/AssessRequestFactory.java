@@ -30,10 +30,12 @@ import tools.jackson.databind.json.JsonMapper;
  * from what the database holds.
  *
  * <p>The AI contract requires context the database often does not have yet:
- * condition, satisfaction, purchase date, urgency, brand flexibility and the
- * candidate's release date. Rather than invent any of it (§0.2), a pair missing
- * something comes back as {@link Built#missing()} naming each gap, and the caller
- * skips the model call. The deterministic row already persisted stands.
+ * condition, satisfaction, urgency and brand flexibility. Rather than invent
+ * any of it (§0.2), a pair missing something comes back as
+ * {@link Built#missing()} naming each gap, and the caller skips the model call.
+ * Purchase and release dates are optional context: their derived ages are sent
+ * as {@code null} when the dates are unknown. The deterministic row already
+ * persisted stands when required context is missing.
  *
  * <p>Every number is finished here or by Channel A (§8.2): ages are computed from
  * dates, and {@code computed}/{@code analysis} come straight from the
@@ -81,7 +83,6 @@ public class AssessRequestFactory {
 
         String condition = closedValue(device.getCondition(), AssessVocabulary.CONDITIONS, "user_devices.condition", missing);
         if (device.getSatisfactionScore() == null) missing.add("user_devices.satisfaction_score");
-        if (device.getPurchaseDate() == null) missing.add("user_devices.purchase_date");
         String urgency = closedValue(
                 preference.getUpgradeUrgency(), AssessVocabulary.UPGRADE_URGENCIES,
                 "device_preferences.upgrade_urgency", missing);
@@ -89,15 +90,17 @@ public class AssessRequestFactory {
                 preference.getBrandFlexibility(), AssessVocabulary.BRAND_FLEXIBILITIES,
                 "device_preferences.brand_flexibility", missing);
         Map<String, Integer> priorities = priorities(preference.getPriorities(), missing);
-        if (candidate.getReleaseDate() == null) missing.add("products.release_date (candidate " + candidateId + ")");
 
         if (!missing.isEmpty()) {
             return new Built(null, missing);
         }
 
+        Integer deviceAgeMonths = device.getPurchaseDate() == null
+                ? null
+                : (int) Math.max(0, ChronoUnit.MONTHS.between(device.getPurchaseDate(), today));
         AssessRequest.OwnedDevice owned = new AssessRequest.OwnedDevice(
                 deviceName(device),
-                (int) Math.max(0, ChronoUnit.MONTHS.between(device.getPurchaseDate(), today)),
+                deviceAgeMonths,
                 condition,
                 device.getSatisfactionScore(),
                 useCases(device.getUseCases()));
@@ -111,11 +114,14 @@ public class AssessRequestFactory {
                 painPoints(preference.getPainPoints()),
                 preference.getNotes());
 
+        Integer candidateAgeDays = candidate.getReleaseDate() == null
+                ? null
+                : (int) ChronoUnit.DAYS.between(candidate.getReleaseDate(), today);
         AssessRequest.Candidate candidateBlock = new AssessRequest.Candidate(
                 candidateId,
                 candidate.getBrand() + " " + candidate.getModelName(),
                 candidate.getReleaseDate(),
-                (int) ChronoUnit.DAYS.between(candidate.getReleaseDate(), today));
+                candidateAgeDays);
 
         UpgradeClassification classification = classified.classification();
         AssessRequest request = new AssessRequest(

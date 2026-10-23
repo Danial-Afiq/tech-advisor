@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 21 October 2026
+> **Last consolidated:** 23 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -1461,10 +1461,19 @@ Fields:
 - `category`
 - `release_date`
 - `status`
+- `image_url` (V13, nullable) — product thumbnail from the specifications source
 - `created_at`
 - `updated_at`
 
 Canonical field is **`release_date`**.
+
+`image_url` holds MobileAPI's listing thumbnail (`image_url`, e.g.
+`https://api.mobileapi.dev/devices/{id}/thumb.png`). It is public, uncredentialed and
+loaded directly by the browser, so only absolute https URLs are stored; anything else
+becomes null rather than rejecting the specifications. A re-ingest without an image
+keeps the stored one. It is returned read-only as `imageUrl` by the catalogue API and
+is not editable through the admin CRUD. Whether MobileAPI's terms require attribution
+for displayed images has not been checked yet (§17.2).
 
 Current core category:
 - `SMARTPHONE`
@@ -1661,8 +1670,8 @@ Fields:
 `BOOLEAN NOT NULL DEFAULT FALSE`. The user's star lives on the recommendation row,
 not in a separate saved/bookmark table, so it follows the existing lifecycle
 (§18.11): supersede-and-insert copies the star from the superseded `ACTIVE` row onto
-its replacement for the same `(user_id, candidate_product_id)`, so re-assessment
-never silently unsaves it; a candidate that drops off the shortlist is deleted
+its replacement for the same `(user_id, current_device_id, candidate_product_id)`,
+so re-assessment never silently unsaves it; a candidate that drops off the shortlist is deleted
 together with its star. The flag is a user preference only - it never feeds the
 verdict, scoring or relevance sort.
 
@@ -1769,9 +1778,8 @@ When one is created (`notification/NotificationService`):
   transaction that saved an evaluation, listing only **notable** rows: verdict other
   than `NO_MEANINGFUL_CHANGE`, and either no earlier row for that candidate **on the
   same device** (superseded or not) or a different verdict from that device's most
-  recent one. It is judged per device because the `ACTIVE` index is per
-  (user, candidate), not per device (§18.2): two devices can keep taking the same row
-  from each other, and comparing with the `ACTIVE` row would re-notify on every run.
+  recent one. It is judged per device, matching the `ACTIVE` index's
+  `(user, device, candidate)` scope (§18.2).
 - **One notification per evaluation per device**, grouping its notable rows
   ("We found 3 new or updated upgrade options for your iPhone 13…"; a single one
   names the product and verdict). It links the best row (strong > considering >
@@ -1787,9 +1795,8 @@ When one is created (`notification/NotificationService`):
 
 Link lifecycle: supersede-and-insert **re-points** every notification linking to
 any of the device's rows for that candidate onto the new row (§18.11), so the link
-keeps opening the live card. While another device holds the row, the old link reads
-as no longer available rather than opening another device's card; it becomes live
-again when its own device next holds the row.
+keeps opening the live card. Another owned device's evaluation has its own active row
+and does not make this link unavailable.
 A deleted recommendation (dropped off the shortlist) leaves `NULL`. The API's
 `available` flag is true only while the linked row is `ACTIVE` on a current device of
 the user, i.e. exactly what the dashboard shows.
@@ -2158,6 +2165,13 @@ never being provisioned, not a missing sink anymore.
 - MobileAPI.dev isn't in the candidate list below (this section predates
   that decision) — added here for traceability, not because §17.1's "not
   fully confirmed" status has changed.
+- **Product images (V13, feat/declutter-device-ui):** `Payload.Specifications` gained a
+  nullable `imageUrl` (`URI`); a 7-argument constructor without it remains for sources
+  that have no images. `validate()` rejects a non-https value, and the adapter maps
+  the listing's `image_url` through `MobileApiSmartphoneSource.imageUrl`, which drops
+  a missing/unusable link instead of losing the device. No extra HTTP request: the
+  list response already carries it. The sink writes `products.image_url` with
+  `COALESCE(EXCLUDED.image_url, products.image_url)`.
 - **Bugfix (ingestion_cursors, V12, bugfix/smartphone-ingestion):** the
   default/automatic mode (`sources.mobileapi.year` unset) used to call the
   exact same URL on every single run — no `page` parameter existed
@@ -2416,6 +2430,7 @@ V9__link_price_history_to_phone_variants.sql  # ticket 1.8 — price_history.pho
 V10__add_starred_to_recommendations.sql       # ticket 4.4 — recommendations.starred (§14.12)
 V11__create_notifications.sql                 # ticket 4.4.2 — notifications (§14.14)
 V12__add_ingestion_cursors.sql                # bugfix/smartphone-ingestion — ingestion_cursors (§17.1.1)
+V13__add_product_image_url.sql                # feat/declutter-device-ui — products.image_url (§14.4)
 ```
 
 `V5` makes `users.password_hash` **NOT NULL**, so every seed, fixture, or test
@@ -2428,8 +2443,11 @@ features.
 `V6` adds `recommendations` (§14.12). `user_id`, `candidate_product_id`,
 `current_device_id`, and `trigger_event_id` carry real foreign keys. The latter two
 remain nullable so current application paths can persist an assessment before an
-upstream device/event ID is available. A partial unique index keeps one `ACTIVE` row
-per `(user_id, candidate_product_id)`; re-assessment supersedes the previous row.
+upstream device/event ID is available. `V14` replaces the original partial unique
+index so each `(user_id, current_device_id, candidate_product_id)` tuple keeps one
+`ACTIVE` row; re-assessing one owned device no longer removes another device's result.
+`NULLS NOT DISTINCT` preserves one-active-row semantics for legacy rows without a
+`current_device_id`.
 
 **CI tests a merge preview, not your branch.** The `pull_request` trigger builds your
 branch merged into `main`, so it sees migrations and NOT NULL constraints that a
@@ -2815,9 +2833,9 @@ Row contents:
 Lifecycle rules (decided 27 Sep 2026):
 
 - **Still shortlisted:** normal supersede-and-insert - the previous `ACTIVE` row for
-  that (user, candidate) becomes `SUPERSEDED` and is kept as history. Its `starred`
-  flag is carried onto the new row (§14.12), and notifications linking to it are
-  re-pointed at the new row (§14.14).
+  that (user, device, candidate) becomes `SUPERSEDED` and is kept as history. Its
+  `starred` flag is carried onto the new row (§14.12), and notifications linking to
+  it are re-pointed at the new row (§14.14).
 - **Dropped off this device's shortlist** (over budget, delisted, unverified): every
   row for that device and candidate is **deleted**, history included, not superseded.
   Users come for products that are recommended; a record that a product once was is
@@ -2885,10 +2903,13 @@ Shared behaviour (`RecommendationTriggerService`):
 - **AI step** (`AiAssessmentStep`) for every other pair: `AssessRequestFactory` builds
   the §9 request from the DB, then `RecommendationService.assessAndPersist` makes
   the one call and supersedes the deterministic row. The factory **does not invent
-  context**: if the device lacks a valid `condition`, `satisfaction_score` or
-  `purchase_date`, the preferences lack a valid `upgrade_urgency` /
-  `brand_flexibility` or contain a non-factor priority, or the candidate has no
-  `release_date`, the call is skipped and the gaps are logged. **SCRUM-38 now exposes
+  context**: if the device lacks a valid `condition` or `satisfaction_score`, the
+  preferences lack a valid `upgrade_urgency` / `brand_flexibility` or contain a
+  non-factor priority, the call is skipped and the gaps are logged. An unknown
+  `purchase_date` or candidate `release_date` no longer blocks the call; the
+  corresponding `device_age_months`, `release_date` and `age_days` fields cross the
+  Spring–FastAPI boundary as explicit JSON `null` values. Passage headers label an
+  unknown release date rather than inventing relative review age. **SCRUM-38 now exposes
   urgency, brand flexibility and weighted factor priorities through the device API**;
   a user-saved upgrade profile can supply that context. The other device/candidate
   requirements still apply. `recommendation.triggers.ai-assessment-enabled` (`RECOMMENDATION_AI_ASSESSMENT_ENABLED`,
@@ -2896,10 +2917,10 @@ Shared behaviour (`RecommendationTriggerService`):
 - **Isolation.** Every pair commits on its own; any exception is caught per pair (or
   per device for Trigger 2), so one AI or data failure never rolls back or stops the
   rest. A failed pair keeps its deterministic row.
-- **Duplicates.** Unchanged: supersede-and-insert on the existing V6 partial unique
-  index `(user_id, candidate_product_id) WHERE status='ACTIVE'`. Re-running a pair
-  leaves one `ACTIVE` row and the old one `SUPERSEDED`. **No new migration**; the
-  per-device index proposed in the ticket handoff was rejected to keep §18.2 semantics.
+- **Duplicates.** Supersede-and-insert uses the V14 partial unique index
+  `(user_id, current_device_id, candidate_product_id) NULLS NOT DISTINCT WHERE
+  status='ACTIVE'`. Re-running a device/candidate pair leaves one `ACTIVE` row and
+  the old one `SUPERSEDED`, while another owned device keeps its own active row.
 - **Logging.** Exactly one `system_log` row per run: component `TRIGGER_MARKET_EVENT`
   or `TRIGGER_DEVICE_INVENTORY`; status `SUCCESS`, `PARTIAL_SUCCESS` (some pairs
   failed), `FAILURE` (nothing succeeded) or `SKIPPED` (nothing to do: event with no
@@ -2943,7 +2964,10 @@ other users' and removed devices with 404 before preferences are accessed. The
 existing PK/FK enforces one preferences row per owned device; no migration is needed.
 
 All create/update/get/list `DeviceResponse`s return all seven preference fields
-(null when no row exists); listing still loads preferences in one query. The
+(null when no row exists); listing still loads preferences in one query. They also
+return read-only `productCategory` (the linked product's `products.category`, null
+when unlinked) so the frontend knows a linked device's type without waiting for the
+catalogue (`feat/declutter-device-ui`, additive; no migration). The
 `/devices` upgrade-profile modal sends the full profile via the existing PUT and
 uses the server response after save and reload. `deviceOptions.ts` maps priority
 labels to the twelve canonical factors and uses canonical urgency/flexibility values.
@@ -3422,6 +3446,41 @@ handler — the generic `IllegalArgumentException` mapping in
   currency and show "Price unavailable" when there is no price.
 - `DashboardSortIntegrationTest` needs real PostgreSQL (LATERAL, JSONB casts).
 
+### Per-device top picks and spec comparison — IMPLEMENTED (`feat/declutter-device-ui`)
+
+- The dashboard groups the (filtered) list under one heading per owned device, in
+  the order of each device's first row, and shows only the first
+  `TOP_RECOMMENDATIONS_PER_DEVICE` (3, in `recommendationOptions.ts`) of each
+  group; a per-device **Show all n** button reveals the rest. The cap is therefore
+  per device, so the number of cards grows with the number of devices. The "top"
+  is the server's chosen sort, so with Most relevant it is the highest tier/score.
+  It is a frontend presentation cap only: the API, counts, summary cards, filters
+  and Saved view still cover every active row. A card opened from a notification
+  (`?recommendation=`) past the cap expands its device automatically.
+- Each card has a **Compare specs** button that opens a dialog (the shared `Modal`): the owned device's specs
+  (catalogue row + the user's `spec_overrides`) beside the suggested product's
+  catalogue specs, using the existing `GET /api/devices` and
+  `GET /api/catalogue/smartphones`, with rows that differ highlighted. It shows
+  differences only; it does not judge better or worse, which stays with the
+  deterministic verdict. If either side is unknown the panel says so; a failed
+  load is not a page error.
+- `GET /api/dashboard/recommendations` rows carry `specChanges`
+  (`[{spec, deltaPct}]`, biggest change first), read from the persisted
+  `input_snapshot.computed.spec_deltas`. Those hold the *raw* observed change
+  (`factor_analysis.deterministic.factors.*.specs` holds only spec names), so each
+  numeric spec is direction-corrected with `SpecFactorCatalog.NUMERIC_SPECS`'s
+  `higherIsBetter` (plus `benchmark_score`), the rule the verdict scores with:
+  positive = better. Text specs and `price` (budget headroom) are omitted.
+  Older/malformed shapes yield `[]` rather than failing the list
+  (`RecommendationRepository.specChanges`, `DashboardSpecChangesTest`). The card
+  shows the top three as a one-line summary; in the Compare specs dialog the arrow
+  shows which way the value moved (▲ higher, ▼ lower) and the suggested value and
+  arrow are green when better or red when worse, so a lighter phone is a green ▼.
+  Differing text specs (no judgement) are only bolded. This is a
+  display of what the verdict already computed, not a second judgement.
+- Device cards with no saved budget say that one is needed for recommendations
+  (§27.10) and highlight Upgrade preferences.
+
 ## 23.5 Epic 05 — Infrastructure & DevSecOps Guardrails
 `SCRUM-31`
 
@@ -3749,8 +3808,9 @@ always collect a budget. The backend accepts `budget`/`currency` on
 `POST`/`PUT /api/devices` and returns them on every device response (§18.12); the
 `/devices` upgrade-profile modal saves them via `PUT`. A device whose step-2 profile
 is skipped has no budget and is not evaluated. The AI step
-of the triggers additionally needs `condition`, `satisfaction_score`, `purchase_date`,
-`upgrade_urgency` and `brand_flexibility`; SCRUM-38 now persists the last two through
+of the triggers additionally needs `condition`, `satisfaction_score`,
+`upgrade_urgency` and `brand_flexibility`; purchase and candidate release dates are
+optional AI context. SCRUM-38 now persists urgency and brand flexibility through
 the device API and upgrade-profile form (§18.12). If the product decides a budget should be optional,
 relax the constraint in a later migration rather than editing V6.
 
