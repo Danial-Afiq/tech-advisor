@@ -179,6 +179,9 @@ re-sorting it. The card's star toggle (`onToggleStar`, `starPending`) is shown
 only when the page handles it; the page owns confirming an unstar. The Saved
 toolbar toggle is `savedOnly` in the same filter state; `selectedFilterCount`
 and the dropdown's Clear filters deliberately ignore it (root §26.4).
+When `onDismiss` is supplied, the card also shows **Not interested**. The
+dashboard owns the reason/comment modal, calls the dismissal API, and removes
+the card only after the request succeeds (root §26.4).
 
 ---
 

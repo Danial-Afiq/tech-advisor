@@ -252,4 +252,28 @@ describe("RecommendationCard", () => {
       screen.getByRole("button", { name: "Save Samsung Galaxy S26 for My iPhone 13" })
     ).toBeDisabled();
   });
+
+  it("asks the dashboard to dismiss the selected recommendation", async () => {
+    const user = userEvent.setup();
+    const onDismiss = vi.fn();
+    const selectedRecommendation = recommendation();
+
+    render(
+      <RecommendationCard
+        recommendation={selectedRecommendation}
+        onDismiss={onDismiss}
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Not interested",
+      })
+    );
+
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(onDismiss).toHaveBeenCalledWith(
+      selectedRecommendation
+    );
+  });
 });

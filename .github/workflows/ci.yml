@@ -44,6 +44,9 @@ jobs:
       POSTGRES_DB: techadvisor_test
       POSTGRES_USER: techadvisor
       POSTGRES_PASSWORD: devpassword
+      # Keep total connections bounded across Spring test contexts in CI.
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "4"
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "0"
       ADMIN_EMAIL: test-admin@example.com
       ADMIN_PASSWORD: test-admin-password
 

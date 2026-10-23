@@ -1200,6 +1200,7 @@ overridable from the environment when you actually need to change one.
 | `CORS_ALLOWED_ORIGINS` | backend | `http://localhost:5173` (from `application.properties`) | Fly secret |
 | `JWT_SECRET` | backend | *(required; no default)* | Fly secret |
 | `JWT_EXPIRATION_SECONDS` | backend | `3600` | optional Fly secret/config |
+| `RECOMMENDATION_DISMISSAL_COOLDOWN_DAYS` | backend | `30` | optional Fly secret/config |
 | `ADMIN_EMAIL` | backend | *(required; no default)* | Fly secret |
 | `ADMIN_PASSWORD` | backend | *(required; minimum 12 characters)* | Fly secret |
 

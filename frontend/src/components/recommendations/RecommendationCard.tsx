@@ -13,6 +13,7 @@ import type { DashboardRecommendation } from "./types";
 export function RecommendationCard({
   recommendation,
   onToggleStar,
+  onDismiss,
   starPending = false,
   highlighted = false,
   showDevice = true,
@@ -22,6 +23,8 @@ export function RecommendationCard({
   recommendation: DashboardRecommendation;
   /** Shows the star toggle. The caller decides whether unstarring needs confirming. */
   onToggleStar?: (recommendation: DashboardRecommendation) => void;
+  /** Opens the feedback form before dismissing this recommendation. */
+  onDismiss?: (recommendation: DashboardRecommendation) => void;
   /** Disables the star while its save/remove request runs. */
   starPending?: boolean;
   /** Outlines the card, e.g. after opening it from a notification. */
@@ -153,12 +156,23 @@ export function RecommendationCard({
         </div>
 
         {/* Pinned to the bottom so cards in a row line up whatever their text length. */}
-        <div className="mt-auto border-t border-white/[0.09] pt-4">
+        <div className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.09] pt-4">
           <span className="inline-flex rounded-full border border-white/[0.09] bg-white/[0.04] px-3 py-[7px] text-[12px] font-semibold text-[#bdc7d7]">
             {evidenceGradeText(
               recommendation.confidence
             )}
           </span>
+
+          {onDismiss && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-[#ff9ca5] hover:bg-[#ff6d7a]/10 hover:text-[#ffb6bd]"
+              onClick={() => onDismiss(recommendation)}
+            >
+              Not interested
+            </Button>
+          )}
         </div>
       </div>
     </Card>

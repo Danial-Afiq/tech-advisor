@@ -1735,6 +1735,30 @@ Keep deterministic and model evidence separate:
 
 Never collapse these into one opaque score.
 
+## 14.12a `recommendation_dismissals` — V15, ticket 3.10 (IMPLEMENTED)
+
+Stores a user's structured feedback after they dismiss an `ACTIVE` dashboard
+recommendation. The dismissal endpoint changes the recommendation status to
+`DISMISSED` and inserts this audit row atomically.
+
+Fields:
+- `id`
+- `recommendation_id` — nullable FK to `recommendations`, `ON DELETE SET NULL`;
+  unique while present
+- `user_id` — FK to `users`, cascade
+- `candidate_product_id` — FK to `products`, cascade
+- `reason` — `TOO_EXPENSIVE`, `MISSING_REQUIRED_FEATURE`,
+  `NOT_ENOUGH_IMPROVEMENT`, `NOT_INTERESTED`, or `OTHER`
+- `comment` — optional, at most 1000 characters
+- `dismissed_at`
+- `cooldown_until`
+
+Candidate pruning excludes that product for the user while `cooldown_until` is
+in the future. This cooldown is user-and-product scoped, so it applies across
+the user's owned devices. `RECOMMENDATION_DISMISSAL_COOLDOWN_DAYS` configures
+the period (default 30, minimum 1). The historical recommendation remains
+`DISMISSED`; a later trigger may create a new `ACTIVE` row after the cooldown.
+
 ## 14.13 `system_log`
 
 Fields:
@@ -1849,6 +1873,9 @@ users 1 ── N recommendations
 user_devices 1 ── N recommendations
 products 1 ── N recommendations
 market_events 1 ── N recommendations
+users 1 ── N recommendation_dismissals
+products 1 ── N recommendation_dismissals
+recommendations 1 ── 0..1 recommendation_dismissals  (nullable, ON DELETE SET NULL — §14.12a)
 users 1 ── N notifications
 recommendations 1 ── N notifications  (nullable, ON DELETE SET NULL — §14.14)
 ```
@@ -2431,6 +2458,8 @@ V10__add_starred_to_recommendations.sql       # ticket 4.4 — recommendations.s
 V11__create_notifications.sql                 # ticket 4.4.2 — notifications (§14.14)
 V12__add_ingestion_cursors.sql                # bugfix/smartphone-ingestion — ingestion_cursors (§17.1.1)
 V13__add_product_image_url.sql                # feat/declutter-device-ui — products.image_url (§14.4)
+V14__scope_active_recommendations_to_device.sql # active uniqueness per owned device (§14.12)
+V15__add_recommendation_dismissals.sql        # ticket 3.10 — dismissal feedback/cooldowns (§14.12a)
 ```
 
 `V5` makes `users.password_hash` **NOT NULL**, so every seed, fixture, or test
@@ -3107,6 +3136,7 @@ JWT_EXPIRATION_SECONDS    # optional; defaults to 3600 and must be positive
 ADMIN_EMAIL               # required bootstrap administrator email
 ADMIN_PASSWORD            # required; minimum 12 characters
 RECOMMENDATION_AI_ASSESSMENT_ENABLED # optional, commented out; default true (§18.12)
+RECOMMENDATION_DISMISSAL_COOLDOWN_DAYS # optional, commented out; default 30
 NOTIFICATIONS_MAX_PER_USER # optional, commented out; default 10 (§14.14)
 ```
 
@@ -3182,6 +3212,7 @@ SPRING_DATASOURCE_PASSWORD
 CORS_ALLOWED_ORIGINS
 JWT_SECRET
 JWT_EXPIRATION_SECONDS  # optional; defaults to 3600 and must be positive
+RECOMMENDATION_DISMISSAL_COOLDOWN_DAYS # optional; defaults to 30 and must be positive
 ADMIN_EMAIL             # required bootstrap administrator email
 ADMIN_PASSWORD          # required; minimum 12 characters
 AI_SERVICE_TOKEN        # Spring's half of the shared secret for POST /assess
@@ -3646,6 +3677,20 @@ including explicit fallbacks for missing price/reasoning and `-`/`null` evidence
 - Tests: `DashboardStarIntegrationTest` (real PostgreSQL: star/unstar round trip,
   401, other user / superseded / non-current device / unknown id → 404, star
   carried across re-assessment), `DashboardPage.test.tsx`, `RecommendationCard.test.tsx`.
+
+### Recommendation dismissal feedback — IMPLEMENTED (ticket 3.10)
+
+- Every dashboard card offers **Not interested**. It opens a shared modal with a
+  required structured reason and an optional comment of at most 1000 characters.
+  A successful dismissal removes the card from the current view and reports a
+  toast; a failed request leaves it visible and keeps the modal open.
+- `POST /api/dashboard/recommendations/{id}/dismiss` returns `204` after
+  atomically marking one of the caller's `ACTIVE` recommendations on a current
+  owned device as `DISMISSED` and recording the feedback. Unknown, stale, or
+  another user's IDs return `404`.
+- The candidate product is excluded from that user's future shortlists during
+  the configured cooldown (default 30 days), without changing deterministic
+  scores or the AI contract. See §14.12a.
 
 ---
 

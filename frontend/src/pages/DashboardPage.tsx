@@ -1,12 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type SubmitEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   DEFAULT_SORT,
+  DISMISSAL_REASON_OPTIONS,
   SORT_OPTIONS,
+  dismissRecommendation,
   listDashboardRecommendations,
   parseSort,
   setRecommendationStarred,
   type DashboardRecommendation,
+  type RecommendationDismissalReason,
   type SortOption,
 } from "../api/dashboard";
 import { signOut } from "../api/auth";
@@ -19,7 +22,7 @@ import { RECOMMENDATION_QUERY_PARAM } from "../components/notifications/notifica
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Callout } from "../components/ui/Callout";
-import { Select } from "../components/ui/Form";
+import {Field, FormError, Select, Textarea,} from "../components/ui/Form";
 import { LoadingBlock } from "../components/ui/LoadingBlock";
 import { Modal, ModalActions } from "../components/ui/Modal";
 import { ToastStack } from "../components/ui/ToastStack";
@@ -78,6 +81,16 @@ export default function DashboardPage() {
   const specs = useComparisonSpecs();
   const [pendingUnstar, setPendingUnstar] =
     useState<DashboardRecommendation | null>(null);
+  const [pendingDismissal, setPendingDismissal] =
+    useState<DashboardRecommendation | null>(null);
+  const [dismissalReason, setDismissalReason] =
+    useState<RecommendationDismissalReason>("NOT_INTERESTED");
+  const [dismissalComment, setDismissalComment] =
+    useState("");
+  const [dismissalPending, setDismissalPending] =
+    useState(false);
+  const [dismissalError, setDismissalError] =
+    useState<string | null>(null);
   const [starPendingIds, setStarPendingIds] = useState<ReadonlySet<number>>(
     () => new Set()
   );
@@ -257,6 +270,86 @@ export default function DashboardPage() {
     }
 
     setPendingUnstar(null);
+  };
+
+  const openDismissal = (
+    recommendation: DashboardRecommendation
+  ) => {
+    setPendingDismissal(recommendation);
+    setDismissalReason("NOT_INTERESTED");
+    setDismissalComment("");
+    setDismissalError(null);
+  };
+
+  const closeDismissal = () => {
+    if (!dismissalPending) {
+      setPendingDismissal(null);
+      setDismissalError(null);
+    }
+  };
+
+  const submitDismissal = async (
+    event: SubmitEvent<HTMLFormElement>
+  ) => {
+    event.preventDefault();
+
+    if (!pendingDismissal) {
+      return;
+    }
+
+    const recommendation = pendingDismissal;
+    const id = recommendation.recommendationId;
+
+    setDismissalPending(true);
+    setDismissalError(null);
+
+    try {
+      await dismissRecommendation(
+        id,
+        dismissalReason,
+        dismissalComment
+      );
+
+      setRecommendations((current) =>
+        current.filter(
+          (row) => row.recommendationId !== id
+        )
+      );
+
+      setPendingDismissal(null);
+
+      pushToast(
+        "Recommendation dismissed",
+        `${candidateName(recommendation)} has been removed from your dashboard.`,
+        "✓"
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        void navigate(LOGIN_PATH, { replace: true });
+        return;
+      }
+
+      if (err instanceof ApiError && err.status === 404) {
+        setPendingDismissal(null);
+        setRefreshing(true);
+        setReloadCount((count) => count + 1);
+
+        pushToast(
+          "Recommendation was just updated",
+          "Your dashboard has been refreshed with the latest recommendations.",
+          "!"
+        );
+        return;
+      }
+
+      setDismissalError(
+        err instanceof Error
+          ? err.message
+          : "The recommendation could not be dismissed."
+      );
+    } finally {
+      setDismissalPending(false);
+    }
   };
 
   const handleSortChange = (newSort: SortOption) => {
@@ -541,6 +634,7 @@ export default function DashboardPage() {
                         image={specs.candidateImage(recommendation.candidateProductId)}
                         highlighted={recommendation.recommendationId === highlightId}
                         onToggleStar={handleToggleStar}
+                        onDismiss={openDismissal}
                         starPending={starPendingIds.has(
                           recommendation.recommendationId
                         )}
@@ -583,6 +677,81 @@ export default function DashboardPage() {
               Remove
             </Button>
           </ModalActions>
+        </Modal>
+      )}
+
+      {pendingDismissal && (
+        <Modal
+          eyebrow="Recommendation feedback"
+          title="Dismiss this recommendation?"
+          width="max-w-[520px]"
+          onClose={closeDismissal}
+        >
+          <p className="mt-0 mb-4 text-[13px] leading-[1.6] text-[#8fa0b8]">
+            Tell us why {candidateName(pendingDismissal)} is not suitable
+            for {` ${pendingDismissal.currentDeviceName}`}. This product
+            will be excluded temporarily while the feedback cooldown is
+            active.
+          </p>
+
+          <form onSubmit={submitDismissal}>
+            <Field
+              label="Reason"
+              htmlFor="dismissal-reason"
+            >
+              <Select
+                id="dismissal-reason"
+                value={dismissalReason}
+                options={DISMISSAL_REASON_OPTIONS}
+                onChange={(event) =>
+                  setDismissalReason(
+                    event.target
+                      .value as RecommendationDismissalReason
+                  )
+                }
+              />
+            </Field>
+
+            <Field
+              label="Additional comment (optional)"
+              htmlFor="dismissal-comment"
+            >
+              <Textarea
+                id="dismissal-comment"
+                value={dismissalComment}
+                maxLength={1000}
+                placeholder="Add any extra details that may improve future recommendations."
+                onChange={(event) =>
+                  setDismissalComment(event.target.value)
+                }
+              />
+
+              <p className="m-0 text-right text-[11px] text-[#8fa0b8]">
+                {dismissalComment.length}/1000
+              </p>
+            </Field>
+
+            <FormError message={dismissalError} />
+
+            <ModalActions>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={dismissalPending}
+                onClick={closeDismissal}
+              >
+                Cancel
+              </Button>
+
+              <Button
+                type="submit"
+                variant="danger"
+                loading={dismissalPending}
+              >
+                Dismiss recommendation
+              </Button>
+            </ModalActions>
+          </form>
         </Modal>
       )}
 
