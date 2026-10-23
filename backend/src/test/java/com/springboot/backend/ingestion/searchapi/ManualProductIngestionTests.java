@@ -191,6 +191,61 @@ class ManualProductIngestionTests {
         verifyNoInteractions(api);
     }
 
+    @Test void catalogueSearchListsLooseMatchesClosestFirstWithoutCallingSearchApi() throws Exception {
+        insert("ManualTargetTest", "GeForce RTX 3060 Ti", "GPU", "VERIFIED");
+        insert("ManualTargetTest", "GeForce RTX 3060 12GB", "GPU", "VERIFIED");
+        insert("ManualTargetTest", "GeForce RTX 3060 8GB", "GPU", "UNVERIFIED");
+        mvc.perform(get("/api/admin/ingestion/searchapi/catalogue").param("q", "manualtargettest rtx 3060")
+                .with(user("admin").roles("ADMIN")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].name").value("ManualTargetTest GeForce RTX 3060 12GB"))
+                .andExpect(jsonPath("$[0].category").value("GPU"))
+                .andExpect(jsonPath("$[1].name").value("ManualTargetTest GeForce RTX 3060 Ti"));
+        mvc.perform(get("/api/admin/ingestion/searchapi/catalogue").param("q", " ")
+                .with(user("admin").roles("ADMIN"))).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/admin/ingestion/searchapi/catalogue").param("q", "rtx 3060")
+                .with(user("user").roles("USER"))).andExpect(status().isForbidden());
+        verifyNoInteractions(api);
+    }
+
+    @Test void aChosenProductIdDrivesCandidatesAndTheRunWhereTheNameWouldBeAmbiguous() throws Exception {
+        // "Earlier Phone" also matches "Earlier Phone 5G" by name, since 5G is a phone suffix; the id does not.
+        long fiveG = insert("ManualTargetTest", "Earlier Phone 5G", "SMARTPHONE", "VERIFIED");
+        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
+                .header("Idempotency-Key", "ambiguous-name-key").contentType("application/json")
+                .content(body("ManualTargetTest Earlier Phone"))).andExpect(status().isBadRequest());
+
+        mvc.perform(post("/api/admin/ingestion/searchapi/candidates").with(user("admin").roles("ADMIN"))
+                .contentType("application/json").content("{\"productId\":" + first + "}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].externalProductId").value("mock-product"));
+        verify(api).shopping(any(), eq("ManualTargetTest Earlier Phone"));
+
+        String request = json.writeValueAsString(Map.of("sources", java.util.List.of(SearchApiSource.ID),
+                "productId", first, "externalProductId", "mock-product"));
+        String result = mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
+                .header("Idempotency-Key", "chosen-id-key").contentType("application/json").content(request))
+                .andExpect(status().isAccepted()).andExpect(jsonPath("$.product.productId").value(first))
+                .andExpect(jsonPath("$.product.productName").value("ManualTargetTest Earlier Phone"))
+                .andReturn().getResponse().getContentAsString();
+        String id = json.readTree(result).path("runId").asText();
+        await(id);
+        assertEquals("SUCCESS", store.get(id).status);
+        assertEquals(0, db.queryForObject("SELECT count(*) FROM external_product_mapping WHERE product_id=?", Integer.class, fiveG));
+    }
+
+    @Test void aChosenProductIdMustBeEligibleAndCarryASelectedListing() throws Exception {
+        long unverified = insert("ManualTargetTest", "Unverified Phone", "SMARTPHONE", "UNVERIFIED");
+        mvc.perform(post("/api/admin/ingestion/searchapi/candidates").with(user("admin").roles("ADMIN"))
+                .contentType("application/json").content("{\"productId\":" + unverified + "}"))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").isNotEmpty());
+        mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
+                .header("Idempotency-Key", "missing-listing-key").contentType("application/json")
+                .content(json.writeValueAsString(Map.of("sources", java.util.List.of(SearchApiSource.ID), "productId", first))))
+                .andExpect(status().isBadRequest());
+        assertTrue(store.history(0, 20, "", "").isEmpty());
+        verifyNoInteractions(api);
+    }
+
     private void await(String id) throws Exception {
         long deadline = System.nanoTime() + Duration.ofSeconds(15).toNanos();
         while (System.nanoTime() < deadline) {

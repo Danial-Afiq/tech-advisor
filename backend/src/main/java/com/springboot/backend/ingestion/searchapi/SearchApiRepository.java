@@ -64,6 +64,29 @@ public class SearchApiRepository {
         return ProductMatcher.matchCatalogue(rawName, candidates, Product::name, Product::model).stream()
                 .limit(2).toList();
     }
+    /**
+     * Loose catalogue search behind the admin product picker: every typed word must appear in
+     * "brand model" in any order, so "RTX 3060" lists "NVIDIA GeForce RTX 3060 12GB" and the
+     * Ti beside it. Safe to be loose because the admin chooses from the list and nothing here
+     * calls SearchAPI. Closest names (fewest extra words) come first.
+     */
+    public List<Product> searchCatalogue(String query, SearchApiSettings s, int limit) {
+        List<String> words = ProductMatcher.tokens(query == null ? "" : query);
+        if (words.isEmpty()) return List.of();
+        // tokens() leaves only letters and digits, so no LIKE wildcard can reach the pattern.
+        String[] patterns = words.stream().map(word -> "%" + word + "%").toArray(String[]::new);
+        var rows = db.query("""
+                SELECT id, brand, model_name, category FROM products
+                WHERE status='VERIFIED' AND category = ANY(string_to_array(?, ','))
+                  AND (brand || ' ' || model_name) ILIKE ALL (?)
+                ORDER BY id
+                """, SearchApiRepository::product, categories(s), patterns);
+        return rows.stream()
+                .filter(row -> ProductMatcher.tokens(row.name()).containsAll(words))
+                .sorted(java.util.Comparator.comparingInt((Product row) -> ProductMatcher.tokens(row.name()).size())
+                        .thenComparing(Product::name))
+                .limit(limit).toList();
+    }
     /** Same match, without the status/category filter - distinguishes "doesn't exist" from "exists but ineligible". */
     public List<Product> namedCatalogueProducts(String rawName) {
         var candidates = db.query("SELECT " + PRODUCT_COLUMNS + " FROM products ORDER BY id",
