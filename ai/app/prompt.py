@@ -119,9 +119,11 @@ def render_passage(
     source = sanitise_header_field(chunk.source_name)
     source_type = settings.source_type_for(chunk.source_name)
     published = chunk.published_at.isoformat() if chunk.published_at else "undated"
-    if chunk.published_at:
+    if chunk.published_at and request.candidate.release_date:
         age = (chunk.published_at - request.candidate.release_date).days
         age_label = str(age) + "d after release"
+    elif chunk.published_at:
+        age_label = "release date unknown"
     else:
         age_label = "age unknown"
     header = "[%s | %s | %s | %s | %s]" % (ref, source, source_type, published, age_label)

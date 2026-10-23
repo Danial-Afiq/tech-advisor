@@ -36,7 +36,7 @@ public record AssessRequest(
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     public record OwnedDevice(
             String name,
-            int deviceAgeMonths,
+            Integer deviceAgeMonths,
             String condition,
             int satisfactionScore,
             List<String> useCases) {
@@ -60,7 +60,7 @@ public record AssessRequest(
     }
 
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
-    public record Candidate(long productId, String name, LocalDate releaseDate, int ageDays) {}
+    public record Candidate(long productId, String name, LocalDate releaseDate, Integer ageDays) {}
 
     /**
      * {@code current}/{@code candidate} are {@code float | str | None} on the

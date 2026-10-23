@@ -119,10 +119,21 @@ class AssessRequestFactoryTest {
         assertEquals(List.of(
                 "user_devices.condition",
                 "user_devices.satisfaction_score",
-                "user_devices.purchase_date",
                 "device_preferences.upgrade_urgency",
-                "device_preferences.brand_flexibility",
-                "products.release_date (candidate 812)"), built.missing());
+                "device_preferences.brand_flexibility"), built.missing());
+    }
+
+    @Test
+    void missingPurchaseAndReleaseDatesRemainValidUnknownContext() {
+        device.setPurchaseDate(null);
+        candidate.setReleaseDate(null);
+
+        AssessRequestFactory.Built built = factory.build(9L, classified, null);
+
+        assertTrue(built.complete(), () -> "unexpected gaps: " + built.missing());
+        assertNull(built.request().userContext().ownedDevice().deviceAgeMonths());
+        assertNull(built.request().candidate().releaseDate());
+        assertNull(built.request().candidate().ageDays());
     }
 
     @Test

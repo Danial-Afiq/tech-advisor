@@ -47,8 +47,8 @@ public class RecommendationRepository {
      * the accompanying {@code system_log} failure row - in the same
      * transaction, so the failure and the recommendation it belongs to are
      * never written separately (AGENTS.md §10). The previous ACTIVE row for
-     * the same (user, candidate) pair, if any, is superseded first: this is
-     * "per-user/per-product" persistence, one current answer per pair.
+     * the same (user, device, candidate) tuple, if any, is superseded first:
+     * each owned device keeps its own current answer.
      */
     public long save(RecommendationRecord rec, Map<String, Object> degradedLog) {
         Long id = tx.execute(status -> {
@@ -297,21 +297,15 @@ public class RecommendationRepository {
     }
 
     /**
-     * Supersedes the previous ACTIVE row for the same (user, candidate) pair,
-     * if any, then inserts the new one: this is "per-user/per-product"
-     * persistence, one current answer per pair. The user's star is carried
-     * onto the new row, so re-assessment never silently unsaves it.
+     * Supersedes the previous ACTIVE row for the same (user, device, candidate)
+     * tuple, if any, then inserts the new one. The user's star is carried onto
+     * the new row, so re-assessment never silently unsaves it.
      *
-     * <p>Notifications work per <em>device</em>. The ACTIVE index is per (user,
-     * candidate), so two of a user's devices can keep taking the same row from
-     * each other; comparing against the ACTIVE row would re-notify on every
-     * re-run. Instead the new row is compared with this device's own most recent
-     * row for the candidate, superseded or not, and recorded in {@code notables}
-     * only when it is not {@code NO_MEANINGFUL_CHANGE} and there is no such row
-     * or its verdict differs. Every notification linking to any of this device's
-     * rows for the candidate is re-pointed at the new row, so it keeps (or gets
-     * back) a live link; one whose row now belongs to another device reads as no
-     * longer available until its own device holds the row again. Callers own the
+     * <p>The new row is compared with this device's own most recent row for the
+     * candidate, superseded or not, and recorded in {@code notables} only when
+     * it is not {@code NO_MEANINGFUL_CHANGE} and there is no such row or its
+     * verdict differs. Every notification linking to an older row for this
+     * device and candidate is re-pointed at the new row. Callers own the
      * transaction.
      */
     private long supersedeAndInsert(RecommendationRecord rec, Notables notables) {
@@ -324,10 +318,11 @@ public class RecommendationRepository {
 
         boolean starred = db.queryForList(
                 "UPDATE recommendations SET status='SUPERSEDED' "
-                        + "WHERE user_id=? AND candidate_product_id=? AND status='ACTIVE' "
+                        + "WHERE user_id=? AND candidate_product_id=? "
+                        + "AND current_device_id IS NOT DISTINCT FROM ?::bigint AND status='ACTIVE' "
                         + "RETURNING starred",
                 Boolean.class,
-                rec.userId(), rec.candidateProductId())
+                rec.userId(), rec.candidateProductId(), rec.currentDeviceId())
                 .contains(Boolean.TRUE);
 
         long newId = db.queryForObject(
