@@ -595,8 +595,10 @@ that way - bounding the candidate set is what bounds every downstream AI cost.
 
 **Broad scheduled catalogue discovery remains separate work.** The filter is exercised
 by tests and seeded data. A named admin SearchAPI run can target only an existing
-VERIFIED smartphone after the admin selects a validated provider identity and the
-worker revalidates that choice; SearchAPI does not create catalogue or price rows.
+VERIFIED smartphone after the admin selects a validated provider identity. The
+single-instance MVP keeps the picker's validated server-only token in memory for ten
+minutes so the worker can use the exact selection without a second unstable Shopping
+lookup; SearchAPI does not create catalogue or price rows.
 
 **Automated catalogue population and subsequent refreshes come from MobileAPI.dev
 ingestion** (ticket 1.2, `MobileApiSmartphoneSource`/`SmartphoneCatalogSink`,
@@ -2083,10 +2085,15 @@ columns, types, primary keys, foreign-key targets and exact row counts read from
 `information_schema`. It never returns row contents.
 
 The SearchAPI source is labelled **SearchAPI customer reviews** in the source list.
-Selecting it shows a required **Smartphone name** field. `POST
-/api/admin/ingestion/searchapi/candidates` returns up to 20 validated product titles
-and external IDs; provider product tokens never reach the browser. The admin selects
-one candidate before starting the run. The backend accepts `productName` plus that
+Selecting it shows a required **Smartphone name** field with verified-catalogue
+suggestions for partial input. `POST
+/api/admin/ingestion/searchapi/candidates` first resolves that text to one existing
+VERIFIED SMARTPHONE, searches with its canonical catalogue name, and returns up to
+20 validated product titles and external IDs; provider product tokens never reach
+the browser. Both SearchAPI's top-level `shopping_results` and documented nested
+`categorized_shopping_results[*].shopping_results` shapes are accepted. The admin
+selects one candidate before starting the run. The backend accepts `productName`
+plus that
 `externalProductId` on `POST /api/admin/ingestion/runs`. **SearchAPI never writes
 `products`/`phone`; MobileAPI is the automated feed and the admin catalogue API is
 the manual correction path (§17.4, revised 6 Oct 2026).** An
@@ -2094,8 +2101,11 @@ existing exact case-insensitive, whitespace-normalized brand/model or unique
 model-only name resolves to a VERIFIED SMARTPHONE via `ProductMatcher.matchCatalogue`;
 an unknown brand/full-model name is rejected before admission rather than creating
 one. The target persists in `RunLog.product`, participates in idempotency, survives
-restarts and appears in history. API clients omitting both fields and scheduled runs
-retain default selection. No migration is needed.
+restarts and appears in history. Picker tokens are held only in the singleton
+backend's ten-minute in-memory cache and never returned to the browser. A cache miss
+after a restart or expiry falls back to the prior worker-side lookup. API clients
+omitting both fields and scheduled runs retain default selection. No migration is
+needed.
 
 `ingestion-demo` remains a real Spring profile, but only for enabling the
 simulated data sources (`SimulatedSources`/`SimulationSink`) for local/demo
@@ -2372,9 +2382,11 @@ scrape. It is opt-in, and enabling it without `SEARCHAPI_API_KEY` fails startup.
 rows, and SearchAPI never creates one.** ADMIN catalogue CRUD is the only manual
 create/update/delete path (revised 6 Oct 2026; SearchAPI originally could create via
 an admin-named run — that path is removed). Manual discovery exposes validated
-titles and external IDs only. The worker revalidates the admin-selected ID before
-caching its server-only token, and an admin-typed name is matched against the
-existing catalogue via `ProductMatcher.matchCatalogue` (fuzzy, brand+model or a
+titles and external IDs only. For the current single-instance MVP, the picker keeps
+validated tokens in a ten-minute in-memory cache; the worker consumes the exact
+admin-selected token without repeating the Shopping query. A restart or expiry
+falls back to worker-side rediscovery and revalidation. An admin-typed name is
+matched against the existing catalogue via `ProductMatcher.matchCatalogue` (fuzzy, brand+model or a
 bare model name alone — same suffix tolerance already proven against Google
 Shopping titles, not exact-string equality) rather than promoted into a new row.
 No catalogue match fails closed: ingest the device via MobileAPI or add/correct it
@@ -2382,11 +2394,12 @@ through the admin catalogue API first. Matching
 rejects accessories, used/refurbished products, conflicting models, and unknown
 wording. V7's `external_product_mapping` scopes cache entries by
 product/provider/locale/canonical name. A clearly invalid cached token gets one
-rediscovery; there is no TTL, pagination, or extra refresh request.
+rediscovery; the persistent mapping has no TTL, pagination, or extra refresh request.
 
 Each product uses two review searches plus one discovery when uncached (3 HTTP
-requests); the admin picker adds one preview search. `SourceContext` caps every
-source at 10 requests per run, so `SEARCHAPI_MAX_PRODUCTS_PER_RUN`
+requests). A normal named admin flow uses its picker search as that discovery, then
+the two review searches; a picker-cache miss adds worker rediscovery. `SourceContext`
+caps every source at 10 requests per run, so `SEARCHAPI_MAX_PRODUCTS_PER_RUN`
 tops out at `floor(10/3) = 3` (validated 1-3) — raising it further requires raising that shared
 per-source ceiling first, not just the setting. SearchAPI's application cooldown
 is zero, while a provider `Retry-After` remains authoritative. An untargeted run
@@ -3128,7 +3141,7 @@ SEARCHAPI_API_KEY          # backend only; required only when source enabled
 SEARCHAPI_GL               # sg
 SEARCHAPI_HL               # en
 SEARCHAPI_LOCATION         # Singapore
-SEARCHAPI_MAX_PRODUCTS_PER_RUN # 1 (allowed 1-3; SourceContext's 10-request/run cap and
+SEARCHAPI_MAX_PRODUCTS_PER_RUN # 3 (allowed 1-3; SourceContext's 10-request/run cap and
                                 # 3 requests/uncached product make 3 the real ceiling)
 AI_INGESTION_EMBEDDER       # minishlab/potion-retrieval-32M
 JWT_SECRET

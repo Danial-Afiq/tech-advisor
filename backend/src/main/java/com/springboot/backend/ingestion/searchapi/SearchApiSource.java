@@ -8,7 +8,11 @@ import com.springboot.backend.ingestion.core.SourceContext;
 import com.springboot.backend.ingestion.searchapi.ProductMatcher.ProductName;
 import static com.springboot.backend.ingestion.core.IngestionFailure.Code.*;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -19,9 +23,15 @@ import tools.jackson.databind.JsonNode;
 public class SearchApiSource implements IngestionSource {
     public static final String ID = "searchapi-google-product-reviews";
     public static final String PROVIDER = "SEARCHAPI_GOOGLE_SHOPPING";
+    private static final Duration CANDIDATE_TTL = Duration.ofMinutes(10);
     private final SearchApiSettings settings;
     private final SearchApiRepository repository;
     private final SearchApiClient client;
+    // Deliberately process-local for the single-instance MVP. A miss retains the safe
+    // worker-side discovery path, while the normal picker flow avoids a second live search.
+    private final Map<CandidateKey, CandidateEntry> candidateTokens = new ConcurrentHashMap<>();
+    private record CandidateKey(String productName, String externalProductId) {}
+    private record CandidateEntry(ProductMatcher.Match match, Instant expiresAt) {}
     public SearchApiSource(SearchApiSettings settings, SearchApiRepository repository,
                            SearchApiClient client, IngestionSettings ingestion) {
         this.settings = settings; this.repository = repository; this.client = client;
@@ -32,8 +42,16 @@ public class SearchApiSource implements IngestionSource {
     @Override public Duration cooldown() { return Duration.ZERO; }
     public List<ProductMatcher.Candidate> findCandidates(SourceContext context, ProductName requested)
             throws Exception {
-        return ProductMatcher.candidates(requested.brand(), requested.model(),
+        var matches = ProductMatcher.candidateMatches(requested.brand(), requested.model(),
                 client.shopping(context, requested.canonicalName()));
+        Instant now = context.now();
+        candidateTokens.entrySet().removeIf(entry -> !entry.getValue().expiresAt().isAfter(now));
+        Instant expiresAt = now.plus(CANDIDATE_TTL);
+        for (var match : matches)
+            candidateTokens.put(new CandidateKey(requested.canonicalName(), match.externalId()),
+                    new CandidateEntry(match, expiresAt));
+        return matches.stream().map(match ->
+                new ProductMatcher.Candidate(match.externalId(), match.title())).toList();
     }
     @Override public void ingest(SourceContext context, Consumer<Payload> output) throws Exception {
         // MobileAPI is the sole source of truth for `products` rows - a target with no productId
@@ -52,10 +70,18 @@ public class SearchApiSource implements IngestionSource {
         for (var product : products) {
             context.check();
             String selectedExternalId = context.product() == null ? null : context.product().externalProductId();
+            var preview = selectedExternalId == null ? Optional.<ProductMatcher.Match>empty()
+                    : takeCandidate(product.name(), selectedExternalId, context.now());
             var cached = selectedExternalId == null ? repository.token(product, settings)
                     : java.util.Optional.<String>empty();
             String token;
-            if (cached.isPresent()) token = cached.get();
+            if (preview.isPresent()) {
+                var match = preview.get();
+                context.check(); repository.cache(product, settings, match, context.now());
+                token = match.token();
+                emitPriceIfKnown(product, match, context, output);
+            }
+            else if (cached.isPresent()) token = cached.get();
             else {
                 try {
                     var match = discover(context, product, selectedExternalId);
@@ -96,6 +122,10 @@ public class SearchApiSource implements IngestionSource {
             if (!reviews.isEmpty()) output.accept(new Payload(ID, Long.toString(product.id()), context.now(),
                     new Payload.ReviewBatch(product.id(), reviews)));
         }
+    }
+    private Optional<ProductMatcher.Match> takeCandidate(String productName, String externalProductId, Instant now) {
+        var entry = candidateTokens.remove(new CandidateKey(productName, externalProductId));
+        return entry != null && entry.expiresAt().isAfter(now) ? Optional.of(entry.match()) : Optional.empty();
     }
     private ProductMatcher.Match discover(SourceContext context, SearchApiRepository.Product product,
             String externalProductId) throws Exception {

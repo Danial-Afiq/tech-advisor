@@ -96,10 +96,10 @@ class ManualProductIngestionTests {
         doReturn(json.readTree("""
                 [{"title":"AutoCreateTest Choice Phone 256GB","product_id":"choice-256","product_token":"hidden-a"},
                  {"title":"AutoCreateTest Choice Phone 512GB","product_id":"choice-512","product_token":"hidden-b"}]
-                """)).when(api).shopping(any(), eq("AutoCreateTest Choice Phone"));
+                """), json.createArrayNode()).when(api).shopping(any(), eq("AutoCreateTest Choice Phone"));
 
-        // Candidate discovery itself never touches our catalogue, but starting a run against one
-        // of the discovered candidates does - MobileAPI must have already created this product.
+        // Candidate discovery resolves the catalogue row first, then searches SearchAPI with its
+        // canonical brand/model. MobileAPI must already have created this product.
         insert("AutoCreateTest", "Choice Phone", "SMARTPHONE", "VERIFIED");
 
         mvc.perform(post("/api/admin/ingestion/searchapi/candidates")
@@ -118,6 +118,9 @@ class ManualProductIngestionTests {
                 .andReturn().getResponse().getContentAsString();
         String id = json.readTree(result).path("runId").asText();
         await(id);
+        // The worker consumes the server-side picker snapshot instead of making a second,
+        // potentially different Shopping request for the selected external ID.
+        verify(api, times(1)).shopping(any(), eq("AutoCreateTest Choice Phone"));
         assertEquals("choice-512", db.queryForObject("""
                 SELECT m.external_product_id FROM external_product_mapping m
                 JOIN products p ON p.id=m.product_id
@@ -128,6 +131,16 @@ class ManualProductIngestionTests {
         mvc.perform(post("/api/admin/ingestion/runs")
                 .with(user("admin").roles("ADMIN")).header("Idempotency-Key", "selected-choice-key")
                 .contentType("application/json").content(changedSelection)).andExpect(status().isConflict());
+    }
+
+    @Test void candidateLookupRejectsAnUnknownCatalogueNameBeforeCallingSearchApi() throws Exception {
+        mvc.perform(post("/api/admin/ingestion/searchapi/candidates")
+                .with(user("admin").roles("ADMIN")).contentType("application/json")
+                .content("{\"productName\":\"AutoCreateTest Unknown Phone\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("catalogue")));
+
+        verifyNoInteractions(api);
     }
 
     @Test void resolvesNamePersistsTargetAndExecutesOnlyTheRequestedProduct() throws Exception {

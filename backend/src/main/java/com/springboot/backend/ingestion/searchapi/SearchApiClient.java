@@ -18,13 +18,32 @@ public class SearchApiClient {
     public SearchApiClient(SearchApiSettings settings) { this.settings = settings; }
 
     public JsonNode shopping(SourceContext context, String query) throws Exception {
-        return fetch(context, Map.of("engine", "google_shopping", "q", query), "shopping_results");
+        JsonNode root = fetchRoot(context, Map.of("engine", "google_shopping", "q", query));
+        var results = json.createArrayNode();
+        appendArray(root, "shopping_results", results);
+
+        JsonNode categories = root.path("categorized_shopping_results");
+        if (!categories.isMissingNode() && !categories.isNull()) {
+            if (!categories.isArray()) throw new IngestionFailure(SEARCHAPI_MALFORMED_RESPONSE);
+            for (JsonNode category : categories) {
+                if (!category.isObject()) throw new IngestionFailure(SEARCHAPI_MALFORMED_RESPONSE);
+                appendArray(category, "shopping_results", results);
+            }
+        }
+        return results;
     }
     public JsonNode reviews(SourceContext context, String token, String sort) throws Exception {
         return fetch(context, Map.of("engine", "google_product_reviews", "product_token", token,
                 "sort_by", sort, "rating", "all"), "review_results");
     }
     private JsonNode fetch(SourceContext context, Map<String, String> parameters, String field) throws Exception {
+        JsonNode root = fetchRoot(context, parameters);
+        JsonNode results = root.path(field);
+        if (results.isMissingNode() || results.isNull()) return json.createArrayNode();
+        if (!results.isArray()) throw new IngestionFailure(SEARCHAPI_MALFORMED_RESPONSE);
+        return results;
+    }
+    private JsonNode fetchRoot(SourceContext context, Map<String, String> parameters) throws Exception {
         var query = new TreeMap<>(parameters);
         query.put("gl", settings.gl()); query.put("hl", settings.hl()); query.put("location", settings.location());
         String encoded = query.entrySet().stream().map(e -> e.getKey() + "="
@@ -45,11 +64,14 @@ public class SearchApiClient {
             JsonNode root = json.readTree(bytes);
             if (root == null || !root.isObject() || root.has("error"))
                 throw new IngestionFailure(SEARCHAPI_MALFORMED_RESPONSE);
-            JsonNode results = root.path(field);
-            if (results.isMissingNode() || results.isNull()) return json.createArrayNode();
-            if (!results.isArray()) throw new IngestionFailure(SEARCHAPI_MALFORMED_RESPONSE);
-            return results;
+            return root;
         } catch (IngestionFailure e) { throw e; }
         catch (Exception e) { throw new IngestionFailure(SEARCHAPI_MALFORMED_RESPONSE); }
+    }
+    private void appendArray(JsonNode parent, String field, tools.jackson.databind.node.ArrayNode output) {
+        JsonNode rows = parent.path(field);
+        if (rows.isMissingNode() || rows.isNull()) return;
+        if (!rows.isArray()) throw new IngestionFailure(SEARCHAPI_MALFORMED_RESPONSE);
+        rows.forEach(output::add);
     }
 }
