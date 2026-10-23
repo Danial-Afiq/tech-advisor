@@ -76,10 +76,12 @@ public class SmartphoneCatalogSink implements IngestionSink {
         // xmax = 0 only on a freshly inserted tuple, so this tells a new product
         // apart from an ON CONFLICT update without a second query.
         Map<String, Object> product = db.queryForMap(
-                "INSERT INTO products (brand, model_name, category) VALUES (?, ?, 'SMARTPHONE') "
-                        + "ON CONFLICT (brand, model_name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP "
+                "INSERT INTO products (brand, model_name, category, image_url) VALUES (?, ?, 'SMARTPHONE', ?) "
+                        + "ON CONFLICT (brand, model_name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP, "
+                        // A run without an image keeps the one already stored.
+                        + "image_url = COALESCE(EXCLUDED.image_url, products.image_url) "
                         + "RETURNING id, (xmax = 0) AS inserted",
-                spec.brand(), spec.modelName());
+                spec.brand(), spec.modelName(), spec.imageUrl() == null ? null : spec.imageUrl().toString());
         long productId = ((Number) product.get("id")).longValue();
 
         Map<String, BigDecimal> v = spec.values();

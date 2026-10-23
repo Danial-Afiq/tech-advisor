@@ -67,6 +67,28 @@ class MobileApiSmartphoneSourceTests {
         assertEquals(List.of(256), spec.storageOptionsGb());
     }
 
+    @Test void listingThumbnailBecomesTheImageUrl() throws Exception {
+        var device = device("""
+                {"id": 31333, "name": "G5", "manufacturer_name": "BLU", "storage": "256GB",
+                 "image_url": "https://api.mobileapi.dev/devices/31333/thumb.png"}""");
+
+        var spec = (Payload.Specifications) MobileApiSmartphoneSource.toPayload(
+                "mobileapi-smartphone", Instant.now(), device).get().body();
+        assertEquals("https://api.mobileapi.dev/devices/31333/thumb.png", spec.imageUrl().toString());
+    }
+
+    @Test void missingOrUnusableImageUrlIsDroppedButTheSpecsAreKept() throws Exception {
+        for (String image : new String[] {"null", "\"\"", "\"http://insecure.example/a.png\"",
+                "\"javascript:alert(1)\"", "\"not a url\"", "\"/relative/thumb.png\""}) {
+            var device = device("""
+                    {"id": 1, "name": "G5", "manufacturer_name": "BLU", "storage": "256GB", "image_url": %s}"""
+                    .formatted(image));
+            var payload = MobileApiSmartphoneSource.toPayload("mobileapi-smartphone", Instant.now(), device).get();
+            assertNull(((Payload.Specifications) payload.body()).imageUrl(), image);
+            assertDoesNotThrow(() -> payload.validate("mobileapi-smartphone"));
+        }
+    }
+
     @Test void realMultiTierStorageListProducesEveryTier() throws Exception {
         // Real iPhone 17 Pro shape (ticket 1.8, GET /devices/43/) - "256GB, 512GB, 1TB".
         var device = device("""

@@ -61,6 +61,20 @@ def test_assess_returns_the_contract(client, request_payload):
     assert stub.seen[0].candidate.product_id == 812
 
 
+def test_assess_accepts_unknown_purchase_and_release_dates(client, request_payload):
+    http, stub, _ = client
+    request_payload["user_context"]["owned_device"]["device_age_months"] = None
+    request_payload["candidate"]["release_date"] = None
+    request_payload["candidate"]["age_days"] = None
+
+    response = http.post("/assess", json=request_payload)
+
+    assert response.status_code == 200
+    assert stub.seen[0].user_context.owned_device.device_age_months is None
+    assert stub.seen[0].candidate.release_date is None
+    assert stub.seen[0].candidate.age_days is None
+
+
 def test_token_is_required_when_configured(client, request_payload):
     http, _, settings = client
     settings.ai_service_token = "s3cret"

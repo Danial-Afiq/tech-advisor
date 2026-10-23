@@ -12,19 +12,15 @@ import type { Device } from "./types";
  */
 export function DeviceGrid({
   devices,
-  compact,
   onAdd,
   onEdit,
   onEditPreferences,
-  onSimulate,
   onRemove,
 }: {
   devices: Device[];
-  compact?: boolean;
   onAdd?: () => void;
   onEdit?: (device: Device) => void;
   onEditPreferences?: (device: Device) => void;
-  onSimulate?: (device: Device) => void;
   onRemove?: (device: Device) => void;
 }) {
   if (devices.length === 0) {
@@ -52,12 +48,10 @@ export function DeviceGrid({
           <Card
             key={device.id}
             device={device}
-            compact={compact}
             onEdit={onEdit && (() => onEdit(device))}
             onEditPreferences={
               onEditPreferences && (() => onEditPreferences(device))
             }
-            onSimulate={onSimulate && (() => onSimulate(device))}
             onRemove={onRemove && (() => onRemove(device))}
           />
         );
