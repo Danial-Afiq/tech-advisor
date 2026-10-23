@@ -3,7 +3,7 @@
   "gpus": [
     {"brand": "NVIDIA", "modelName": "GeForce GTX 1060 6GB", "releaseDate": "2016-07-19",
      "baseClockMhz": 1506, "boostClockMhz": 1708, "vramGb": 6, "memoryType": "GDDR5", "memoryBusBits": 192,
-     "tdpWatts": 120, "launchMsrpUsd": 249, "architecture": "Pascal", "sourceUrl": null},
+     "tdpWatts": 120, "launchMsrpUsd": 299, "architecture": "Pascal", "sourceUrl": null},
     {"brand": "NVIDIA", "modelName": "GeForce GTX 1660 Super", "releaseDate": "2019-10-29",
      "baseClockMhz": 1530, "boostClockMhz": 1785, "vramGb": 6, "memoryType": "GDDR6", "memoryBusBits": 192,
      "tdpWatts": 125, "launchMsrpUsd": 229, "architecture": "Turing", "sourceUrl": null},
