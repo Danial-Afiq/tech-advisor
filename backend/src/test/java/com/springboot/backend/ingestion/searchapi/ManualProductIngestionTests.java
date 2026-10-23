@@ -159,8 +159,9 @@ class ManualProductIngestionTests {
     @Test void rejectsAmbiguousIneligibleAndMalformedNamesBeforeAnyApiCall() throws Exception {
         insert("OtherTargetTest", "Later Phone", "SMARTPHONE", "VERIFIED");
         insert("ManualTargetTest", "Unverified Phone", "SMARTPHONE", "UNVERIFIED");
-        insert("ManualTargetTest", "Graphics Card", "GPU", "VERIFIED");
-        for (String name : java.util.List.of("Unknown", "Later Phone", "Unverified Phone", "Graphics Card", " ", "x".repeat(201))) {
+        // GPUs became SearchAPI targets in ticket 1.3; a category not in searchapi.categories is still refused.
+        insert("ManualTargetTest", "Laptop Computer", "LAPTOP", "VERIFIED");
+        for (String name : java.util.List.of("Unknown", "Later Phone", "Unverified Phone", "Laptop Computer", " ", "x".repeat(201))) {
             mvc.perform(post("/api/admin/ingestion/runs").with(user("admin").roles("ADMIN"))
                     .header("Idempotency-Key", "rejected-run-key").contentType("application/json").content(body(name)))
                     .andExpect(status().isBadRequest()).andExpect(jsonPath("$.message").isNotEmpty());

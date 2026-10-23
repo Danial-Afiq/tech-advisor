@@ -81,7 +81,7 @@ class IngestionControllerTests {
 
     @Test void candidatesRejectsWhenSearchApiFindsNothing() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
-        when(searchApi.findCandidates(any(), any())).thenReturn(List.of());
+        when(searchApi.findCandidates(any(), any(), any())).thenReturn(List.of());
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
         assertEquals(HttpStatus.BAD_REQUEST, rejected.getStatusCode());
@@ -90,13 +90,13 @@ class IngestionControllerTests {
     @Test void candidatesReturnsWhatSearchApiFinds() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
         var expected = List.of(new ProductMatcher.Candidate("ext-1", "Apple iPhone 16"));
-        when(searchApi.findCandidates(any(), any())).thenReturn(expected);
+        when(searchApi.findCandidates(any(), any(), any())).thenReturn(expected);
         assertEquals(expected, controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
     }
 
     @Test void candidatesMapsRateLimitToTooManyRequests() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
-        when(searchApi.findCandidates(any(), any())).thenThrow(retryLater());
+        when(searchApi.findCandidates(any(), any(), any())).thenThrow(retryLater());
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
         assertEquals(HttpStatus.TOO_MANY_REQUESTS, rejected.getStatusCode());
@@ -104,7 +104,7 @@ class IngestionControllerTests {
 
     @Test void candidatesMapsTransportFailureToServiceUnavailable() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
-        when(searchApi.findCandidates(any(), any())).thenThrow(transportFailure());
+        when(searchApi.findCandidates(any(), any(), any())).thenThrow(transportFailure());
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, rejected.getStatusCode());
@@ -112,7 +112,7 @@ class IngestionControllerTests {
 
     @Test void candidatesMapsIngestionFailureToBadGateway() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
-        when(searchApi.findCandidates(any(), any()))
+        when(searchApi.findCandidates(any(), any(), any()))
                 .thenThrow(new IngestionFailure(IngestionFailure.Code.SEARCHAPI_NO_MATCH));
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
@@ -121,7 +121,7 @@ class IngestionControllerTests {
 
     @Test void candidatesMapsAnyOtherFailureToBadGateway() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
-        when(searchApi.findCandidates(any(), any())).thenThrow(new RuntimeException("boom"));
+        when(searchApi.findCandidates(any(), any(), any())).thenThrow(new RuntimeException("boom"));
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
         assertEquals(HttpStatus.BAD_GATEWAY, rejected.getStatusCode());
@@ -130,7 +130,7 @@ class IngestionControllerTests {
     @Test void candidatesPropagatesAResponseStatusExceptionUnchanged() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
         var original = new ResponseStatusException(HttpStatus.I_AM_A_TEAPOT, "unexpected");
-        when(searchApi.findCandidates(any(), any())).thenThrow(original);
+        when(searchApi.findCandidates(any(), any(), any())).thenThrow(original);
         var thrown = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
         assertSame(original, thrown);

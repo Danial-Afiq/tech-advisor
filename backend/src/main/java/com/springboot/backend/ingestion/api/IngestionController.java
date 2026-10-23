@@ -69,7 +69,7 @@ public class IngestionController {
                     example = "searchapi-product-id")
             String externalProductId) {}
 
-    @Schema(name = "SearchApiCandidateRequest", description = "Smartphone name used to find validated SearchAPI product choices.")
+    @Schema(name = "SearchApiCandidateRequest", description = "Catalogue product name (smartphone or GPU) used to find validated SearchAPI product choices.")
     public record CandidateRequest(
             @Schema(example = "Samsung Galaxy S25", minLength = 1, maxLength = 200)
             String productName) {}
@@ -122,7 +122,7 @@ public class IngestionController {
     @PostMapping("/searchapi/candidates")
     @Operation(
             summary = "Find SearchAPI product candidates",
-            description = "Returns validated provider identities for an admin-targeted smartphone review run.")
+            description = "Returns validated provider identities for an admin-targeted smartphone or GPU review run.")
     @ApiResponses({
             @ApiResponse(
                     responseCode = "200",
@@ -143,12 +143,21 @@ public class IngestionController {
         try { requested = ProductName.parse(name); }
         catch (IllegalArgumentException invalid) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Enter both the smartphone brand and full model name.");
+                    "Enter both the product brand and full model name.");
+        }
+        // A name that resolves to one catalogue product is searched as that product, with its
+        // category's listing vocabulary - the identity and rules the run will validate against.
+        String category = "SMARTPHONE";
+        var catalogued = products.namedProducts(name, searchApi.settings());
+        if (catalogued.size() == 1) {
+            var product = catalogued.getFirst();
+            requested = new ProductName(product.brand(), product.model());
+            category = product.category();
         }
         try (var context = new SourceContext(clock, () -> {})) {
-            var candidates = searchApi.findCandidates(context, requested);
+            var candidates = searchApi.findCandidates(context, requested, category);
             if (candidates.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "No matching smartphone was found. Check the brand and full model name.");
+                    "No matching product was found. Check the brand and full model name.");
             return candidates;
         } catch (ResponseStatusException rejected) { throw rejected; }
         catch (SourceContext.RetryLater limited) {
@@ -199,27 +208,27 @@ public class IngestionController {
             if (externalProductId.isEmpty() || externalProductId.length() > 1000)
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Find matching products and select one before starting ingestion.");
-            var matches = products.namedProducts(name);
+            var matches = products.namedProducts(name, searchApi.settings());
             if (matches.size() > 1)
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "More than one verified smartphone matches that name. Include the brand and full model name.");
+                        "More than one verified product matches that name. Include the brand and full model name.");
             if (!matches.isEmpty()) {
                 var product = matches.getFirst();
                 target = new RunLog.ProductTarget(product.id(), product.name(), externalProductId);
             } else if (!products.namedCatalogueProducts(name).isEmpty()) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "That catalogue product is not an eligible verified smartphone.");
+                        "That catalogue product is not eligible for SearchAPI reviews.");
             } else {
-                // MobileAPI is the sole source of truth for `products` rows - SearchAPI never
-                // creates one, so an unmatched name fails closed rather than starting a run that
-                // would otherwise invent a catalogue entry from an unverified admin-typed name.
+                // SearchAPI never creates `products` rows (phones come from MobileAPI, GPUs from
+                // the GPU seed and TechSpot), so an unmatched name fails closed rather than starting
+                // a run that would invent a catalogue entry from an unverified admin-typed name.
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "No matching smartphone found in the catalogue. Ingest this device via "
-                                + "MobileAPI before requesting SearchAPI reviews for it.");
+                        "No matching product found in the catalogue. Ingest it first (MobileAPI for "
+                                + "phones, the GPU seed or TechSpot for GPUs) before requesting SearchAPI reviews.");
             }
         } else if (request.externalProductId() != null)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "A selected SearchAPI product requires a smartphone name.");
+                    "A selected SearchAPI product requires a product name.");
         var run = runner.manual(ids, user.getName(), key, request.reason(), target);
         return ResponseEntity.accepted().location(URI.create("/api/admin/ingestion/runs/" + run.runId)).body(run);
     }

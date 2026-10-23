@@ -297,7 +297,7 @@ class SearchApiTests {
         // An admin explicitly asked for this exact product - a silent skip would be misleading.
         var repository = mock(SearchApiRepository.class);
         var client = mock(SearchApiClient.class);
-        when(repository.eligibleProduct(product.id())).thenReturn(Optional.of(product));
+        when(repository.eligibleProduct(product.id(), settings)).thenReturn(Optional.of(product));
         when(repository.token(product, settings)).thenReturn(Optional.empty());
         when(client.shopping(any(), eq(product.name()))).thenReturn(json.createArrayNode());
         var source = new SearchApiSource(settings, repository, client, new IngestionSettings(false, null, List.of()));
