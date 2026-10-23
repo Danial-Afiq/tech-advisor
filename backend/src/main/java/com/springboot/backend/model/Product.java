@@ -18,6 +18,8 @@ public class Product {
     public static final String STATUS_UNVERIFIED = "UNVERIFIED";
 
     public static final String CATEGORY_SMARTPHONE = "SMARTPHONE";
+    /** Reference desktop graphics cards (ticket 1.3); specs live in {@code gpu}. */
+    public static final String CATEGORY_GPU = "GPU";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
