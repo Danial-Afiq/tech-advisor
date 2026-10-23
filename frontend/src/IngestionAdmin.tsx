@@ -24,11 +24,13 @@ type Run = { runId: string; status: string; triggerType: string; requestedAt: st
   sources: { sourceId: string; status: string; processedPayloadCount: number; errorStackCount: number }[] }
 type Schedule = { enabled: boolean; intervalHours: number; nextScheduledAt: string | null; activeRunId: string | null }
 type ProductCandidate = { externalProductId: string; title: string }
+type CatalogueProduct = { productId: number; name: string; category: 'SMARTPHONE' | 'GPU' }
 const SEARCHAPI_SOURCE = 'searchapi-google-product-reviews'
 const TECHAPI_SOURCE = 'techapi-soc-benchmarks'
 const sourceLabel = (id: string) => id === SEARCHAPI_SOURCE
   ? 'SearchAPI customer reviews'
   : id === TECHAPI_SOURCE ? 'TechAPI processor benchmarks' : id
+const categoryLabel = (category: CatalogueProduct['category']) => category === 'GPU' ? 'GPU' : 'Smartphone'
 const when = (value: string | null) => value ? new Date(value).toLocaleString() : '—'
 
 /**
@@ -38,10 +40,10 @@ const when = (value: string | null) => value ? new Date(value).toLocaleString() 
  * credential to enter here. Signed out, or signed in without the ADMIN
  * role, shows a link to `/login` instead of the run controls.
  *
- * Selecting the SearchAPI source additionally requires naming a smartphone or
- * GPU already in the catalogue (SearchAPI never creates `products` rows - it
- * only attaches reviews to an existing one) and
- * picking one of its validated SearchAPI listings before a run can start.
+ * Selecting the SearchAPI source additionally requires choosing a smartphone or
+ * GPU already in the catalogue (searched by partial brand/model text; SearchAPI
+ * never creates `products` rows - it only attaches reviews to an existing one)
+ * and picking one of its validated SearchAPI listings before a run can start.
  */
 export default function IngestionAdmin() {
   const navigate = useNavigate()
@@ -54,11 +56,15 @@ export default function IngestionAdmin() {
   const [schedule, setSchedule] = useState<Schedule | null>(null)
   const [reason, setReason] = useState('')
   const [productName, setProductName] = useState('')
+  const [catalogue, setCatalogue] = useState<CatalogueProduct[] | null>(null)
+  const [productId, setProductId] = useState<number | null>(null)
   const [candidates, setCandidates] = useState<ProductCandidate[]>([])
   const [externalProductId, setExternalProductId] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [finding, setFinding] = useState(false)
+  const [searching, setSearching] = useState(false)
+  const busy = submitting || finding || searching || !!schedule?.activeRunId
   const searchApiSelected = selected.includes(SEARCHAPI_SOURCE)
   const techApi = sources.find(source => source.sourceId === TECHAPI_SOURCE)
 
@@ -97,15 +103,15 @@ export default function IngestionAdmin() {
 
   async function start() {
     if (!account) return
-    if (searchApiSelected && !productName.trim()) {
-      setError('Enter the product name to import its customer reviews.'); return
+    if (searchApiSelected && productId === null) {
+      setError('Search the catalogue and choose a product to import its customer reviews.'); return
     }
     if (searchApiSelected && !externalProductId) {
       setError('Find matching products and select one before starting ingestion.'); return
     }
     setSubmitting(true); setError('')
     const payload = { sources: [...selected].sort((a, b) => a.localeCompare(b)), reason: reason.trim() || null,
-      ...(searchApiSelected ? { productName: productName.trim(), externalProductId } : {}) }
+      ...(searchApiSelected ? { productId, externalProductId } : {}) }
     const body = JSON.stringify(payload)
     if (!pending.current || pending.current.body !== body) pending.current = { body, key: crypto.randomUUID() }
     try {
@@ -125,14 +131,40 @@ export default function IngestionAdmin() {
     finally { setSubmitting(false) }
   }
 
-  async function findProducts() {
+  async function searchCatalogue() {
     if (!account || !productName.trim()) {
-      setError('Enter the product brand and full model name first.'); return
+      setError('Enter part of the product brand or model first.'); return
+    }
+    setSearching(true); setError(''); setCatalogue(null); setProductId(null); setCandidates([]); setExternalProductId('')
+    try {
+      const found = await request<CatalogueProduct[]>(
+        `/searchapi/catalogue?q=${encodeURIComponent(productName.trim())}`)
+      setCatalogue(found)
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        clearSession()
+        setAccount(null)
+        void navigate('/login', { replace: true })
+        return
+      }
+      setError((e as Error).message)
+    }
+    finally { setSearching(false) }
+  }
+
+  function chooseProduct(id: number) {
+    if (id === productId) return
+    setProductId(id); setCandidates([]); setExternalProductId('')
+  }
+
+  async function findProducts() {
+    if (!account || productId === null) {
+      setError('Search the catalogue and choose a product first.'); return
     }
     setFinding(true); setError(''); setCandidates([]); setExternalProductId('')
     try {
       const found = await request<ProductCandidate[]>('/searchapi/candidates', { method: 'POST',
-        body: { productName: productName.trim() } })
+        body: { productId } })
       setCandidates(found)
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
@@ -216,7 +248,7 @@ export default function IngestionAdmin() {
             <h2 className="m-0 text-[19px] font-bold text-[#eef5ff]">Run a market update</h2>
             <p className="m-0 text-[14px] text-[#8fa0b8]">Manual runs leave the recurring schedule unchanged.</p>
             <form className="mt-4 grid gap-4" onSubmit={e => { e.preventDefault(); void start() }}>
-              <fieldset disabled={submitting || finding || !!schedule?.activeRunId}
+              <fieldset disabled={busy}
                 className="grid gap-3 rounded-[12px] border border-white/[0.09] p-4">
                 <legend className="px-1 text-[13px] font-semibold text-[#c6d1df]">Sources</legend>
                 {sources.length === 0 && <p className="m-0 text-[14px] text-[#8fa0b8]">No sources have been registered.</p>}
@@ -243,16 +275,47 @@ export default function IngestionAdmin() {
               {searchApiSelected && <div className="grid gap-3 rounded-[12px] border border-white/[0.09] p-4">
                 <Field label="Product name">
                   <Input id="ingestion-product-name" value={productName} maxLength={200} required
-                    disabled={submitting || finding || !!schedule?.activeRunId} aria-describedby="ingestion-product-help"
-                    onChange={e => { setProductName(e.target.value); setCandidates([]); setExternalProductId('') }}
-                    placeholder="For example, Apple iPhone 16 Pro or NVIDIA GeForce RTX 4070" />
+                    disabled={busy} aria-describedby="ingestion-product-help"
+                    onChange={e => {
+                      setProductName(e.target.value); setCatalogue(null); setProductId(null)
+                      setCandidates([]); setExternalProductId('')
+                    }}
+                    placeholder="For example, iPhone 16 Pro or RTX 4070" />
                 </Field>
                 <small id="ingestion-product-help" className="text-[12px] text-[#8fa0b8]">
-                  Enter the brand followed by the full model, already in the catalogue, then find and select
-                  the SearchAPI product whose reviews you want.
+                  Type part of the brand or model, search the catalogue and choose the product, then find and
+                  select the SearchAPI listing whose reviews you want.
                 </small>
+                <Button type="button" variant="secondary" className="justify-self-start" loading={searching}
+                  disabled={busy || !productName.trim()}
+                  onClick={() => void searchCatalogue()}>
+                  Search catalogue
+                </Button>
+                {catalogue !== null && catalogue.length === 0 && (
+                  <p className="m-0 text-[13px] text-[#8fa0b8]">
+                    No eligible catalogue product matches. Ingest it first, then try again.
+                  </p>
+                )}
+                {catalogue !== null && catalogue.length > 0 && (
+                  <fieldset className="grid gap-2 rounded-[12px] border border-white/[0.09] p-3">
+                    <legend className="px-1 text-[13px] font-semibold text-[#c6d1df]">Select a catalogue product</legend>
+                    {catalogue.map(product => (
+                      <div key={product.productId} className="flex items-start gap-3">
+                        <input id={`catalogue-product-${product.productId}`} type="radio" name="catalogue-product"
+                          className="radio radio-sm mt-[2px]"
+                          value={product.productId} checked={productId === product.productId}
+                          onChange={() => chooseProduct(product.productId)} />
+                        <label htmlFor={`catalogue-product-${product.productId}`} className="flex flex-col gap-1">
+                          <span className="text-[14px] text-[#eef5ff]">
+                            {product.name}{' '}<Tag>{categoryLabel(product.category)}</Tag>
+                          </span>
+                        </label>
+                      </div>
+                    ))}
+                  </fieldset>
+                )}
                 <Button type="button" variant="secondary" className="justify-self-start" loading={finding}
-                  disabled={submitting || finding || !!schedule?.activeRunId || !productName.trim()}
+                  disabled={busy || productId === null}
                   onClick={() => void findProducts()}>
                   Find matching products
                 </Button>
@@ -280,8 +343,8 @@ export default function IngestionAdmin() {
                   placeholder="For example, a major mid-cycle phone release" />
               </Field>
               <Button type="submit" variant="primary" loading={submitting} className="justify-self-start"
-                disabled={submitting || finding || !!schedule?.activeRunId || selected.length === 0
-                  || (searchApiSelected && (!productName.trim() || !externalProductId))}>
+                disabled={busy || selected.length === 0
+                  || (searchApiSelected && (productId === null || !externalProductId))}>
                 {schedule?.activeRunId ? 'Run in progress' : 'Run now'}
               </Button>
             </form>
