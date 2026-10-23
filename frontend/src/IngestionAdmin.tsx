@@ -38,9 +38,9 @@ const when = (value: string | null) => value ? new Date(value).toLocaleString() 
  * credential to enter here. Signed out, or signed in without the ADMIN
  * role, shows a link to `/login` instead of the run controls.
  *
- * Selecting the SearchAPI source additionally requires naming a smartphone
- * already in the catalogue (MobileAPI is the sole source of truth for
- * `products` rows - SearchAPI only attaches reviews to an existing one) and
+ * Selecting the SearchAPI source additionally requires naming a smartphone or
+ * GPU already in the catalogue (SearchAPI never creates `products` rows - it
+ * only attaches reviews to an existing one) and
  * picking one of its validated SearchAPI listings before a run can start.
  */
 export default function IngestionAdmin() {
@@ -98,7 +98,7 @@ export default function IngestionAdmin() {
   async function start() {
     if (!account) return
     if (searchApiSelected && !productName.trim()) {
-      setError('Enter the smartphone name to import its customer reviews.'); return
+      setError('Enter the product name to import its customer reviews.'); return
     }
     if (searchApiSelected && !externalProductId) {
       setError('Find matching products and select one before starting ingestion.'); return
@@ -127,7 +127,7 @@ export default function IngestionAdmin() {
 
   async function findProducts() {
     if (!account || !productName.trim()) {
-      setError('Enter the smartphone brand and full model name first.'); return
+      setError('Enter the product brand and full model name first.'); return
     }
     setFinding(true); setError(''); setCandidates([]); setExternalProductId('')
     try {
@@ -241,14 +241,14 @@ export default function IngestionAdmin() {
               </fieldset>
 
               {searchApiSelected && <div className="grid gap-3 rounded-[12px] border border-white/[0.09] p-4">
-                <Field label="Smartphone name">
+                <Field label="Product name">
                   <Input id="ingestion-product-name" value={productName} maxLength={200} required
                     disabled={submitting || finding || !!schedule?.activeRunId} aria-describedby="ingestion-product-help"
                     onChange={e => { setProductName(e.target.value); setCandidates([]); setExternalProductId('') }}
-                    placeholder="For example, Apple iPhone 16 Pro" />
+                    placeholder="For example, Apple iPhone 16 Pro or NVIDIA GeForce RTX 4070" />
                 </Field>
                 <small id="ingestion-product-help" className="text-[12px] text-[#8fa0b8]">
-                  Enter the brand followed by the full model, already ingested via MobileAPI, then find and select
+                  Enter the brand followed by the full model, already in the catalogue, then find and select
                   the SearchAPI product whose reviews you want.
                 </small>
                 <Button type="button" variant="secondary" className="justify-self-start" loading={finding}
