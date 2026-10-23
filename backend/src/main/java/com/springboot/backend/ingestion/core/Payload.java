@@ -3,18 +3,32 @@ package com.springboot.backend.ingestion.core;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.Map;
 import java.util.List;
 
 /** Common envelope, different typed bodies. Review collection does not infer sentiment. */
 public record Payload(String sourceId, String externalId, Instant observedAt, Body body) {
-    public sealed interface Body permits Article, Specifications, Price, Benchmark, ReviewBatch {}
+    public sealed interface Body permits Article, Specifications, Price, Benchmark, ReviewBatch, GpuCatalogBatch {}
     /** One bounded product batch is one durable runner item. No raw provider objects. */
     public record ReviewBatch(long productId, List<Review> reviews) implements Body {
         public ReviewBatch { reviews = List.copyOf(reviews); }
     }
     public record Review(String fingerprint, String sourceDomain, String title, String text,
                          BigDecimal rating, String rawDate, Instant retrievedAt) {}
+    /**
+     * Ticket 1.3: one source run's GPU spec sheets, persisted in one transaction. Records are
+     * deliberately not validated here: one out-of-range card must be dropped and logged by the
+     * sink, not reject the whole batch. source is provenance such as "seed:gpus.v1" or "techspot".
+     */
+    public record GpuCatalogBatch(String source, List<GpuSpec> gpus) implements Body {
+        public GpuCatalogBatch { gpus = List.copyOf(gpus); }
+    }
+    /** One reference desktop card. Nullable fields mean "not published by the source". */
+    public record GpuSpec(String brand, String modelName, LocalDate releaseDate,
+                          Integer baseClockMhz, Integer boostClockMhz, BigDecimal vramGb,
+                          String memoryType, Integer memoryBusBits, Integer tdpWatts,
+                          BigDecimal launchMsrpUsd, String architecture, URI sourceUrl) {}
     public record Article(String productReference, String title, URI url, Instant publishedAt,
                           String text) implements Body {}
     /**
@@ -67,6 +81,10 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
                             || r.rating().compareTo(BigDecimal.valueOf(5)) > 0)
                         throw new IllegalArgumentException("Invalid review");
                 }
+            }
+            case GpuCatalogBatch g -> {
+                if (blank(g.source()) || g.gpus().isEmpty() || g.gpus().size() > 100)
+                    throw new IllegalArgumentException("Invalid GPU catalogue batch");
             }
             case Article a -> {
                 if (blank(a.title()) || a.url() == null || !a.url().isAbsolute()

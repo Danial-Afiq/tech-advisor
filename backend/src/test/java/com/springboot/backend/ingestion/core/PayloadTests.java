@@ -36,6 +36,16 @@ class PayloadTests {
                 new Payload.Specifications("phone", "Brand", "Model", null,
                         Map.of("battery", BigDecimal.ONE), Map.of("battery", "mAh"), List.of(0))).validate("specs"));
     }
+    @Test void gpuBatchChecksOnlyTheEnvelopeSoOneBadCardCannotRejectTheRest() {
+        var outOfRange = new Payload.GpuSpec("NVIDIA", "GeForce RTX 4070", null,
+                99_999, null, null, null, null, null, null, null, null);
+        assertDoesNotThrow(() -> new Payload("gpu", "1", Instant.now(),
+                new Payload.GpuCatalogBatch("seed:gpus.v1", List.of(outOfRange))).validate("gpu"));
+        assertThrows(IllegalArgumentException.class, () -> new Payload("gpu", "1", Instant.now(),
+                new Payload.GpuCatalogBatch(" ", List.of(outOfRange))).validate("gpu"));
+        assertThrows(IllegalArgumentException.class, () -> new Payload("gpu", "1", Instant.now(),
+                new Payload.GpuCatalogBatch("seed:gpus.v1", List.of())).validate("gpu"));
+    }
     @Test void sourceCannotEmitUnderAnotherSourcesIdentity() {
         assertThrows(IllegalArgumentException.class, () -> new Payload("other", "1", Instant.now(),
                 new Payload.Price("phone", null, BigDecimal.ONE, "SGD")).validate("expected"));
