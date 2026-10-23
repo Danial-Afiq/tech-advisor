@@ -1,16 +1,16 @@
 {
   "source": "seed:gpus.v1",
   "gpus": [
-    {"brand": "NVIDIA", "modelName": "GeForce GTX 1060 6 GB", "releaseDate": "2016-07-19",
+    {"brand": "NVIDIA", "modelName": "GeForce GTX 1060 6GB", "releaseDate": "2016-07-19",
      "baseClockMhz": 1506, "boostClockMhz": 1708, "vramGb": 6, "memoryType": "GDDR5", "memoryBusBits": 192,
      "tdpWatts": 120, "launchMsrpUsd": 249, "architecture": "Pascal", "sourceUrl": null},
-    {"brand": "NVIDIA", "modelName": "GeForce GTX 1660 SUPER", "releaseDate": "2019-10-29",
+    {"brand": "NVIDIA", "modelName": "GeForce GTX 1660 Super", "releaseDate": "2019-10-29",
      "baseClockMhz": 1530, "boostClockMhz": 1785, "vramGb": 6, "memoryType": "GDDR6", "memoryBusBits": 192,
      "tdpWatts": 125, "launchMsrpUsd": 229, "architecture": "Turing", "sourceUrl": null},
-    {"brand": "NVIDIA", "modelName": "GeForce RTX 2060", "releaseDate": "2019-01-15",
+    {"brand": "NVIDIA", "modelName": "GeForce RTX 2060 6GB", "releaseDate": "2019-01-15",
      "baseClockMhz": 1365, "boostClockMhz": 1680, "vramGb": 6, "memoryType": "GDDR6", "memoryBusBits": 192,
      "tdpWatts": 160, "launchMsrpUsd": 349, "architecture": "Turing", "sourceUrl": null},
-    {"brand": "NVIDIA", "modelName": "GeForce RTX 3060 12 GB", "releaseDate": "2021-02-25",
+    {"brand": "NVIDIA", "modelName": "GeForce RTX 3060 12GB", "releaseDate": "2021-02-25",
      "baseClockMhz": 1320, "boostClockMhz": 1777, "vramGb": 12, "memoryType": "GDDR6", "memoryBusBits": 192,
      "tdpWatts": 170, "launchMsrpUsd": 329, "architecture": "Ampere", "sourceUrl": null},
     {"brand": "NVIDIA", "modelName": "GeForce RTX 3070", "releaseDate": "2020-10-29",
@@ -25,7 +25,7 @@
     {"brand": "NVIDIA", "modelName": "GeForce RTX 5070", "releaseDate": "2025-03-05",
      "baseClockMhz": 2325, "boostClockMhz": 2512, "vramGb": 12, "memoryType": "GDDR7", "memoryBusBits": 192,
      "tdpWatts": 250, "launchMsrpUsd": 549, "architecture": "Blackwell", "sourceUrl": null},
-    {"brand": "AMD", "modelName": "Radeon RX 580", "releaseDate": "2017-04-18",
+    {"brand": "AMD", "modelName": "Radeon RX 580 8GB", "releaseDate": "2017-04-18",
      "baseClockMhz": 1257, "boostClockMhz": 1340, "vramGb": 8, "memoryType": "GDDR5", "memoryBusBits": 256,
      "tdpWatts": 185, "launchMsrpUsd": 229, "architecture": "Polaris", "sourceUrl": null},
     {"brand": "AMD", "modelName": "Radeon RX 6600", "releaseDate": "2021-10-13",
@@ -34,7 +34,7 @@
     {"brand": "AMD", "modelName": "Radeon RX 7800 XT", "releaseDate": "2023-09-06",
      "baseClockMhz": 1295, "boostClockMhz": 2430, "vramGb": 16, "memoryType": "GDDR6", "memoryBusBits": 256,
      "tdpWatts": 263, "launchMsrpUsd": 499, "architecture": "RDNA 3", "sourceUrl": null},
-    {"brand": "Intel", "modelName": "Arc A770", "releaseDate": "2022-10-12",
+    {"brand": "Intel", "modelName": "Arc A770 16GB", "releaseDate": "2022-10-12",
      "baseClockMhz": 2100, "boostClockMhz": 2400, "vramGb": 16, "memoryType": "GDDR6", "memoryBusBits": 256,
      "tdpWatts": 225, "launchMsrpUsd": 349, "architecture": "Xe-HPG (Alchemist)", "sourceUrl": null}
   ]
