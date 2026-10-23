@@ -90,4 +90,100 @@ class SourceContextTests {
             verify(client, times(1)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
         }
     }
+
+    @SuppressWarnings("unchecked")
+    private static HttpClient clientReturning(int... statuses) throws Exception {
+        var responses = new java.util.ArrayList<HttpResponse<InputStream>>();
+        for (int status : statuses) {
+            HttpResponse<InputStream> response = mock(HttpResponse.class);
+            when(response.statusCode()).thenReturn(status);
+            when(response.headers()).thenReturn(HttpHeaders.of(
+                    Map.of("Retry-After", java.util.List.of("0")), (a, b) -> true));
+            when(response.body()).thenAnswer(i -> new ByteArrayInputStream(("body-" + status).getBytes()));
+            responses.add(response);
+        }
+        var client = mock(HttpClient.class);
+        var stubbing = when(client.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)));
+        for (var response : responses) stubbing = stubbing.thenReturn(response);
+        return client;
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {404, 500})
+    void fetchReturnsNonSuccessStatusWithBodyInsteadOfThrowing(int status) throws Exception {
+        try (var context = new SourceContext(Clock.systemUTC(), () -> {}, clientReturning(status))) {
+            var response = context.fetch(URI.create("https://example.com/robots.txt"));
+            assertEquals(status, response.status());
+            assertEquals("body-" + status, new String(response.body()));
+        }
+    }
+
+    @Test void getStillThrowsHttpFailureOnNotFound() throws Exception {
+        try (var context = new SourceContext(Clock.systemUTC(), () -> {}, clientReturning(404))) {
+            var failure = assertThrows(SourceContext.HttpFailure.class,
+                    () -> context.get(URI.create("https://example.com/missing")));
+            assertEquals(404, failure.status);
+            assertFalse(failure.invalidToken);
+        }
+    }
+
+    @Test @SuppressWarnings("unchecked") void fetchRetriesRateLimitAndCountsEveryAttempt() throws Exception {
+        var client = clientReturning(429, 200);
+        try (var context = new SourceContext(Clock.systemUTC(), () -> {}, client, 5, Duration.ofSeconds(30))) {
+            var response = context.fetch(URI.create("https://example.com/page"));
+            assertEquals(200, response.status());
+            assertEquals("body-200", new String(response.body()));
+            assertEquals(3, context.remainingRequests());
+            verify(client, times(2)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+        }
+    }
+
+    @Test @SuppressWarnings("unchecked") void everyRequestIdentifiesWithRobotsAgentUserAgent() throws Exception {
+        assertTrue(SourceContext.USER_AGENT.startsWith(SourceContext.ROBOTS_AGENT + "/"));
+        var client = clientReturning(200);
+        try (var context = new SourceContext(Clock.systemUTC(), () -> {}, client)) {
+            context.fetch(URI.create("https://example.com/robots.txt"));
+            var request = ArgumentCaptor.forClass(HttpRequest.class);
+            verify(client).send(request.capture(), any(HttpResponse.BodyHandler.class));
+            assertEquals(SourceContext.USER_AGENT,
+                    request.getValue().headers().firstValue("User-Agent").orElseThrow());
+        }
+    }
+
+    @Test void minimumIntervalSlowsOnlyTheConfiguredHost() throws Exception {
+        try (var context = new SourceContext(Clock.systemUTC(), () -> {}, clientReturning(200, 200, 200))) {
+            context.minimumInterval("Slow.Example.com", Duration.ofMillis(1500));
+            context.fetch(URI.create("https://slow.example.com/a"));
+            long start = System.nanoTime();
+            context.fetch(URI.create("https://slow.example.com/b"));
+            long sameHostMillis = Duration.ofNanos(System.nanoTime() - start).toMillis();
+            assertTrue(sameHostMillis >= 1450, "same-host gap was " + sameHostMillis + " ms");
+
+            start = System.nanoTime();
+            context.fetch(URI.create("https://other.example.com/c"));
+            long otherHostMillis = Duration.ofNanos(System.nanoTime() - start).toMillis();
+            assertTrue(otherHostMillis >= 950, "global pacing gap was " + otherHostMillis + " ms");
+            assertTrue(otherHostMillis < 1450, "other-host gap was " + otherHostMillis + " ms");
+        }
+    }
+
+    @Test void minimumIntervalRejectsInvalidArguments() {
+        try (var context = new SourceContext(Clock.systemUTC(), () -> {}, mock(HttpClient.class))) {
+            assertThrows(IllegalArgumentException.class, () -> context.minimumInterval(null, Duration.ofSeconds(1)));
+            assertThrows(IllegalArgumentException.class,
+                    () -> context.minimumInterval("example.com", Duration.ofMillis(-1)));
+            assertThrows(IllegalArgumentException.class, () -> context.minimumInterval("example.com", null));
+        }
+    }
+
+    @Test @SuppressWarnings("unchecked") void fetchRejectsNonHttpsTargets() throws Exception {
+        var client = mock(HttpClient.class);
+        try (var context = new SourceContext(Clock.systemUTC(), () -> {}, client)) {
+            assertThrows(IllegalArgumentException.class, () -> context.fetch(URI.create("http://example.com/robots.txt")));
+            assertThrows(IllegalArgumentException.class, () -> context.fetch(URI.create("https://example.com:8443/x")));
+            assertThrows(IllegalArgumentException.class, () -> context.fetch(URI.create("ftp://example.com/x")));
+            verify(client, never()).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+            assertEquals(IngestionSource.DEFAULT_REQUEST_LIMIT, context.remainingRequests());
+        }
+    }
 }
