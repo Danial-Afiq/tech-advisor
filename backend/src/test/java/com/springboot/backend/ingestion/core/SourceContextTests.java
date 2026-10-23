@@ -108,16 +108,6 @@ class SourceContextTests {
         return client;
     }
 
-    @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(ints = {404, 500})
-    void fetchReturnsNonSuccessStatusWithBodyInsteadOfThrowing(int status) throws Exception {
-        try (var context = new SourceContext(Clock.systemUTC(), () -> {}, clientReturning(status))) {
-            var response = context.fetch(URI.create("https://example.com/robots.txt"));
-            assertEquals(status, response.status());
-            assertEquals("body-" + status, new String(response.body()));
-        }
-    }
-
     @Test void getStillThrowsHttpFailureOnNotFound() throws Exception {
         try (var context = new SourceContext(Clock.systemUTC(), () -> {}, clientReturning(404))) {
             var failure = assertThrows(SourceContext.HttpFailure.class,
@@ -127,22 +117,20 @@ class SourceContextTests {
         }
     }
 
-    @Test @SuppressWarnings("unchecked") void fetchRetriesRateLimitAndCountsEveryAttempt() throws Exception {
+    @Test @SuppressWarnings("unchecked") void getRetriesRateLimitAndCountsEveryAttempt() throws Exception {
         var client = clientReturning(429, 200);
         try (var context = new SourceContext(Clock.systemUTC(), () -> {}, client, 5, Duration.ofSeconds(30))) {
-            var response = context.fetch(URI.create("https://example.com/page"));
-            assertEquals(200, response.status());
-            assertEquals("body-200", new String(response.body()));
+            assertEquals("body-200", new String(context.get(URI.create("https://example.com/page"))));
             assertEquals(3, context.remainingRequests());
             verify(client, times(2)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
         }
     }
 
-    @Test @SuppressWarnings("unchecked") void everyRequestIdentifiesWithRobotsAgentUserAgent() throws Exception {
-        assertTrue(SourceContext.USER_AGENT.startsWith(SourceContext.ROBOTS_AGENT + "/"));
+    @Test @SuppressWarnings("unchecked") void everyRequestIdentifiesAsTechAdvisorBot() throws Exception {
+        assertTrue(SourceContext.USER_AGENT.startsWith(SourceContext.BOT_NAME + "/"));
         var client = clientReturning(200);
         try (var context = new SourceContext(Clock.systemUTC(), () -> {}, client)) {
-            context.fetch(URI.create("https://example.com/robots.txt"));
+            context.get(URI.create("https://example.com/page"));
             var request = ArgumentCaptor.forClass(HttpRequest.class);
             verify(client).send(request.capture(), any(HttpResponse.BodyHandler.class));
             assertEquals(SourceContext.USER_AGENT,
@@ -153,14 +141,14 @@ class SourceContextTests {
     @Test void minimumIntervalSlowsOnlyTheConfiguredHost() throws Exception {
         try (var context = new SourceContext(Clock.systemUTC(), () -> {}, clientReturning(200, 200, 200))) {
             context.minimumInterval("Slow.Example.com", Duration.ofMillis(1500));
-            context.fetch(URI.create("https://slow.example.com/a"));
+            context.get(URI.create("https://slow.example.com/a"));
             long start = System.nanoTime();
-            context.fetch(URI.create("https://slow.example.com/b"));
+            context.get(URI.create("https://slow.example.com/b"));
             long sameHostMillis = Duration.ofNanos(System.nanoTime() - start).toMillis();
             assertTrue(sameHostMillis >= 1450, "same-host gap was " + sameHostMillis + " ms");
 
             start = System.nanoTime();
-            context.fetch(URI.create("https://other.example.com/c"));
+            context.get(URI.create("https://other.example.com/c"));
             long otherHostMillis = Duration.ofNanos(System.nanoTime() - start).toMillis();
             assertTrue(otherHostMillis >= 950, "global pacing gap was " + otherHostMillis + " ms");
             assertTrue(otherHostMillis < 1450, "other-host gap was " + otherHostMillis + " ms");
@@ -176,12 +164,12 @@ class SourceContextTests {
         }
     }
 
-    @Test @SuppressWarnings("unchecked") void fetchRejectsNonHttpsTargets() throws Exception {
+    @Test @SuppressWarnings("unchecked") void getRejectsNonHttpsTargets() throws Exception {
         var client = mock(HttpClient.class);
         try (var context = new SourceContext(Clock.systemUTC(), () -> {}, client)) {
-            assertThrows(IllegalArgumentException.class, () -> context.fetch(URI.create("http://example.com/robots.txt")));
-            assertThrows(IllegalArgumentException.class, () -> context.fetch(URI.create("https://example.com:8443/x")));
-            assertThrows(IllegalArgumentException.class, () -> context.fetch(URI.create("ftp://example.com/x")));
+            assertThrows(IllegalArgumentException.class, () -> context.get(URI.create("http://example.com/x")));
+            assertThrows(IllegalArgumentException.class, () -> context.get(URI.create("https://example.com:8443/x")));
+            assertThrows(IllegalArgumentException.class, () -> context.get(URI.create("ftp://example.com/x")));
             verify(client, never()).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
             assertEquals(IngestionSource.DEFAULT_REQUEST_LIMIT, context.remainingRequests());
         }

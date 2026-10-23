@@ -14,10 +14,10 @@ import java.util.Map;
 
 /** Cooperative deadline plus bounded HTTP access. All adapters must use this for network reads. */
 public final class SourceContext implements AutoCloseable {
-    /** Product token matched against robots.txt groups. */
-    public static final String ROBOTS_AGENT = "TechAdvisorBot";
+    /** Identifies our crawler to the sites it reads. */
+    public static final String BOT_NAME = "TechAdvisorBot";
     public static final String USER_AGENT =
-            ROBOTS_AGENT + "/1.0 (+https://github.com/Danial-Afiq/tech-advisor)";
+            BOT_NAME + "/1.0 (+https://github.com/Danial-Afiq/tech-advisor)";
     public static final class RetryLater extends RuntimeException {
         public final Instant until;
         RetryLater(Instant until) { super("Source requested a later retry"); this.until = until; }
@@ -96,14 +96,9 @@ public final class SourceContext implements AutoCloseable {
         }
         return response.body();
     }
-    /** A response whose status the caller interprets, e.g. a robots.txt 404 meaning "allow all". */
-    public record Response(int status, byte[] body) {}
-    /** Like {@link #get(URI)} but returns non-200 statuses instead of throwing; same limits and retries. */
-    public Response fetch(URI url) throws Exception {
-        return send(url, null, null);
-    }
+    private record Response(int status, byte[] body) {}
     /**
-     * Slows later requests to one host, e.g. to honour a robots.txt Crawl-delay.
+     * Slows later requests to one host, e.g. to stay polite to a scraped site.
      * Applies on top of the global one-second pacing and never shortens it.
      */
     public void minimumInterval(String host, Duration interval) {
