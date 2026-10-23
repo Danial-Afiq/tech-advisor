@@ -8,10 +8,16 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 
 /** Cooperative deadline plus bounded HTTP access. All adapters must use this for network reads. */
 public final class SourceContext implements AutoCloseable {
+    /** Product token matched against robots.txt groups. */
+    public static final String ROBOTS_AGENT = "TechAdvisorBot";
+    public static final String USER_AGENT =
+            ROBOTS_AGENT + "/1.0 (+https://github.com/Danial-Afiq/tech-advisor)";
     public static final class RetryLater extends RuntimeException {
         public final Instant until;
         RetryLater(Instant until) { super("Source requested a later retry"); this.until = until; }
@@ -23,6 +29,8 @@ public final class SourceContext implements AutoCloseable {
     private final int requestLimit;
     private long lastRequest;
     private int requests;
+    private final Map<String, Duration> hostIntervals = new HashMap<>();
+    private final Map<String, Long> lastHostRequest = new HashMap<>();
     private final HttpClient http;
     private final RunLog.ProductTarget product;
 
@@ -79,20 +87,46 @@ public final class SourceContext implements AutoCloseable {
     }
     /** Credentials are scoped to a trusted exact host; redirects remain disabled. */
     public byte[] get(URI url, String bearer, String allowedHost) throws Exception {
+        var response = send(url, bearer, allowedHost);
+        if (response.status() != 200) {
+            String error = new String(response.body(), StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
+            boolean invalidToken = response.status() == 400 && error.contains("product_token")
+                    && (error.contains("invalid") || error.contains("expired"));
+            throw new HttpFailure(response.status(), invalidToken);
+        }
+        return response.body();
+    }
+    /** A response whose status the caller interprets, e.g. a robots.txt 404 meaning "allow all". */
+    public record Response(int status, byte[] body) {}
+    /** Like {@link #get(URI)} but returns non-200 statuses instead of throwing; same limits and retries. */
+    public Response fetch(URI url) throws Exception {
+        return send(url, null, null);
+    }
+    /**
+     * Slows later requests to one host, e.g. to honour a robots.txt Crawl-delay.
+     * Applies on top of the global one-second pacing and never shortens it.
+     */
+    public void minimumInterval(String host, Duration interval) {
+        if (host == null || interval == null || interval.isNegative())
+            throw new IllegalArgumentException("Invalid host interval");
+        hostIntervals.put(host.toLowerCase(Locale.ROOT), interval);
+    }
+    private Response send(URI url, String bearer, String allowedHost) throws Exception {
         if (!"https".equals(url.getScheme()) || url.getHost() == null
                 || url.getUserInfo() != null || url.getFragment() != null
                 || (url.getPort() != -1 && url.getPort() != 443)
                 || (bearer != null && (!url.getHost().equals(allowedHost)
                     || bearer.isBlank() || bearer.contains("\r") || bearer.contains("\n"))))
             throw new IllegalArgumentException("Invalid source HTTPS target or credentials");
+        String host = url.getHost().toLowerCase(Locale.ROOT);
         for (int attempt = 0; attempt < 3; attempt++) {
             check();
             if (++requests > requestLimit) throw new IllegalStateException("Source request limit exceeded");
-            long delay = 1000 - Duration.ofNanos(System.nanoTime() - lastRequest).toMillis();
+            long delay = Math.max(1000 - Duration.ofNanos(System.nanoTime() - lastRequest).toMillis(), hostDelay(host));
             if (delay > 0) Thread.sleep(delay);
-            check(); lastRequest = System.nanoTime();
+            check(); lastRequest = System.nanoTime(); lastHostRequest.put(host, lastRequest);
             var builder = HttpRequest.newBuilder(url).timeout(Duration.ofSeconds(20))
-                    .header("User-Agent", "TechAdvisor-Ingestion/1.0");
+                    .header("User-Agent", USER_AGENT);
             if (bearer != null) builder.header("Authorization", "Bearer " + bearer);
             HttpResponse<InputStream> response;
             try { response = http.send(builder.GET().build(), HttpResponse.BodyHandlers.ofInputStream()); }
@@ -108,16 +142,16 @@ public final class SourceContext implements AutoCloseable {
                 try { bytes = body.readNBytes(1_048_577); }
                 catch (Exception e) { throw new TransportFailure(); }
                 if (bytes.length > 1_048_576) throw new IllegalStateException("Source response exceeds 1 MiB");
-                if (response.statusCode() != 200) {
-                    String error = new String(bytes, StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
-                    boolean invalidToken = response.statusCode() == 400 && error.contains("product_token")
-                            && (error.contains("invalid") || error.contains("expired"));
-                    throw new HttpFailure(response.statusCode(), invalidToken);
-                }
-                check(); return bytes;
+                check(); return new Response(response.statusCode(), bytes);
             }
         }
         throw new IllegalStateException("Source unavailable");
+    }
+    private long hostDelay(String host) {
+        var interval = hostIntervals.get(host);
+        var last = lastHostRequest.get(host);
+        if (interval == null || last == null) return 0;
+        return interval.toMillis() - Duration.ofNanos(System.nanoTime() - last).toMillis();
     }
     private long retrySeconds(String value) {
         try { return Math.max(0, Long.parseLong(value)); }
