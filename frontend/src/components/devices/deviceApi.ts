@@ -1,4 +1,4 @@
-import { CONDITIONS, DEFAULT_CURRENCY, defaultPrefs } from "./deviceOptions";
+import { CONDITIONS, DEFAULT_CURRENCY, PRIORITY_FACTORS, defaultPrefs } from "./deviceOptions";
 import { PHONE_SPEC_KEYS, TEXT_SPEC_KEYS } from "./phoneSpecs";
 import type { PhoneSpecKey, PhoneSpecs } from "./phoneSpecs";
 import type { Condition, Device, UpgradePreferences } from "./types";
@@ -11,8 +11,7 @@ import type { Condition, Device, UpgradePreferences } from "./types";
 
 /**
  * JSON returned by `GET /api/devices` and `GET /api/devices/{id}`
- * (backend `dto/DeviceResponse.java`). `useCases` and `specOverrides` are
- * JSONB columns that arrive as JSON-encoded strings.
+ * (backend `dto/DeviceResponse.java`). JSONB columns arrive as JSON-encoded strings.
  */
 export type DeviceResponse = {
   id: number;
@@ -29,6 +28,11 @@ export type DeviceResponse = {
   budget: number | null;
   /** `device_preferences.currency`; null when there is no budget. */
   currency: string | null;
+  upgradeUrgency: string | null;
+  brandFlexibility: string | null;
+  priorities: string | null;
+  painPoints: string | null;
+  notes: string | null;
   current: boolean;
   createdAt: string;
   updatedAt: string;
@@ -53,6 +57,14 @@ export type DeviceRequest = {
   budget: number | null;
   /** ISO 4217 code for `budget`; null when no budget is sent. */
   currency: string | null;
+  /** Omitted preference fields preserve their saved values. */
+  upgradeUrgency?: string | null;
+  brandFlexibility?: string | null;
+  /** JSON-encoded factor weights, matching `device_preferences.priorities`. */
+  priorities?: string;
+  /** JSON-encoded text or array of text. */
+  painPoints?: string;
+  notes?: string;
 };
 
 const snake = (key: string) =>
@@ -71,8 +83,8 @@ const snake = (key: string) =>
  * rather than falling back to the catalogue value.
  *
  * The budget and its currency come from `device.upgradePreferences`. A device
- * with no budget sends null for both, which leaves the saved budget alone.
- * Other upgrade preferences (priorities, urgency, …) have no API yet.
+ * with no budget sends null for both and omits the other preferences.
+ * Saved weights are retained; newly selected priorities receive weight 1.
  */
 export function deviceToRequest(device: Device): DeviceRequest {
   const name = `${device.brand} ${device.model}`.trim();
@@ -95,6 +107,7 @@ export function deviceToRequest(device: Device): DeviceRequest {
       budget == null
         ? null
         : (device.upgradePreferences.currency ?? DEFAULT_CURRENCY),
+    ...(budget == null ? {} : preferencesToRequest(device.upgradePreferences)),
   };
 }
 
@@ -104,11 +117,6 @@ export type DeviceExtras = {
   category?: string | null;
   /** The catalogue `phone` row for this product — camelCase or snake_case. */
   phone?: Record<string, unknown> | null;
-  /**
-   * Preferences the endpoint does not return yet (priorities, urgency, …).
-   * The budget and currency always come from the response.
-   */
-  preferences?: UpgradePreferences | null;
   image?: string;
   primary?: boolean;
 };
@@ -129,6 +137,55 @@ function parseJson(text: string | null | undefined): unknown {
   } catch {
     return null;
   }
+}
+
+function painPointsText(raw: string | null | undefined): string {
+  const value = parseJson(raw);
+  if (typeof value === "string") return value;
+  return Array.isArray(value) ? value.join("; ") : "";
+}
+
+function preferencesToRequest(prefs: UpgradePreferences) {
+  const savedPainPoints = parseJson(prefs.painPointsJson);
+  const supportedPainPoints = typeof savedPainPoints === "string"
+    || Array.isArray(savedPainPoints) && savedPainPoints.every((point) => typeof point === "string");
+  return {
+    upgradeUrgency: prefs.urgency || null,
+    brandFlexibility: prefs.brandFlex || null,
+    priorities: JSON.stringify(Object.fromEntries(
+      prefs.priorities.map((label) => {
+        const factor = PRIORITY_FACTORS[label] ?? label;
+        return [factor, prefs.priorityWeights?.[factor] ?? 1];
+      })
+    )),
+    // Budget-only records predate this API and can contain the JSONB default {}.
+    // Preserve supported strings/arrays; encode that legacy empty value as text.
+    painPoints: prefs.painPointsJson && supportedPainPoints && painPointsText(prefs.painPointsJson) === prefs.painPoints
+      ? prefs.painPointsJson
+      : JSON.stringify(prefs.painPoints),
+    notes: prefs.notes,
+  };
+}
+
+function preferencesFromApi(response: DeviceResponse): UpgradePreferences {
+  if (response.budget == null) return defaultPrefs();
+  const parsed = parseJson(response.priorities);
+  const priorityWeights = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? Object.fromEntries(Object.entries(parsed).filter(([, weight]) => Number.isInteger(weight))) as Record<string, number>
+    : {};
+  return {
+    budget: Number(response.budget),
+    currency: response.currency,
+    priorities: Object.keys(priorityWeights).map((factor) =>
+      Object.keys(PRIORITY_FACTORS).find((label) => PRIORITY_FACTORS[label] === factor) ?? factor
+    ),
+    priorityWeights,
+    urgency: response.upgradeUrgency ?? "",
+    brandFlex: response.brandFlexibility ?? "",
+    painPoints: painPointsText(response.painPoints),
+    painPointsJson: response.painPoints ?? undefined,
+    notes: response.notes ?? "",
+  };
 }
 
 const camel = (key: string) =>
@@ -197,11 +254,7 @@ export function deviceFromApi(
     use: parseUseCases(response.useCases),
     purchaseDate: response.purchaseDate ?? "",
     satisfaction: response.satisfactionScore ?? undefined,
-    upgradePreferences: {
-      ...(extras.preferences ?? defaultPrefs()),
-      budget: response.budget == null ? null : Number(response.budget),
-      currency: response.budget == null ? null : response.currency,
-    },
+    upgradePreferences: preferencesFromApi(response),
     specs:
       type === "Phone"
         ? { ...normalizePhoneSpecs(extras.phone), ...overrides }

@@ -24,6 +24,11 @@ const demoPhoneResponse: DeviceResponse = {
   specOverrides: "{}",
   budget: 1000,
   currency: "SGD",
+  upgradeUrgency: "NOT_URGENT",
+  brandFlexibility: "SOMEWHAT_FLEXIBLE",
+  priorities: '{"battery":5,"camera":4,"longevity":4}',
+  painPoints: JSON.stringify("Battery life is the main reason I would consider replacing this phone."),
+  notes: "Do not recommend an upgrade just for a small performance improvement.",
   current: true,
   createdAt: "2026-09-01T00:00:00Z",
   updatedAt: "2026-09-01T00:00:00Z",
@@ -55,16 +60,6 @@ export const DEMO_DEVICES: Device[] = [
     primary: true,
     image:
       "https://mobilerelation.com.sg/wp-content/uploads/2025/10/iphone-13-pro-max-silver.webp",
-    preferences: {
-      budget: 1000,
-      priorities: ["Battery life", "Camera", "Longevity"],
-      urgency: "Only when worthwhile",
-      brandFlex: "Prefer same brand",
-      painPoints:
-        "Battery life is the main reason I would consider replacing this phone.",
-      notes:
-        "Do not recommend an upgrade just for a small performance improvement.",
-    },
   }),
   {
     id: "laptop-1",
@@ -81,8 +76,8 @@ export const DEMO_DEVICES: Device[] = [
     upgradePreferences: {
       budget: 2000,
       priorities: ["Performance", "Battery life", "Portability"],
-      urgency: "Only if current device struggles",
-      brandFlex: "Open to alternatives",
+      urgency: "SOMEWHAT_URGENT",
+      brandFlex: "FLEXIBLE",
       painPoints:
         "Heavy VM workloads and build times matter more than gaming FPS.",
       notes:

@@ -161,16 +161,16 @@ describe("device UI coverage", () => {
 
     fireEvent.change(screen.getByLabelText("Maximum budget"), { target: { value: "2500" } });
     await user.click(screen.getByRole("button", { name: "Camera" }));
-    fireEvent.change(screen.getByLabelText("Upgrade urgency"), { target: { value: "I like staying current" } });
-    fireEvent.change(screen.getByLabelText("Brand flexibility for this replacement"), { target: { value: "No preference" } });
+    fireEvent.change(screen.getByLabelText("Upgrade urgency"), { target: { value: "URGENT" } });
+    fireEvent.change(screen.getByLabelText("Brand flexibility for this replacement"), { target: { value: "EXTREMELY_FLEXIBLE" } });
     await user.type(screen.getByLabelText("Current pain points"), "Battery");
     await user.type(screen.getByLabelText("Anything else for this device?"), "No launch day");
 
     await user.click(screen.getByRole("button", { name: "Save upgrade profile" }));
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
       budget: 2500,
-      urgency: "I like staying current",
-      brandFlex: "No preference",
+      urgency: "URGENT",
+      brandFlex: "EXTREMELY_FLEXIBLE",
     }));
     await user.click(screen.getByRole("button", { name: "Skip for now" }));
     expect(onClose).toHaveBeenCalled();

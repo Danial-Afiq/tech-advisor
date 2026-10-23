@@ -2888,10 +2888,10 @@ Shared behaviour (`RecommendationTriggerService`):
   context**: if the device lacks a valid `condition`, `satisfaction_score` or
   `purchase_date`, the preferences lack a valid `upgrade_urgency` /
   `brand_flexibility` or contain a non-factor priority, or the candidate has no
-  `release_date`, the call is skipped and the gaps are logged. **Today the device API
-  cannot set urgency or brand flexibility (§27.10), so devices created through it
-  never reach the model** until SCRUM-20 adds those fields; seed them directly for a
-  demo. `recommendation.triggers.ai-assessment-enabled` (`RECOMMENDATION_AI_ASSESSMENT_ENABLED`,
+  `release_date`, the call is skipped and the gaps are logged. **SCRUM-38 now exposes
+  urgency, brand flexibility and weighted factor priorities through the device API**;
+  a user-saved upgrade profile can supply that context. The other device/candidate
+  requirements still apply. `recommendation.triggers.ai-assessment-enabled` (`RECOMMENDATION_AI_ASSESSMENT_ENABLED`,
   default true) switches the AI step off entirely.
 - **Isolation.** Every pair commits on its own; any exception is caught per pair (or
   per device for Trigger 2), so one AI or data failure never rolls back or stops the
@@ -2924,24 +2924,42 @@ Known limits, deliberately not addressed here:
 - The Java maturity gate (§8.3) is still not implemented.
 - Removing a device, or unlinking its product, leaves its `ACTIVE` rows in place.
 
-**Budget on the device API (API contract change, 27 Sep).** `DeviceRequest` gained optional
-`budget` (>= 0, 10.2 digits) and `currency` (3 upper-case letters). With a budget,
-create/update upserts `device_preferences` (currency defaults to `SGD` on create and is
-kept on update when omitted). Without one, existing preferences are left untouched.
-Only `budget`/`currency` are writable; `priorities`, `pain_points`, urgency, brand
-flexibility and notes still have no API. Without a budget a device is never evaluable
-(§27.10).
+**Device preference persistence — IMPLEMENTED (21 Oct, SCRUM-38).** The existing
+`POST /api/devices` and `PUT /api/devices/{id}` accept optional `budget` (>= 0,
+10.2 digits), `currency` (3 upper-case letters), `upgradeUrgency`, `brandFlexibility`,
+`priorities`, `painPoints` and `notes`. `DeviceService` upserts the existing
+`device_preferences` row keyed by the owned device's id, in the same transaction as
+the device save. Creating preferences requires a budget; later updates can supply
+any subset of preference fields. Omitted/null fields preserve stored values; `{}`
+clears priorities, JSON `""`/`[]` clears pain points, and an empty string clears notes.
+Currency defaults to `SGD` on first save and is preserved when omitted on update.
 
-**Budget round-trip (11 Oct, `feat/device-budget-wiring`).** `DeviceResponse` (every
-`/api/devices` create/update/get/list response) now returns `budget` and `currency` from
-`device_preferences`, both null when the device has no preferences row; the list reads all
-rows' preferences in one query. The `/devices` page sends them: the add-device form sends
-`budget: null` (it does not collect one, so nothing is invented), and saving the
-"upgrade profile" modal (step 2 of add, or "Upgrade preferences" on a card) calls
-`PUT /api/devices/{id}` with the whole device plus `budget` and `currency` (the device's
-saved currency, else `SGD`; there is no currency picker - see §27.9). That PUT publishes
-`DeviceInventoryChanged(UPDATED)`, so saving a budget is what makes a newly added device
-evaluable. The other upgrade-profile fields stay page-local until they get an API.
+Urgency and brand flexibility use `AssessVocabulary`'s closed values. `priorities`
+is a JSON-encoded object of `Factors` keys and 32-bit integer weights; `painPoints`
+is JSON-encoded text or an array of text. This follows the device API's existing
+JSON-encoded-string convention for JSONB. Invalid JSON, shapes, factors or enum
+values are rejected with 400. Ownership/current-device checks reject nonexistent,
+other users' and removed devices with 404 before preferences are accessed. The
+existing PK/FK enforces one preferences row per owned device; no migration is needed.
+
+All create/update/get/list `DeviceResponse`s return all seven preference fields
+(null when no row exists); listing still loads preferences in one query. The
+`/devices` upgrade-profile modal sends the full profile via the existing PUT and
+uses the server response after save and reload. `deviceOptions.ts` maps priority
+labels to the twelve canonical factors and uses canonical urgency/flexibility values.
+Existing priority weights and JSON pain-point arrays survive edits; newly selected
+priorities receive equal weight 1. Unsupported prototype options have been replaced.
+The adapter converts legacy empty pain-point objects (`{}`, the old JSONB default)
+and JSON null into JSON-encoded empty text before saving, so budget-only profiles
+can be completed without violating the new string/array request validation.
+The add-device form still sends no budget until step 2 is saved. There is no
+currency picker: the saved currency is retained, otherwise SGD is sent (§27.9).
+The existing `DeviceInventoryChanged(UPDATED)` event re-evaluates recommendations
+after the full profile commits. `DevicePreferencesIntegrationTest` also verifies
+that API-saved values reach `AssessRequestFactory` without a live AI call. Tests:
+`DevicePreferencesIntegrationTest`,
+`OpenApiDocumentationTests`, `deviceApi.test.ts`, `DevicesPageTest.test.tsx`.
+See `docs/device-preferences.md` for the API example and change-by-change explanation.
 
 `AssessVocabulary` mirrors the non-factor closed vocabularies of `ai/app/factors.py`;
 `AssessVocabularyTest` reads `factors.py` and fails on drift (it also checks `Factors`).
@@ -3734,8 +3752,8 @@ always collect a budget. The backend accepts `budget`/`currency` on
 `/devices` upgrade-profile modal saves them via `PUT`. A device whose step-2 profile
 is skipped has no budget and is not evaluated. The AI step
 of the triggers additionally needs `condition`, `satisfaction_score`, `purchase_date`,
-`upgrade_urgency` and `brand_flexibility`; the last two have no API yet, so until
-they do, user-created devices get deterministic verdicts only. If the product decides a budget should be optional,
+`upgrade_urgency` and `brand_flexibility`; SCRUM-38 now persists the last two through
+the device API and upgrade-profile form (§18.12). If the product decides a budget should be optional,
 relax the constraint in a later migration rather than editing V6.
 
 ## 27.11 Where the AI service is hosted — OPEN
