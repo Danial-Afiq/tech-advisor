@@ -63,3 +63,34 @@ export function recommendationDeviceOptions(recommendations: readonly DashboardR
 export function selectedFilterCount(filters: RecommendationFilters) {
   return Number(filters.deviceId !== null) + filters.verdicts.length + filters.evidenceGrades.length;
 }
+
+/**
+ * How many recommendations each owned device shows before "Show all". The
+ * dashboard caps per device, so a user with more devices sees proportionally
+ * more cards, and every device keeps its own top picks.
+ */
+export const TOP_RECOMMENDATIONS_PER_DEVICE = 3;
+
+export type DeviceRecommendationGroup = {
+  deviceId: number;
+  deviceName: string;
+  recommendations: DashboardRecommendation[];
+};
+
+/**
+ * Groups recommendations by owned device. Devices appear in the order of
+ * their first recommendation and rows keep their order, so the top of each
+ * group is the top of the server's chosen sort.
+ */
+export function groupRecommendationsByDevice(
+  recommendations: readonly DashboardRecommendation[],
+): DeviceRecommendationGroup[] {
+  const groups = new Map<number, DeviceRecommendationGroup>();
+  recommendations.forEach((recommendation) => {
+    const { currentDeviceId: deviceId, currentDeviceName: deviceName } = recommendation;
+    const group = groups.get(deviceId) ?? { deviceId, deviceName, recommendations: [] };
+    group.recommendations.push(recommendation);
+    groups.set(deviceId, group);
+  });
+  return [...groups.values()];
+}

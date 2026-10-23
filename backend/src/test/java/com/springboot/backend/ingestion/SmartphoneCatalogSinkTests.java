@@ -79,6 +79,21 @@ class SmartphoneCatalogSinkTests {
         assertEquals(5000, phone.get("battery_mah"));
     }
 
+    @Test void storesTheImageUrlAndKeepsItWhenALaterRunHasNone() {
+        Map<String, BigDecimal> values = Map.of("battery", new BigDecimal("5000"));
+        Map<String, String> units = Map.of("battery", "mAh");
+        String thumb = "https://api.mobileapi.dev/devices/31333/thumb.png";
+        sink.accept("run-1", new Payload("mobileapi-smartphone", "31333", Instant.now(),
+                new Payload.Specifications("31333", "BLU", "G5", null, values, units, List.of(),
+                        java.net.URI.create(thumb))));
+        assertEquals(thumb, db.queryForObject(
+                "SELECT image_url FROM products WHERE brand = 'BLU' AND model_name = 'G5'", String.class));
+
+        sink.accept("run-2", specPayload("31333", "BLU", "G5", null, values, units));
+        assertEquals(thumb, db.queryForObject(
+                "SELECT image_url FROM products WHERE brand = 'BLU' AND model_name = 'G5'", String.class));
+    }
+
     @Test void noStorageTierListFallsBackToOneVariantFromTheBaseFigure() {
         // Ticket 1.8: older/budget devices commonly have no tier breakdown at all (confirmed
         // against real captured devices) - must still get one variant, not zero.

@@ -5,9 +5,7 @@ import { advisorTheme } from "./theme";
  * Full-screen themed page root: daisyUI theme variables, base text styles and
  * the prototype's glowing navy background. Used by `AppShell` and by
  * signed-out pages (login, sign-up) that have no sidebar.
- *
- * It is `fixed inset-0` so it escapes the `#root` width/centering rules in
- * index.css, which are unlayered and would otherwise beat Tailwind utilities.
+ * It is the page's scroll container (`fixed inset-0`), so sticky bars stick to it.
  */
 export function ThemeRoot({ children }: { children: ReactNode }) {
   return (

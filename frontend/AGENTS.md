@@ -41,7 +41,7 @@ Every signed-in page uses the same frame:
   <PageHeader eyebrow="…" title="…" description="…" action={<Button …/>} />
   {/* optional <Callout> */}
   {/* page content: grids of <Card>-based components */}
-  {/* modals, <ScanOverlay>, <ToastStack> rendered last, inside AppShell */}
+  {/* modals and <ToastStack> rendered last, inside AppShell */}
 </AppShell>
 ```
 
@@ -88,17 +88,19 @@ Reach for these first. All are named exports.
 
 ### `components/auth/` — accounts
 
-`AuthCard` (sign-up / log-in tabs, used by the Login page) and `SignInModal`
-(quick sign-in from inside a page).
+`AuthCard` (sign-up / log-in tabs, used by the Login page) and `SessionRoute`
+(route guards). Signed-in pages never offer an in-page sign-in.
 
 ### `components/devices/` — device domain
 
 `DeviceGrid` (picks `PhoneCard` for phones, `DeviceCard` otherwise),
-`DeviceCard` (`compact` for dashboard use; `children` slot for extra panels),
-`PhoneCard` (`DeviceCard` + `PhoneSpecsDropdown`), `DeviceThumb`,
+`DeviceCard` (`children` slot for extra panels; nudges "set a budget" when the
+device has none, because the backend never evaluates it without one),
+`PhoneCard` (`DeviceCard` + `PhoneSpecsDropdown`), `DeviceThumb` (product
+image, else the type emoji; also used for suggested products on dashboard cards),
 `ConditionBadge`, `UpgradeProfileSummary`, `DeviceFormModal`,
 `UpgradePreferencesModal`, `BudgetSlider`, `PriorityPicker`,
-`DevicePickerModal`, `ScanOverlay`, `CatalogueSearchInput` (ARIA combobox of
+`CatalogueSearchInput` (ARIA combobox of
 catalogue suggestions; typing stays free text), `PhoneSpecFields` (editable
 phone specs, tagging fields changed from the catalogue as "Edited").
 `useSmartphoneCatalogue(enabled)` loads the catalogue once, and
@@ -147,7 +149,14 @@ and helpers file, then components.
 
 `RecommendationCard` presents one persisted recommendation in the standard
 dashboard format: owned device, suggested product, Indicative price, deterministic verdict,
-owner evidence grade and reasoning. `recommendationPresentation.ts` owns the
+owner evidence grade and reasoning. `showDevice={false}` drops the owned-device
+heading (the dashboard already groups cards under it) and makes the suggested
+product the title; `children` adds panels under the price. `SpecComparison` is
+the "Compare specs" button and its side-by-side spec table in a `Modal` (`compareSpecs.ts` builds its rows from
+`PHONE_SPEC_GROUPS`, so a new phone spec shows up there too), and
+`useComparisonSpecs()` supplies both sides from the device and catalogue APIs.
+`groupRecommendationsByDevice` and `TOP_RECOMMENDATIONS_PER_DEVICE` in
+`recommendationOptions.ts` drive the per-device top picks (root §23.4). `recommendationPresentation.ts` owns the
 readable labels, themed badge styles and attention behaviour for the four
 canonical verdicts, plus stored-currency-aware indicative-price formatting. `types.ts`
 defines the API-aligned recommendation, verdict
@@ -170,6 +179,9 @@ re-sorting it. The card's star toggle (`onToggleStar`, `starPending`) is shown
 only when the page handles it; the page owns confirming an unstar. The Saved
 toolbar toggle is `savedOnly` in the same filter state; `selectedFilterCount`
 and the dropdown's Clear filters deliberately ignore it (root §26.4).
+When `onDismiss` is supplied, the card also shows **Not interested**. The
+dashboard owns the reason/comment modal, calls the dismissal API, and removes
+the card only after the request succeeds (root §26.4).
 
 ---
 
@@ -282,31 +294,23 @@ Borders are 1px `white/[0.09]` almost everywhere. Card shadow is
 
 - Breakpoints are the prototype's, not Tailwind's defaults: **620px** (phone:
   single column, hide top-bar title), **860px** (sidebar collapses to 78px
-  icons), **1100px** (3-column grids drop to 2). Write them as
+  icons with a 10px caption under each, so touch users can still read them), **1100px** (3-column grids drop to 2). Write them as
   `max-[620px]:`, `max-[860px]:`, `max-[1100px]:`.
 - Grid gaps: 14px between cards, 16px between larger sections.
 - Card padding: 18px. Modal header/body padding: 20px.
 
 ---
 
-## 5. Why sizes are written in px, and other gotchas
+## 5. Global CSS
 
-`src/index.css` (left over from the Vite template) contains **unlayered** CSS.
-Unlayered rules beat Tailwind's layered utilities no matter how specific the
-Tailwind class is. It currently sets:
-
-- `:root { font: 18px/145% … }`, so `1rem` = 18px (16px under 1024px). Any
-  Tailwind size in `rem` (`p-4`, `text-sm`, daisyUI sizes) renders about 12%
-  larger than in the prototype. **Use explicit px values** (`text-[13px]`,
-  `p-[18px]`) wherever the size matters.
-- `h1` / `h2` font size, weight, colour and margin. Only `PageHeader` renders an
-  `h1`, and it uses Tailwind's `!` important modifier to override. Elsewhere use
-  `h3` / `h4`, which are not styled there.
-- `#root { width: 1126px; text-align: center; … }`. `AppShell` is
-  `fixed inset-0` to escape it.
-
-If someone cleans up `index.css`, these workarounds can be simplified. Do that
-as one deliberate change across all components, not piecemeal.
+The only global stylesheet is `src/App.css` (Tailwind + daisyUI). The Vite
+template's `index.css` was removed (`feat/declutter-device-ui`), so there are no
+unlayered rules to fight: `1rem` is the browser's 16px, headings are reset by
+Tailwind's preflight, and `PageHeader` needs no `!` modifiers. Do not add a new
+global stylesheet; style through components. Existing components still use
+explicit px values to match the prototype, and new ones should too.
+`ThemeRoot` stays `fixed inset-0` because it is the scroll container that the
+sticky sidebar and top bar stick to.
 
 ---
 
@@ -384,6 +388,26 @@ as one deliberate change across all components, not piecemeal.
   §26.4 and §27.9. A `?recommendation={id}` query (set when a notification
   is opened) outlines and scrolls to that card, or explains with a `Callout`
   that it is no longer active or is hidden by the current filters.
+  Cards are grouped per owned device and show that device's top 3, with a
+  per-device Show all; each card has a Compare specs button that opens a dialog (root §23.4).
+  Paragraphs placed directly in a `card-body` need `grow-0`: daisyUI gives
+  `.card-body p` `flex-grow: 1`, which spreads them down a stretched card.
+  The three overview cards stay three across on phones instead of stacking.
+- The user sidebar offers only Dashboard and My devices. The placeholder
+  Activity and Settings items (no pages behind them) were removed. Device cards show the
+  Satisfaction meter only; the old "Context fit" meter (a clamped copy of
+  satisfaction) and the never-wired "Simulate update" button were removed,
+  along with `ScanOverlay`, `DevicePickerModal`, `DeviceCard`'s unused
+  `compact` mode, and `/devices`' signed-out demo mode (`demoData.ts`,
+  `SignInModal`), which the USER route guard made unreachable.
+- Each dashboard card shows the suggested phone's photo (the phone emoji when
+  the catalogue has none or it fails to load), a one-line summary of the biggest spec changes ("Battery 54%
+  better · RAM 33% better") and, in the Compare specs dialog, an arrow for the
+  direction the value moved, with the suggested value and arrow green when
+  better or red when worse (differing text specs are only bolded). Both
+  come from the response's `specChanges`, which the backend direction-corrects
+  with the verdict's own rules; the UI never decides better or worse itself. The page description explains that the verdict and the owner
+  evidence grade are separate.
 - **In-app notifications (ticket 4.4.2).** The top-bar bell on `/dashboard`
   and `/devices` is `NotificationCenter` (replacing the dashboard's attention
   count and the devices page's hard-coded `1`). See
@@ -398,15 +422,20 @@ as one deliberate change across all components, not piecemeal.
   prefilled field shows a warning with "Use catalogue value" and "Keep
   empty"; the form won't save until each emptied field has one of them.
   Specs already saved as cleared count as kept. No match, an unavailable catalogue, or "Enter manually
-  instead" all leave plain manual entry, with no error. Signed out (demo
-  mode) there are no suggestions. Matching is client-side over the full list.
+  instead" all leave plain manual entry, with no error. Matching is
+  client-side over the full list.
 - `GET /api/devices` doesn't return specs, so the page fills linked devices'
-  specs from the catalogue list with `withCatalogue`. The catalogue only
+  specs, and their product image (`imageUrl`, MobileAPI's thumbnail), from the
+  catalogue list with `withCatalogue`. `DeviceThumb` shows that image instead of
+  the type emoji and falls back to the emoji if it fails to load. The catalogue only
   has smartphones. It has no GPU/VRAM or launch-price columns, so nothing
   prefills those.
-- Device type isn't stored for devices without a catalogue product (the
-  backend derives it from `products.category`). After a reload such devices
-  show as type "Other", or "Phone" if they have spec overrides.
+- Device type isn't stored for devices without a catalogue product. Linked
+  devices take it from `DeviceResponse.productCategory`, so they open as
+  "Phone" in Edit even before the catalogue loads. After a reload, unlinked
+  devices show as type "Other" (a real option in the type select, so Edit no
+  longer silently switches them to "Desktop PC"), or "Phone" if they have spec
+  overrides.
 - JWT storage is **temporary**: `sessionStorage` via `src/api/session.ts`.
   The token-storage decision is still open. Change `session.ts` when it's
   decided.
@@ -448,13 +477,14 @@ as one deliberate change across all components, not piecemeal.
   and the profile-card sign-out control.
 - Signed-in USER pages also sign out from the shared profile-card icon; do not
   add a second page-level sign-out button.
-- **Not yet migrated:** `pages/ThingieMagiggie.tsx`. When you touch it, move it
-  onto the shared components.
+- **Not yet migrated:** `pages/ThingieMagiggie.tsx` (`/ThingieMagiggie`), kept
+  deliberately. When you touch it, move it onto the shared components.
 - `DeviceResponse` includes budget, currency, upgrade urgency, brand flexibility,
-  weighted priorities, pain points and notes. `deviceFromApi` always takes these
-  from the response; `extras.preferences` has been removed. Product category and
-  `phone` specs still come from `extras`. When the backend adds them, update
-  `DeviceResponse` / `deviceFromApi` in one place.
+  weighted priorities, pain points, notes and the linked product's category.
+  `deviceFromApi` always takes these from the response; `extras.preferences`
+  has been removed and `extras.category`, if passed, overrides the response's.
+  `phone` specs still come from `extras`/`withCatalogue`. When the backend adds
+  them, update `DeviceResponse` / `deviceFromApi` in one place.
 - `devices/deviceOptions.ts` maps priority labels to the twelve factors and
   defines canonical urgency/brand-flexibility select values. The authoritative
   vocabulary remains `ai/app/factors.py` and its Java mirrors (root `AGENTS.md`).

@@ -18,6 +18,8 @@ export type DeviceResponse = {
   productId: number | null;
   productBrand: string | null;
   productModelName: string | null;
+  /** `products.category` of the linked product (e.g. "SMARTPHONE"); null when unlinked. */
+  productCategory?: string | null;
   customName: string | null;
   purchaseDate: string | null;
   condition: string | null;
@@ -113,7 +115,7 @@ export function deviceToRequest(device: Device): DeviceRequest {
 
 /** Extra data the device endpoint does not return yet. */
 export type DeviceExtras = {
-  /** `products.category`, e.g. "SMARTPHONE". */
+  /** `products.category`, e.g. "SMARTPHONE"; overrides `response.productCategory`. */
   category?: string | null;
   /** The catalogue `phone` row for this product — camelCase or snake_case. */
   phone?: Record<string, unknown> | null;
@@ -233,7 +235,7 @@ export function deviceFromApi(
   response: DeviceResponse,
   extras: DeviceExtras = {}
 ): Device {
-  const category = extras.category?.toUpperCase();
+  const category = (extras.category ?? response.productCategory)?.toUpperCase();
   const overrides = normalizePhoneSpecs(parseJson(response.specOverrides));
   const hasPhone = Boolean(extras.phone) || Object.keys(overrides).length > 0;
   const type = category

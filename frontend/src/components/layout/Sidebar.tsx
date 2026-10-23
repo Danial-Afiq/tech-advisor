@@ -5,8 +5,6 @@ import type { ShellUser } from "./ProfileCard";
 export type NavKey =
   | "dashboard"
   | "devices"
-  | "activity"
-  | "settings"
   | "ingestion"
   | "catalogue";
 
@@ -15,11 +13,12 @@ export type NavItem = { key: NavKey; icon: string; label: string };
 const USER_NAV_ITEMS: NavItem[] = [
   { key: "dashboard", icon: "⌂", label: "Dashboard" },
   { key: "devices", icon: "▣", label: "My devices" },
-  { key: "activity", icon: "↺", label: "Activity" },
-  { key: "settings", icon: "⚙", label: "Settings" },
 ];
 
-/** App navigation (daisyUI `menu`); collapses to icons below 860px. */
+/**
+ * App navigation (daisyUI `menu`). Below 860px each item collapses to its
+ * icon with a small caption underneath, so touch users still see what it is.
+ */
 export function Sidebar({
   active,
   user,
@@ -48,14 +47,16 @@ export function Sidebar({
                 type="button"
                 aria-current={isActive ? "page" : undefined}
                 onClick={() => onNavigate?.(item.key)}
-                className={`flex w-full items-center gap-[11px] rounded-[12px] border px-3 py-[11px] text-[14px] font-semibold max-[860px]:justify-center ${
+                className={`flex w-full items-center gap-[11px] rounded-[12px] border px-3 py-[11px] text-[14px] font-semibold max-[860px]:flex-col max-[860px]:justify-center max-[860px]:gap-[3px] max-[860px]:px-[2px] max-[860px]:py-[8px] ${
                   isActive
                     ? "border-[#7c5cff]/25 bg-[linear-gradient(90deg,rgba(124,92,255,.18),rgba(124,92,255,.06))] text-[#f7f8ff]"
                     : "border-transparent text-[#95a5bb] hover:bg-white/[0.035] hover:text-white"
                 }`}
               >
                 <span className="w-5 text-center" aria-hidden="true">{item.icon}</span>
-                <span className="max-[860px]:hidden">{item.label}</span>
+                <span className="max-[860px]:text-center max-[860px]:text-[10px] max-[860px]:leading-[1.2]">
+                  {item.label}
+                </span>
               </button>
             </li>
           );

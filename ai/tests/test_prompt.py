@@ -75,6 +75,17 @@ def test_undated_passage_is_labelled_rather_than_guessed(settings, assess_reques
     assert "age unknown" in rendered
 
 
+def test_missing_candidate_release_date_is_labelled_rather_than_guessed(
+    settings, assess_request
+):
+    assess_request.candidate.release_date = None
+    assess_request.candidate.age_days = None
+
+    rendered = render_passage("P1", chunk("Battery is fine."), assess_request, settings)
+
+    assert "release date unknown" in rendered
+
+
 def test_trusted_context_holds_no_scraped_text(settings, assess_request):
     block = trusted_context(assess_request)
     payload = json.loads(block)

@@ -22,9 +22,9 @@ export const catalogueSpecs = (item: SmartphoneCatalogueItem): PhoneSpecs =>
   normalizePhoneSpecs(item);
 
 /**
- * A linked device with its catalogue specs filled in (user overrides on top).
- * `GET /api/devices` doesn't return the specs, so pages add them from the
- * catalogue list.
+ * A linked device with its catalogue specs and product image filled in (user
+ * overrides on top). `GET /api/devices` doesn't return either, so pages add
+ * them from the catalogue list.
  */
 export function withCatalogue(
   device: Device,
@@ -34,6 +34,7 @@ export function withCatalogue(
   return {
     ...device,
     type: "Phone",
+    image: item.imageUrl ?? device.image,
     specs: { ...catalogueSpecs(item), ...device.specOverrides },
   };
 }
