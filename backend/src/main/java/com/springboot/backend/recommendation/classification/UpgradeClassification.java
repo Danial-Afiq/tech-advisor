@@ -52,6 +52,9 @@ public record UpgradeClassification(
         Map<String, Object> perFactor = new LinkedHashMap<>();
         score.factorScores().forEach((factor, detail) -> {
             Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("priority", detail.priority());
+            entry.put("weight", detail.weight());
+            entry.put("improvement", detail.improvement());
             entry.put("contribution", detail.contribution());
             entry.put("impact", detail.impact());
             entry.put("specs", detail.specs());
@@ -59,10 +62,8 @@ public record UpgradeClassification(
         });
 
         factors.put("factors", perFactor);
-        // Every factor counts the same until the group settles how user
-        // priorities should weight the verdict (§27.5). Stamped so a persisted
-        // breakdown says how it was weighted.
-        factors.put("weighting", "EQUAL");
+        factors.put("weighting", "PRIORITY_NORMALIZED");
+        factors.put("priorities", score.prioritiesUsed());
         factors.put("upgrade_score", upgradeScore);
         factors.put("scoring_version", scoringVersion);
         factors.put("coverage", score.coverage());

@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Large performance gain with battery first",
+    "owned": {"battery": 4000, "ram": 8, "refresh": 120, "weight": 200},
+    "candidate": {"battery": 4000, "ram": 16, "refresh": 120, "weight": 200},
+    "priorities": {"battery": 5, "performance": 1},
+    "budget": 1000, "price": 1000,
+    "expectedScore": 0.17, "expectedVerdict": "NO_MEANINGFUL_CHANGE"
+  },
+  {
+    "name": "Moderate battery gain with battery first",
+    "owned": {"battery": 4000, "ram": 8, "refresh": 120, "weight": 200},
+    "candidate": {"battery": 5600, "ram": 8, "refresh": 120, "weight": 200},
+    "priorities": {"battery": 5, "performance": 1},
+    "budget": 1000, "price": 1000,
+    "expectedScore": 0.67, "expectedVerdict": "WORTH_CONSIDERING"
+  },
+  {
+    "name": "Same battery candidate with performance first",
+    "owned": {"battery": 4000, "ram": 8, "refresh": 120, "weight": 200},
+    "candidate": {"battery": 5600, "ram": 8, "refresh": 120, "weight": 200},
+    "priorities": {"battery": 1, "performance": 5},
+    "budget": 1000, "price": 1000,
+    "expectedScore": 0.13, "expectedVerdict": "NO_MEANINGFUL_CHANGE"
+  }
+]

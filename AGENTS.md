@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 23 October 2026
+> **Last consolidated:** 24 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -526,10 +526,10 @@ Question:
 
 > “Does this candidate make sense for this specific user's current device, budget, and priorities?”
 
-> **Priorities do not weight this verdict for now (26 Sep 2026).** The group has
-> not agreed how `device_preferences.priorities` should weight the deterministic
-> score, so every measurable factor counts equally (§18.9, §27.5). Priorities are
-> still collected and still drive retrieval and the LLM explanation (§8.4, §9).
+> **Priority weighting implemented by SCRUM-39 (24 Oct 2026, v4).** Each
+> measured factor’s weight is its resolved priority divided by the sum of
+> measured-factor priorities. Empty/all-zero profiles fall back to equal weights.
+> Priorities also continue to drive retrieval and the explanation (§8.4, §9).
 
 Outputs include:
 - `verdict`
@@ -1723,6 +1723,8 @@ Preserve the generation-time inputs because:
 - review evidence may grow.
 
 The recommendation should remain auditable.
+SCRUM-39 stores effective scoring priorities in `scoring_priorities` and the
+configuration revision in `scoring_version` for both persistence paths (§18.9).
 
 ### `factor_analysis`
 Keep deterministic and model evidence separate:
@@ -1730,16 +1732,25 @@ Keep deterministic and model evidence separate:
 ```json
 {
   "deterministic": {
-    "battery": {
-      "contribution": 1.0,
-      "impact": "HIGH_POSITIVE"
+    "weighting": "PRIORITY_NORMALIZED",
+    "scoring_version": "v4",
+    "priorities": {"battery": 5},
+    "factors": {
+      "battery": {
+        "priority": 5,
+        "weight": 1.0,
+        "improvement": 0.8,
+        "contribution": 0.8,
+        "impact": "HIGH_POSITIVE",
+        "specs": ["battery_mah"]
+      }
     }
   },
   "evidence": [
     {
       "factor": "battery",
       "stance": "NEGATIVE",
-      "supporting_refs": ["P1", "P7"],
+      "supporting_chunk_ids": [4412, 4430],
       "note": "Owners report reduced endurance"
     }
   ]
@@ -2827,7 +2838,7 @@ SCRUM-34) and persistence (§18.8).
 | `Factors` | Java mirror of the twelve closed factors in `ai/app/factors.py` |
 | `SpecFactorCatalog` | which `phone` column feeds which factor, its direction, its improvement cap |
 | `SpecComparisonService` | two spec sheets to finished, direction-corrected deltas, benchmark uplift and price-vs-budget |
-| `UpgradeScoringService` | normalise, equal-weight every measured factor, aggregate to 0-1 |
+| `UpgradeScoringService` | normalise, priority-weight measured factors, aggregate to 0-1 |
 | `TierMapper` | score to one of the four verdicts; also the notification-eligibility read (§27.7) |
 | `UpgradeClassificationService` | orchestration, JSONB parsing, the preference-gate exit |
 | `ScoringSettings` | `@ConfigurationProperties("recommendation.scoring")`, thresholds and version |
@@ -2845,19 +2856,39 @@ How the score is built:
    so GHz, GB, watts and dollars never get added together;
 2. specs sharing a factor average, so a factor with four measurable specs does not
    outvote one with a single spec;
-3. every measured factor carries **equal weight**, and their plain mean is the
-   final 0-1 score, where 1.0 is a strong upgrade recommendation and 0.0 is not
-   recommended;
+3. each measured factor carries its priority divided by the sum of measured
+   priorities; its signed improvement times that weight contributes to the
+   final 0-1 score, clamped and rounded as before;
 4. coverage is judged against every factor a spec column can feed (twelve minus
    the five unscorable ones), not against the factors the user ranked.
 
-**CHANGED 26 Sep 2026 (`scoring-version` v3):** weighting by the user's 1-5
-`device_preferences.priorities` is **removed** from Channel A, because the group
-has not agreed how preferences should weight the verdict. The v2 design (priority
-weights, `default-priority` fallback, per-factor `priority` in the breakdown,
-coverage measured against ranked factors) is superseded until that is decided
-(§27.5). The breakdown now records `"weighting": "EQUAL"`. Priorities still reach
-the AI service unchanged.
+**CHANGED 24 Oct 2026 (SCRUM-39, `scoring-version` v4):** priority weighting is
+implemented, superseding v3's temporary equal-weight-only design. Integer priorities
+are clamped to configured bounds; malformed/non-integer values and omitted factors
+use `missing-priority`. Unknown factor keys are ignored. If no measured priority
+is positive (including profiles selecting only unmeasurable factors), measured
+factors receive the positive configured `default-priority` and equal weights.
+Empty profiles also use that default. Coverage still uses all seven scorable
+factors, independently of priorities. Budget pruning and the `value` factor's
+price-versus-budget calculation are unchanged.
+
+The scale and defaults live only in `recommendation.scoring.*`; `.env.example`
+lists the corresponding `SCORING_*` overrides without copying their values.
+`factor_analysis.deterministic` records `weighting: PRIORITY_NORMALIZED`, the
+resolved `priorities`, and each factor's `priority`, `weight`, `improvement` and
+weighted `contribution`. Impact labels still describe the unweighted improvement;
+deciding factors are ranked by absolute weighted contribution, with a factor-name
+tiebreaker. Both deterministic-only and AI-backed rows preserve the exact resolved
+priorities in `input_snapshot.scoring_priorities` and the version in
+`input_snapshot.scoring_version`, so later preference edits cannot rewrite history.
+The existing AI `preferences` snapshot continues to preserve the request context.
+No schema migration or assessment-wire change is required.
+
+Tests: `PriorityScoringTest` loads fixed product/priority/price inputs and expected
+scores/verdicts from `src/test/resources/scoring/priority-fixtures.json`. It covers
+low-priority gains, moderate top-priority gains, opposite users, missing/zero/invalid
+priorities, config overrides, price contributions and repeatability. Classification
+and both persistence paths also have PostgreSQL integration coverage.
 
 Decisions worth not re-litigating:
 
@@ -2887,10 +2918,10 @@ Decisions worth not re-litigating:
   skipped and reported, never replaced by the catalogue value.
 
 Persistence: unchanged schema, **no migration**. The tier is `verdict`, the
-breakdown is `factor_analysis.deterministic`, and `upgrade_score` plus
-`scoring_version` ride in both that breakdown and `input_snapshot.analysis`, added
-to `RecommendationService.buildInputSnapshot` so an old row stays explainable after
-the thresholds move.
+breakdown is `factor_analysis.deterministic`, and `upgrade_score` is also in
+`input_snapshot.analysis`. Both persistence paths store the scoring version at
+`input_snapshot.scoring_version` and effective priorities at
+`input_snapshot.scoring_priorities`, so old rows stay explainable after changes.
 
 Still absent, deliberately:
 
@@ -2910,7 +2941,7 @@ transaction:
 1. `CandidatePruningService.getViableCandidates` - same category, latest price
    within budget, verified, not the owned product;
 2. `UpgradeClassificationService.loadOwnedSide` - owned spec sheet, overrides,
-   benchmarks and budget, read **once** per run rather than once per candidate;
+   benchmarks, budget and priorities, read **once** per run rather than once per candidate;
 3. `UpgradeClassificationService.classify(OwnedSide, ...)` per candidate, carrying
    the shortlist's `latest_price` straight through;
 4. rank by `upgrade_score` descending, ties broken by `product_id` so the order is
@@ -3861,8 +3892,9 @@ They are tunable config, not immutable product truth.
 
 ## 27.5 Verdict scoring/band thresholds — MECHANISM BUILT, VALUES STILL OPEN
 
-The weighted score, the band mapping and the boundary tests now exist
-(§18.9). What remains open is the **numbers**, which are configuration, not code.
+The priority-weighted score, the band mapping and boundary tests exist
+(§18.9, SCRUM-39). The weighting formula is resolved; threshold/cap calibration
+remains open and values stay in configuration.
 
 `upgrade_score` is 0-1: 1.0 is a strong upgrade recommendation, 0.0 is not
 recommended. The shipped values (scoring version, the three band thresholds,
@@ -3886,9 +3918,8 @@ is a full-strength win") and belongs next to the spec it describes.
 
 Still to do:
 - calibrate thresholds and caps against representative product pairs,
-- **decide how user `device_preferences.priorities` weight the verdict.** Until
-  then every measured factor weighs equally (v3); do not reintroduce priority
-  weighting without a group decision,
+- priority normalization is resolved by SCRUM-39 (§18.9); calibrate its defaults
+  against representative profiles,
 - decide whether weights should vary per product category,
 - bump `scoring-version` whenever any of the above changes.
 

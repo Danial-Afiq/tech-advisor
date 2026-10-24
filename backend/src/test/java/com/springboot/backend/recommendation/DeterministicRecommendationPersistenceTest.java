@@ -110,10 +110,46 @@ class DeterministicRecommendationPersistenceTest {
                 flagship);
 
         assertNotNull(row.get("scoring_version"));
-        assertEquals("EQUAL", row.get("weighting"));
+        assertEquals("PRIORITY_NORMALIZED", row.get("weighting"));
         assertEquals(0, ((Number) row.get("evidence")).intValue());
         assertEquals(TierMapper.STRONG_UPGRADE_CANDIDATE, row.get("snapshot_verdict"));
         assertEquals(flagship.toString(), row.get("snapshot_product"));
+    }
+
+    @Test
+    void savedPrioritiesAndContributionsSurviveLaterPreferenceEdits() {
+        Long flagship = candidate("Galaxy S25 Ultra", "1099.00", 5500, 16, 144, 180, 512, "9200");
+        db.update("UPDATE device_preferences SET priorities = ?::jsonb WHERE user_device_id = ?",
+                "{\"battery\": 5, \"performance\": 1}", userDeviceId);
+        entityManager.clear();
+        service.evaluateAndPersist(userDeviceId);
+
+        Map<String, Object> before = db.queryForMap("""
+                SELECT input_snapshot -> 'scoring_priorities' AS priorities,
+                       factor_analysis -> 'deterministic' -> 'factors' AS factors
+                FROM recommendations WHERE candidate_product_id = ? AND status = 'ACTIVE'
+                """, flagship);
+        var json = tools.jackson.databind.json.JsonMapper.builder().build();
+        var priorities = json.readTree(before.get("priorities").toString());
+        var factors = json.readTree(before.get("factors").toString());
+        assertEquals(5, priorities.get("battery").intValue());
+        assertEquals(1, priorities.get("performance").intValue());
+        assertEquals(0, priorities.get("value").intValue());
+        assertEquals(5.0 / 6, factors.get("battery").get("weight").doubleValue(), 1e-12);
+        assertEquals(5, factors.get("battery").get("priority").intValue());
+        assertEquals(factors.get("battery").get("improvement").doubleValue() * 5.0 / 6,
+                factors.get("battery").get("contribution").doubleValue(), 1e-12);
+
+        db.update("UPDATE device_preferences SET priorities = ?::jsonb WHERE user_device_id = ?",
+                "{\"battery\": 1, \"performance\": 5}", userDeviceId);
+        entityManager.clear();
+        service.evaluateAndPersist(userDeviceId);
+        Map<String, Object> history = db.queryForMap("""
+                SELECT input_snapshot -> 'scoring_priorities' AS priorities,
+                       factor_analysis -> 'deterministic' -> 'factors' AS factors
+                FROM recommendations WHERE candidate_product_id = ? AND status = 'SUPERSEDED'
+                """, flagship);
+        assertEquals(before, history);
     }
 
     @Test
