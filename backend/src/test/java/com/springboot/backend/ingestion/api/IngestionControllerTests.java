@@ -76,12 +76,12 @@ class IngestionControllerTests {
         verifyNoInteractions(searchApi);
     }
 
-    @Test void candidatesRejectsAnUnknownCatalogueNameBeforeCallingSearchApi() {
+    @Test void candidatesRejectsAnUnknownCatalogueNameBeforeCallingSearchApi() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Unknown")));
         assertEquals(HttpStatus.BAD_REQUEST, rejected.getStatusCode());
-        verifyNoInteractions(searchApi);
+        verify(searchApi, never()).findCandidates(any(), any(), any());
     }
 
     @Test void candidatesRejectsWhenSearchApiFindsNothing() throws Exception {

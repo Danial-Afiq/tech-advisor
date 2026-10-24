@@ -1528,22 +1528,22 @@ work should be added unless the team explicitly reopens the scope. The general
 
 ## 14.6 `gpu`
 
-Fields (V6, plus V13 from ticket 1.3):
+Fields (V6, plus V16 from ticket 1.3):
 - `product_id`
 - `core_count`
-- `clock_speeds` — unused since V13 (superseded by the two clock columns)
+- `clock_speeds` — unused since V16 (superseded by the two clock columns)
 - `vram` — GB
 - `bus_width` — bits
 - `memory_speed`
 - `total_bandwidth`
 - `pixel_fillrate`
 - `texture_fillrate`
-- `tgp` — unused since V13 (superseded by `tdp_watts`)
+- `tgp` — unused since V16 (superseded by `tdp_watts`)
 - `base_clock_mhz`, `boost_clock_mhz` — V13
 - `memory_type` — V13, e.g. `GDDR6X`
 - `architecture` — V13, e.g. `Ada Lovelace`
-- `tdp_watts` — V13 (TechSpot's "Total Board Power")
-- `source`, `source_url`, `fetched_at` — V13 provenance of the last write
+- `tdp_watts` — V16 (TechSpot's "Total Board Power")
+- `source`, `source_url`, `fetched_at` — V16 provenance of the last write
 
 Written only by `GpuCatalogSink` (§17.1.4). Mapped read-only as the `Gpu` entity.
 Launch MSRP is not a `gpu` column: it is one `price_history` row per product and source.
@@ -2561,9 +2561,9 @@ V10__add_starred_to_recommendations.sql       # ticket 4.4 — recommendations.s
 V11__create_notifications.sql                 # ticket 4.4.2 — notifications (§14.14)
 V12__add_ingestion_cursors.sql                # bugfix/smartphone-ingestion — ingestion_cursors (§17.1.1)
 V13__add_product_image_url.sql                # feat/declutter-device-ui — products.image_url (§14.4)
-V13__extend_gpu_specs.sql                     # ticket 1.3 — gpu clocks/memory type/architecture/TDP/provenance (§14.6)
 V14__scope_active_recommendations_to_device.sql # active uniqueness per owned device (§14.12)
 V15__add_recommendation_dismissals.sql        # ticket 3.10 — dismissal feedback/cooldowns (§14.12a)
+V16__extend_gpu_specs.sql                     # ticket 1.3 — gpu clocks/memory type/architecture/TDP/provenance (§14.6)
 ```
 
 `V5` makes `users.password_hash` **NOT NULL**, so every seed, fixture, or test
@@ -3924,7 +3924,7 @@ by code from verdict + evidence grade with config cut-offs, and its HIGH tier mu
 the same rule as email eligibility.
 
 ## 27.8 PC/GPU expansion
-The canonical V6 includes the generic `products` table and a `gpu` subtype table alongside `phone`; V13 extends `gpu` (§14.6).
+The canonical V6 includes the generic `products` table and a `gpu` subtype table alongside `phone`; V16 extends `gpu` (§14.6).
 
 **GPU ingestion is implemented** (ticket 1.3, §17.1.4, §17.4): seed prefill, TechSpot
 specs with launch MSRP, and SearchAPI owner reviews. Recommendation code already
