@@ -3,6 +3,7 @@ package com.springboot.backend.ingestion.gpu;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 
 import com.springboot.backend.ingestion.core.IngestionSink;
 import com.springboot.backend.ingestion.core.IngestionSource;
@@ -21,7 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * Every card's model name contains MARK so the test owns its rows in the shared _test database
@@ -35,7 +36,8 @@ class GpuCatalogSinkIntegrationTest {
 
     @Autowired GpuCatalogSink sink;
     @Autowired JdbcTemplate db;
-    @MockitoSpyBean MarketEventService marketEvents;
+    @Autowired PlatformTransactionManager transactionManager;
+    @Autowired GpuSpecValidator validator;
 
     @BeforeEach
     void reset() {
@@ -134,11 +136,15 @@ class GpuCatalogSinkIntegrationTest {
 
     @Test
     void anExceptionPartWayThroughLeavesNothingFromTheBatch() {
+        // A hand-built sink, not @MockitoSpyBean: a bean override forces a separate Spring
+        // context with its own connection pool, which exhausts the shared test database.
+        var marketEvents = mock(MarketEventService.class);
         doThrow(new IllegalStateException("boom")).when(marketEvents)
                 .record(argThat(event -> event.title().contains(MARK + " 3070")));
+        var failing = new GpuCatalogSink(db, transactionManager, validator, marketEvents);
 
         assertThrows(IllegalStateException.class,
-                () -> sink.accept("run-1", batch(card("4070"), card("4060"), card("3070"), card("3060"))));
+                () -> failing.accept("run-1", batch(card("4070"), card("4060"), card("3070"), card("3060"))));
 
         assertEquals(0, count("SELECT count(*) FROM products WHERE model_name LIKE ?"));
         assertEquals(0, launchEvents());
