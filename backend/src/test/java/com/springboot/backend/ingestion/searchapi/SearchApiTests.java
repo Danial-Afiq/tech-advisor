@@ -353,4 +353,24 @@ class SearchApiTests {
         assertEquals("walmart.com", accepted.getFirst().sourceDomain());
         assertFalse(accepted.getFirst().text().contains("DATA_START"));
     }
+
+    // titleMatches() backs EbayPriceSource - unlike validMatches()/choose(), it doesn't
+    // require product_id/product_token (eBay listings have neither), but shares the exact
+    // same title-acceptance and price/currency extraction Google Shopping matching already uses.
+    @Test void titleMatchesAcceptsRowsWithNoProductIdOrToken() {
+        var results = json.readTree("""
+                [{"title":"Apple iPhone 16 Pro 256GB","price":"$899.00","extracted_price":899.00}]
+                """);
+        var matches = ProductMatcher.titleMatches("Apple", "iPhone 16 Pro", results);
+        assertEquals(1, matches.size());
+        assertEquals(0, new java.math.BigDecimal("899.00").compareTo(matches.getFirst().price()));
+        assertEquals("USD", matches.getFirst().currency());
+    }
+
+    @Test void titleMatchesStillRejectsAnUnacceptedTitle() {
+        var results = json.readTree("""
+                [{"title":"Samsung Galaxy S25","price":"$799.00","extracted_price":799.00}]
+                """);
+        assertTrue(ProductMatcher.titleMatches("Apple", "iPhone 16 Pro", results).isEmpty());
+    }
 }

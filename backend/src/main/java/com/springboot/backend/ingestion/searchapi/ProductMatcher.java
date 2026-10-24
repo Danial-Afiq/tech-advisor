@@ -103,6 +103,26 @@ public final class ProductMatcher {
     }
 
     /**
+     * Validated title/price matches from any SearchAPI.io engine whose result rows carry
+     * title/extracted_price/price - Google Shopping and eBay share this exact shape (confirmed
+     * live against both). Unlike {@link #validMatches}/{@link #choose}, this does not require
+     * product_id/product_token: those exist to re-fetch Google Shopping reviews by token later,
+     * which an eBay price lookup has no equivalent of and no further use for. Returned in
+     * response order - a caller wanting "cheapest" sorts its own query (eBay's
+     * sort_by=price_low_to_high) and takes the first result with a non-null price.
+     */
+    public static List<Match> titleMatches(String brand, String model, JsonNode results) {
+        List<Match> matches = new ArrayList<>();
+        for (JsonNode row : results) {
+            String title = row.path("title").asText("");
+            if (title.length() <= 1000 && accepts(brand, model, title))
+                matches.add(new Match(row.path("product_id").asText(""), row.path("product_token").asText(""),
+                        title, extractedPrice(row), currencyOf(row)));
+        }
+        return matches;
+    }
+
+    /**
      * Finds storage capacities in a shopping title with a single left-to-right scan.
      * A regex here was flagged by SonarCloud for super-linear backtracking; scanning
      * digits, optional decimals, whitespace, and GB/TB units directly is linear.
