@@ -164,9 +164,9 @@ A personalised technology upgrade recommender that answers:
 
 The product monitors changing technology/market conditions and reassesses whether a newer device or component is actually meaningful for a specific user's current setup, budget, priorities, pain points, and usage.
 
-The current product and recommendation implementation remains **smartphone-first**. The canonical Sprint 1 database foundation nevertheless uses a generic `products` supertype with disjoint `phone` and `gpu` subtype tables so later category work does not require another product-identity model. GPU application flows remain future scope.
+The current product and recommendation implementation remains **smartphone-first**. The canonical Sprint 1 database foundation nevertheless uses a generic `products` supertype with disjoint `phone` and `gpu` subtype tables so later category work does not require another product-identity model.
 
-Do not treat the presence of the `gpu` table as evidence that GPU ingestion, recommendation logic, or UI is implemented.
+GPU **ingestion** is implemented (ticket 1.3, §17.1.4): a seed prefill, TechSpot spec scraping and SearchAPI owner reviews populate `products`/`gpu`/`price_history`/`review_documents`. GPU **recommendation logic, user-facing APIs and UI are not implemented**; do not present them as working.
 
 Under the current MVP catalogue design, one `products` row represents a
 **general phone model**. For example, Samsung Galaxy S25 is one product regardless
@@ -1482,8 +1482,12 @@ keeps the stored one. It is returned read-only as `imageUrl` by the catalogue AP
 is not editable through the admin CRUD. Whether MobileAPI's terms require attribution
 for displayed images has not been checked yet (§17.2).
 
-Current core category:
-- `SMARTPHONE`
+
+Current categories:
+- `SMARTPHONE` (MobileAPI.dev, admin catalogue CRUD)
+- `GPU` (ticket 1.3 - `gpu-seed` and `techspot-gpu-specs`, §17.1.4). `category` is TEXT
+  with no CHECK, so no migration was needed. Identity is still the
+  `(brand, model_name)` unique pair; GPU writers match it case-insensitively.
 
 ## 14.5 `phone`
 
@@ -1529,19 +1533,26 @@ work should be added unless the team explicitly reopens the scope. The general
 
 ## 14.6 `gpu`
 
-Fields:
+Fields (V6, plus V16 from ticket 1.3):
 - `product_id`
 - `core_count`
-- `clock_speeds`
-- `vram`
-- `bus_width`
+- `clock_speeds` — unused since V16 (superseded by the two clock columns)
+- `vram` — GB
+- `bus_width` — bits
 - `memory_speed`
 - `total_bandwidth`
 - `pixel_fillrate`
 - `texture_fillrate`
-- `tgp`
+- `tgp` — unused since V16 (superseded by `tdp_watts`)
+- `base_clock_mhz`, `boost_clock_mhz` — V13
+- `memory_type` — V13, e.g. `GDDR6X`
+- `architecture` — V13, e.g. `Ada Lovelace`
+- `tdp_watts` — V16 (TechSpot's "Total Board Power")
+- `source`, `source_url`, `fetched_at` — V16 provenance of the last write
 
-The table establishes the disjoint GPU subtype shape. GPU ingestion, recommendation logic, APIs, and UI are not yet implemented.
+Written only by `GpuCatalogSink` (§17.1.4). Mapped read-only as the `Gpu` entity.
+Launch MSRP is not a `gpu` column: it is one `price_history` row per product and source.
+GPU recommendation logic, user-facing APIs, and UI are not yet implemented.
 
 ## 14.7 `price_history`
 
@@ -2151,7 +2162,10 @@ NOT a decision: the JWT is kept in `sessionStorage`, isolated in
   It is not a per-variant quotation. Normal application requests read
   PostgreSQL and do not call either provider. ADMIN catalogue CRUD is the
   manual correction/exception path, not another external data provider.
-- **Owner reviews:** SearchAPI Google Product Reviews (§17.4).
+- **GPU specifications (ticket 1.3):** a 12-card seed prefill and TechSpot's GPU
+  database, both through `GpuCatalogSink` into `products`/`gpu` plus a launch-MSRP
+  `price_history` row (§17.1.4).
+- **Owner reviews:** SearchAPI Google Product Reviews for smartphones and GPUs (§17.4).
 - **Benchmarks:** TechAPI's released GitHub `main` dataset supplies raw Geekbench
   6 CPU single-core and multi-core fields from SoC records. They use the
   canonical `Geekbench 6 CPU Single-Core` and `Geekbench 6 CPU Multi-Core`
@@ -2195,8 +2209,8 @@ never being provisioned, not a missing sink anymore.
   (previously numeric-values-only) once the real schema proved `products`
   requires brand+model_name as a NOT NULL unique pair, and `phone.chipset`
   is TEXT, not numeric. This is a shared-contract change — any other
-  Specifications emitter (a future GPU source, ticket 1.3) picks up the new
-  fields too; `SimulatedSources.simulatedRelease()` was updated to match.
+  Specifications emitter picks up the new fields too (ticket 1.3's GPU
+  sources use their own `Payload.GpuCatalogBatch` instead, §17.1.4); `SimulatedSources.simulatedRelease()` was updated to match.
 - `phone.camera_specs` is TEXT ("48 MP + 12 MP + 12 MP"), not a numeric
   column — the extractor's numeric camera-MP value has nowhere to go and is
   currently just not persisted. Revisit if camera detail actually matters
@@ -2355,6 +2369,53 @@ permissive `robots.txt` alone is not sufficient clearance (this is exactly
 how TechRadar was nearly built against before its ToS prohibition was
 found).
 
+## 17.1.4 Implemented adapters + sink — GPU catalogue (ticket 1.3)
+
+Two opt-in sources (`INGESTION_ENABLED_SOURCES`), no keys, one shared sink:
+
+- **`gpu-seed`** (`GpuSeedSource`, priority 10): reads
+  `backend/src/main/resources/seed/gpus.v1.json` (12 confirmed starter cards; names
+  spelled as TechSpot spells them, e.g. `GeForce RTX 3060 12GB`, `Arc A770 16GB`;
+  launch prices match TechSpot's "Price at Launch"). It is a prefill, not a source
+  of truth: cards already in the catalogue are left out, so a re-run never
+  overwrites fresher TechSpot values, and a run with nothing missing emits nothing.
+- **`techspot-gpu-specs`** (`TechSpotGpuSource` + `TechSpotGpuParser`, priority 20):
+  TechSpot's GPU database is 4 list pages of ~160 desktop cards. Each run reads one
+  list page, then at most 8 detail pages (1 list + 8 detail + 1 spare = the shared
+  10-request cap), 5 s apart via `SourceContext.minimumInterval`, and stops starting
+  fetches after 35 s so its batch is emitted before the 60 s deadline. The
+  `ingestion_cursors` row holds the page and the card ids already tried on it; the
+  cursor moves on only once every card on the page has been tried (so a dropped card
+  cannot pin it), and after the last page it wraps and marks the sweep complete,
+  after which `scheduleInterval()` waits 7 days. A failed detail fetch still emits
+  what was read and saves the cursor, then rethrows. The parser reads specs by label,
+  converts GHz to MHz (TechSpot publishes 2 decimals, so values like 1506 MHz become
+  1500), takes only "Price at Launch" (never the Amazon price), keeps `Type: Desktop`
+  only, and takes the brand from the heading's first word.
+- **`GpuCatalogSink`**: one transaction per `Payload.GpuCatalogBatch`. Each card goes
+  through `GpuSpecValidator` (ranges in `gpu.validation.*`, excluded name pattern for
+  laptop/mobile/workstation/datacentre parts, release date 2010..today); an invalid
+  card is dropped and named in the run summary, not an exception. Identity is
+  `GpuNames.key` (case-insensitive brand + model, duplicated vendor prefix stripped).
+  A same-named product in another category is dropped as `CATEGORY_CONFLICT`. Upserts
+  use COALESCE so a missing value never blanks a known one; `source`/`fetched_at`
+  always advance. Launch MSRP is inserted once per product and source as
+  `price_history` (`source = 'launch_msrp:<source>'`, USD, dated at release), so a
+  later live price is always the latest. `PRODUCT_LAUNCH` is recorded on first insert
+  only; spec-change events are not implemented for any category. One
+  `system_log` row (`component = GPU_SPEC_INGESTION`) per batch carries
+  inserted/updated/unchanged counts and every dropped card with its rule.
+
+**TechSpot compliance record (team decision, Oct 2026).** The team cleared
+TechSpot's terms for this use. robots.txt (checked 23 Oct 2026) disallows
+`/specs/compare/`; the parser only ever returns `https://www.techspot.com/specs/gpu/<id>-<slug>.html`
+URLs and list URLs are built from `/specs/gpu/`, so compare and price pages are never
+requested. Requests identify as `TechAdvisorBot/1.0 (+repo URL)` (shared
+`SourceContext.USER_AGENT`). A runtime robots.txt gate (`RobotsPolicyService`) was
+built and then **dropped by team decision**: sources are hand-picked and cleared by
+the team, so per-run robots parsing was judged unnecessary for this project. Do not
+reintroduce it without a new decision; revisit if an unvetted site is ever added.
+
 ## 17.2 Compliance requirement
 Before scraping any real site:
 - inspect `robots.txt`,
@@ -2384,19 +2445,47 @@ The owner-review source is `searchapi-google-product-reviews`. It uses the docum
 SearchAPI endpoints with Bearer authentication and Singapore localisation; it does not
 scrape. It is opt-in, and enabling it without `SEARCHAPI_API_KEY` fails startup.
 
-**MobileAPI.dev (ticket 1.2) is the sole automated source for `products`/`phone`
-rows, and SearchAPI never creates one.** ADMIN catalogue CRUD is the only manual
-create/update/delete path (revised 6 Oct 2026; SearchAPI originally could create via
-an admin-named run — that path is removed). Manual discovery exposes validated
-titles and external IDs only. For the current single-instance MVP, the picker keeps
-validated tokens in a ten-minute in-memory cache; the worker consumes the exact
-admin-selected token without repeating the Shopping query. A restart or expiry
-falls back to worker-side rediscovery and revalidation. An admin-typed name is
-matched against the existing catalogue via `ProductMatcher.matchCatalogue` (fuzzy, brand+model or a
-bare model name alone — same suffix tolerance already proven against Google
-Shopping titles, not exact-string equality) rather than promoted into a new row.
-No catalogue match fails closed: ingest the device via MobileAPI or add/correct it
-through the admin catalogue API first. Matching
+**SearchAPI never creates `products` rows.** Phones come from MobileAPI.dev (ticket
+1.2) and ADMIN catalogue CRUD; GPUs come from the GPU seed and TechSpot (§17.1.4).
+(Revised 6 Oct 2026; SearchAPI originally could create via an admin-named run — that
+path is removed.)
+
+**Categories (ticket 1.3).** `searchapi.categories` / `SEARCHAPI_CATEGORIES`
+(default `SMARTPHONE,GPU`, validated against the supported set) controls which
+categories untargeted product selection, admin targeting and `ReviewBatchSink`'s
+eligibility recheck accept. Each product's Google Shopping listings are matched with
+its category's rules in `ProductMatcher`: phone rules are unchanged; GPU rules allow
+partner-board makers and line words (MSI, Ventus, OC, GDDR6X, "Graphics Card"…) as
+suffixes, do not require the chip vendor in the title, split memory sizes from their
+unit and let a catalogue memory size ("RTX 3060 12GB") sit anywhere in the title,
+never treat tier words (Ti, Super, XT, XTX, GRE) or four-digit numbers as suffixes,
+and use a 0.2 core-token share instead of 0.4. Equally specific GPU listings pick
+Google's first result rather than failing as ambiguous (any partner board is a
+listing of the same chip; reviews attach to the reference product). GPU price capture
+skips the phone storage-variant lookup.
+
+**Admin targeting (ticket 1.3).** The admin types part of a name and runs a free
+catalogue search, `GET /api/admin/ingestion/searchapi/catalogue?q=` (ADMIN only; no
+SearchAPI request): eligible products whose brand + model contain every typed word,
+closest names first, at most 20. The admin picks one, and its `productId` is sent to
+`POST /searchapi/candidates` and `POST /runs` in place of `productName` (an ID avoids
+name ambiguity such as "Earlier Phone" also matching "Earlier Phone 5G"). The older
+`productName` path still works: before any provider request the controller resolves
+the name through `ProductMatcher.matchCatalogue` (fuzzy, brand+model or a bare model
+name) to exactly one eligible product, and an unknown, ambiguous or ineligible name
+fails closed with 400 (`ProductName.parse` was removed). Either way the candidates
+endpoint searches as that catalogue product with its category's rules; a search that
+yields no acceptable listing is a 502. Main's smartphone-only client-side autocomplete
+for this page (`CatalogueSearchInput` + `useSmartphoneCatalogue`) was superseded in the
+ticket 1.3 merge because it could not target GPUs; the component is still used by the
+device form. Manual discovery exposes validated titles and external IDs only.
+`SearchApiClient` flattens Shopping rows from both top-level `shopping_results` and
+`categorized_shopping_results`. For the current single-instance MVP, the picker keeps
+validated tokens in a ten-minute in-memory cache (`ProductMatcher.candidateMatches`);
+the worker consumes the exact admin-selected token without repeating the Shopping
+query. A restart or expiry falls back to worker-side rediscovery and revalidation with
+the same rules before caching the server-only token. No catalogue match fails closed:
+ingest the product first or add/correct it through the admin catalogue API. Matching
 rejects accessories, used/refurbished products, conflicting models, and unknown
 wording. V7's `external_product_mapping` scopes cache entries by
 product/provider/locale/canonical name. A clearly invalid cached token gets one
@@ -2420,7 +2509,8 @@ belong in `docs/searchapi-review-ingestion.md`.
 Sources run in `IngestionSource.priority()` order (lower first), not alphabetical
 `sourceId` order — `MobileApiSmartphoneSource` overrides it to 10 so its catalogue
 writes are visible to SearchAPI's untargeted product pick within the same run,
-regardless of source naming.
+regardless of source naming. The GPU sources use 10 (`gpu-seed`) and 20
+(`techspot-gpu-specs`) for the same reason.
 
 **Representative price capture.** `discover()`'s Google Shopping call already
 carries `extracted_price`/`price` on the matched listing to resolve a review
@@ -2479,6 +2569,7 @@ V12__add_ingestion_cursors.sql                # bugfix/smartphone-ingestion — 
 V13__add_product_image_url.sql                # feat/declutter-device-ui — products.image_url (§14.4)
 V14__scope_active_recommendations_to_device.sql # active uniqueness per owned device (§14.12)
 V15__add_recommendation_dismissals.sql        # ticket 3.10 — dismissal feedback/cooldowns (§14.12a)
+V16__extend_gpu_specs.sql                     # ticket 1.3 — gpu clocks/memory type/architecture/TDP/provenance (§14.6)
 ```
 
 `V5` makes `users.password_hash` **NOT NULL**, so every seed, fixture, or test
@@ -3149,6 +3240,7 @@ SEARCHAPI_HL               # en
 SEARCHAPI_LOCATION         # Singapore
 SEARCHAPI_MAX_PRODUCTS_PER_RUN # 3 (allowed 1-3; SourceContext's 10-request/run cap and
                                 # 3 requests/uncached product make 3 the real ceiling)
+SEARCHAPI_CATEGORIES       # SMARTPHONE,GPU (ticket 1.3; either or both)
 AI_INGESTION_EMBEDDER       # minishlab/potion-retrieval-32M
 JWT_SECRET
 JWT_EXPIRATION_SECONDS    # optional; defaults to 3600 and must be positive
@@ -3838,9 +3930,15 @@ by code from verdict + evidence grade with config cut-offs, and its HIGH tier mu
 the same rule as email eligibility.
 
 ## 27.8 PC/GPU expansion
-The canonical V6 now includes the generic `products` table and a `gpu` subtype table alongside `phone`.
+The canonical V6 includes the generic `products` table and a `gpu` subtype table alongside `phone`; V16 extends `gpu` (§14.6).
 
-This is schema readiness only. GPU ingestion, business logic, recommendation rules, APIs, and UI remain future work and must not be presented as implemented.
+**GPU ingestion is implemented** (ticket 1.3, §17.1.4, §17.4): seed prefill, TechSpot
+specs with launch MSRP, and SearchAPI owner reviews. Recommendation code already
+filters candidates and affected devices by category, so GPU rows and GPU
+`PRODUCT_LAUNCH` events do not reach smartphone results. **GPU business logic,
+recommendation rules, user-facing APIs, and UI remain future work** and must not be
+presented as implemented. Launch MSRP (USD) stands in as a GPU's latest price until a
+SearchAPI Shopping price exists (team decision); no SGD conversion (§27.9).
 
 ## 27.9 Display currency conversion — IMPLEMENTED (SCRUM-116)
 

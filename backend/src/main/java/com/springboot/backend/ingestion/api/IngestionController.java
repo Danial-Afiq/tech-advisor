@@ -65,14 +65,33 @@ public class IngestionController {
                     maxLength = 200)
             String productName,
             @Schema(
-                    description = "SearchAPI product selected through the candidate endpoint; required with productName.",
+                    description = "SearchAPI product selected through the candidate endpoint; required with productName or productId.",
                     example = "searchapi-product-id")
-            String externalProductId) {}
+            String externalProductId,
+            @Schema(
+                    description = "Catalogue product chosen through the catalogue search endpoint; used instead of productName when set.",
+                    example = "901")
+            Long productId) {
+        public Request(List<String> sources, String reason, String productName, String externalProductId) {
+            this(sources, reason, productName, externalProductId, null);
+        }
+    }
 
-    @Schema(name = "SearchApiCandidateRequest", description = "Smartphone name used to find validated SearchAPI product choices.")
+    @Schema(name = "SearchApiCandidateRequest", description = "Catalogue product name (smartphone or GPU) used to find validated SearchAPI product choices.")
     public record CandidateRequest(
             @Schema(example = "Samsung Galaxy S25", minLength = 1, maxLength = 200)
-            String productName) {}
+            String productName,
+            @Schema(description = "Catalogue product chosen through the catalogue search endpoint; used instead of productName when set.",
+                    example = "901")
+            Long productId) {
+        public CandidateRequest(String productName) { this(productName, null); }
+    }
+
+    @Schema(name = "SearchApiCatalogueProductResponse", description = "Eligible catalogue product an administrator can target.")
+    public record CatalogueProduct(
+            @Schema(example = "901") long productId,
+            @Schema(example = "NVIDIA GeForce RTX 3060 12GB") String name,
+            @Schema(example = "GPU") String category) {}
 
     @Schema(name = "IngestionSessionResponse", description = "Authenticated administrator identity.")
     public record SessionResponse(
@@ -119,10 +138,33 @@ public class IngestionController {
     public Map<String, String> session(Principal user) {
         return Map.of("username", user.getName());
     }
+    @GetMapping("/searchapi/catalogue")
+    @Operation(
+            summary = "Search the catalogue for a SearchAPI target",
+            description = "Lists eligible catalogue products whose brand and model contain every typed word. "
+                    + "Reads only the catalogue; no SearchAPI request is made.")
+    @ApiResponses({
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "Matching catalogue products, closest names first (at most 20)",
+                    content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = CatalogueProduct.class)))),
+            @ApiResponse(responseCode = "400", description = "SearchAPI is disabled or the query is invalid", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "401", description = "Authentication required", content = @Content),
+            @ApiResponse(responseCode = "403", description = "Caller does not have the ADMIN role", content = @Content)
+    })
+    public List<CatalogueProduct> catalogue(
+            @Parameter(description = "Words to find in the brand and model name.", example = "RTX 3060")
+            @RequestParam(defaultValue = "") String q) {
+        if (!registry.enabled(SearchApiSource.ID))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "SearchAPI ingestion is disabled.");
+        String query = productName(q);
+        return products.searchCatalogue(query, searchApi.settings(), 20).stream()
+                .map(p -> new CatalogueProduct(p.id(), p.name(), p.category())).toList();
+    }
     @PostMapping("/searchapi/candidates")
     @Operation(
             summary = "Find SearchAPI product candidates",
-            description = "Returns validated provider identities for an admin-targeted smartphone review run.")
+            description = "Returns validated provider identities for an admin-targeted smartphone or GPU review run.")
     @ApiResponses({
             @ApiResponse(
                     responseCode = "200",
@@ -138,11 +180,13 @@ public class IngestionController {
     public List<ProductMatcher.Candidate> candidates(@RequestBody CandidateRequest request) {
         if (!registry.enabled(SearchApiSource.ID))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "SearchAPI ingestion is disabled.");
-        String name = productName(request == null ? null : request.productName());
-        var product = catalogueProduct(name);
+        // Searched as the catalogue product, with its category's listing vocabulary - the
+        // identity and rules the run will validate against.
+        var product = request != null && request.productId() != null ? chosenProduct(request.productId())
+                : catalogueProduct(productName(request == null ? null : request.productName()));
         var requested = new ProductName(product.brand(), product.model());
         try (var context = new SourceContext(clock, () -> {})) {
-            var candidates = searchApi.findCandidates(context, requested);
+            var candidates = searchApi.findCandidates(context, requested, product.category());
             if (candidates.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
                     "SearchAPI returned no matching listings for " + product.name() + ". Try finding products again.");
             return candidates;
@@ -187,7 +231,16 @@ public class IngestionController {
             Principal user) {
         var ids = registry.select(request.sources());
         RunLog.ProductTarget target = null;
-        if (request.productName() != null) {
+        if (request.productId() != null) {
+            if (!ids.contains(SearchApiSource.ID))
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select SearchAPI customer reviews to specify a product.");
+            String externalProductId = request.externalProductId() == null ? "" : request.externalProductId().trim();
+            if (externalProductId.isEmpty() || externalProductId.length() > 1000)
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Find matching products and select one before starting ingestion.");
+            var product = chosenProduct(request.productId());
+            target = new RunLog.ProductTarget(product.id(), product.name(), externalProductId);
+        } else if (request.productName() != null) {
             if (!ids.contains(SearchApiSource.ID))
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select SearchAPI customer reviews to specify a product.");
             String name = productName(request.productName());
@@ -199,9 +252,14 @@ public class IngestionController {
             target = new RunLog.ProductTarget(product.id(), product.name(), externalProductId);
         } else if (request.externalProductId() != null)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "A selected SearchAPI product requires a smartphone name.");
+                    "A selected SearchAPI product requires a product name.");
         var run = runner.manual(ids, user.getName(), key, request.reason(), target);
         return ResponseEntity.accepted().location(URI.create("/api/admin/ingestion/runs/" + run.runId)).body(run);
+    }
+    private SearchApiRepository.Product chosenProduct(long productId) {
+        return products.eligibleProduct(productId, searchApi.settings())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "That catalogue product is not eligible for SearchAPI reviews."));
     }
     private String productName(String value) {
         String name = value == null ? "" : value.replaceAll("[\\p{Z}\\s]+", " ").trim();
@@ -210,19 +268,19 @@ public class IngestionController {
         return name;
     }
     private SearchApiRepository.Product catalogueProduct(String name) {
-        var matches = products.namedProducts(name);
+        var matches = products.namedProducts(name, searchApi.settings());
         if (matches.size() > 1)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "More than one verified smartphone matches that name. Include the brand and full model name.");
+                    "More than one verified product matches that name. Include the brand and full model name.");
         if (!matches.isEmpty()) return matches.getFirst();
         if (!products.namedCatalogueProducts(name).isEmpty())
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "That catalogue product is not an eligible verified smartphone.");
-        // MobileAPI is the sole source of truth for `products` rows - SearchAPI never creates
-        // one, so an unmatched name fails closed before spending a provider request.
+                    "That catalogue product is not eligible for SearchAPI reviews.");
+        // SearchAPI never creates `products` rows (phones come from MobileAPI, GPUs from the GPU
+        // seed and TechSpot), so an unmatched name fails closed before spending a provider request.
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                "No matching smartphone found in the catalogue. Use its full catalogue name, "
-                        + "ingest it via MobileAPI, or add/correct it in Catalogue first.");
+                "No matching product found in the catalogue. Use its full catalogue name, ingest it "
+                        + "first (MobileAPI for phones, the GPU seed or TechSpot for GPUs), or add/correct it in Catalogue.");
     }
     @GetMapping("/runs/{id}")
     @Operation(summary = "Get an ingestion run")

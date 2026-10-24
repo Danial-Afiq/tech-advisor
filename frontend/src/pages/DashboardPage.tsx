@@ -411,34 +411,34 @@ export default function DashboardPage() {
         recommendations.length > 0 && (
           <section
             aria-label="Recommendation summary"
-            className="mb-5 grid grid-cols-3 gap-4 max-[620px]:gap-2"
+            className="mb-5 grid grid-cols-3 gap-4 max-[620px]:grid-cols-1 max-[620px]:gap-2"
           >
-            <Card className="p-5 max-[620px]:p-3">
-              <p className="m-0 text-[12px] font-semibold tracking-[0.08em] text-[#8fa0b8] uppercase max-[620px]:text-[10px] max-[620px]:tracking-[0.04em]">
+            <Card className="p-5 max-[620px]:flex-row max-[620px]:items-center max-[620px]:justify-between max-[620px]:gap-3 max-[620px]:px-4 max-[620px]:py-3">
+              <p className="m-0 text-[12px] font-semibold tracking-[0.08em] text-[#8fa0b8] uppercase max-[620px]:text-[11px]">
                 Active recommendations
               </p>
 
-              <p className="mt-2 mb-0 text-[30px] font-bold text-[#eef5ff] max-[620px]:text-[22px]">
+              <p className="mt-2 mb-0 text-[30px] font-bold text-[#eef5ff] max-[620px]:mt-0 max-[620px]:text-[22px]">
                 {recommendations.length}
               </p>
             </Card>
 
-            <Card className="p-5 max-[620px]:p-3">
-              <p className="m-0 text-[12px] font-semibold tracking-[0.08em] text-[#8fa0b8] uppercase max-[620px]:text-[10px] max-[620px]:tracking-[0.04em]">
+            <Card className="p-5 max-[620px]:flex-row max-[620px]:items-center max-[620px]:justify-between max-[620px]:gap-3 max-[620px]:px-4 max-[620px]:py-3">
+              <p className="m-0 text-[12px] font-semibold tracking-[0.08em] text-[#8fa0b8] uppercase max-[620px]:text-[11px]">
                 Devices requiring attention
               </p>
 
-              <p className="mt-2 mb-0 text-[30px] font-bold text-[#f8d77d] max-[620px]:text-[22px]">
+              <p className="mt-2 mb-0 text-[30px] font-bold text-[#f8d77d] max-[620px]:mt-0 max-[620px]:text-[22px]">
                 {attentionCount}
               </p>
             </Card>
 
-            <Card className="p-5 max-[620px]:p-3">
-              <p className="m-0 text-[12px] font-semibold tracking-[0.08em] text-[#8fa0b8] uppercase max-[620px]:text-[10px] max-[620px]:tracking-[0.04em]">
+            <Card className="p-5 max-[620px]:flex-row max-[620px]:items-center max-[620px]:justify-between max-[620px]:gap-3 max-[620px]:px-4 max-[620px]:py-3">
+              <p className="m-0 text-[12px] font-semibold tracking-[0.08em] text-[#8fa0b8] uppercase max-[620px]:text-[11px]">
                 No immediate upgrade
               </p>
 
-              <p className="mt-2 mb-0 text-[30px] font-bold text-[#83e4c1] max-[620px]:text-[22px]">
+              <p className="mt-2 mb-0 text-[30px] font-bold text-[#83e4c1] max-[620px]:mt-0 max-[620px]:text-[22px]">
                 {noUpgradeCount}
               </p>
             </Card>

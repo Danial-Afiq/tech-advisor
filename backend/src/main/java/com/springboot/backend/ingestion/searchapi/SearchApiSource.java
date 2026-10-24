@@ -39,10 +39,16 @@ public class SearchApiSource implements IngestionSource {
             throw new IllegalArgumentException("SEARCHAPI_API_KEY is required when SearchAPI ingestion is enabled");
     }
     @Override public String sourceId() { return ID; }
+    public SearchApiSettings settings() { return settings; }
     @Override public Duration cooldown() { return Duration.ZERO; }
     public List<ProductMatcher.Candidate> findCandidates(SourceContext context, ProductName requested)
             throws Exception {
-        var matches = ProductMatcher.candidateMatches(requested.brand(), requested.model(),
+        return findCandidates(context, requested, "SMARTPHONE");
+    }
+    /** category picks ProductMatcher's listing vocabulary (SMARTPHONE or GPU). */
+    public List<ProductMatcher.Candidate> findCandidates(SourceContext context, ProductName requested,
+            String category) throws Exception {
+        var matches = ProductMatcher.candidateMatches(category, requested.brand(), requested.model(),
                 client.shopping(context, requested.canonicalName()));
         Instant now = context.now();
         candidateTokens.entrySet().removeIf(entry -> !entry.getValue().expiresAt().isAfter(now));
@@ -64,7 +70,7 @@ public class SearchApiSource implements IngestionSource {
         // exists, and never advances through the rest of the catalogue.
         var products = untargeted ? repository.products(settings)
                 : context.product().productId() == null ? List.<SearchApiRepository.Product>of()
-                : repository.eligibleProduct(context.product().productId()).stream()
+                : repository.eligibleProduct(context.product().productId(), settings).stream()
                     .filter(p -> p.name().equals(context.product().productName())).toList();
         if (products.isEmpty()) throw new IngestionFailure(SEARCHAPI_NO_ELIGIBLE_PRODUCT);
         for (var product : products) {
@@ -130,8 +136,9 @@ public class SearchApiSource implements IngestionSource {
     private ProductMatcher.Match discover(SourceContext context, SearchApiRepository.Product product,
             String externalProductId) throws Exception {
         var results = client.shopping(context, product.name());
-        var match = externalProductId == null ? ProductMatcher.choose(product.brand(), product.model(), results)
-                : ProductMatcher.choose(product.brand(), product.model(), results, externalProductId);
+        var match = externalProductId == null
+                ? ProductMatcher.choose(product.category(), product.brand(), product.model(), results)
+                : ProductMatcher.choose(product.category(), product.brand(), product.model(), results, externalProductId);
         context.check(); repository.cache(product, settings, match, context.now());
         return match;
     }
@@ -146,7 +153,9 @@ public class SearchApiSource implements IngestionSource {
     private void emitPriceIfKnown(SearchApiRepository.Product product, ProductMatcher.Match match,
             SourceContext context, Consumer<Payload> output) {
         if (match.price() == null || match.currency() == null) return;
-        var storageTokens = ProductMatcher.storageGbMentionsInTitle(match.title());
+        // Storage variants exist only for phones; a GPU title's "12GB" is VRAM, not a phone_variants tier.
+        var storageTokens = "SMARTPHONE".equals(product.category())
+                ? ProductMatcher.storageGbMentionsInTitle(match.title()) : List.<Integer>of();
         // Only an unambiguous single storage mention resolves a variant - a title with zero or
         // several storage tokens can't be safely attributed to one exact row, so the price is
         // still recorded, just at the model level (variantId left null).

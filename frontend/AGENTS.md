@@ -395,7 +395,9 @@ sticky sidebar and top bar stick to.
   per-device Show all; each card has a Compare specs button that opens a dialog (root §23.4).
   Paragraphs placed directly in a `card-body` need `grow-0`: daisyUI gives
   `.card-body p` `flex-grow: 1`, which spreads them down a stretched card.
-  The three overview cards stay three across on phones instead of stacking.
+  On phones the three overview cards become compact full-width rows (label
+  left, number right) so long labels fit. On narrow recommendation cards the
+  verdict badge wraps below the product name rather than covering it.
 - The user sidebar offers only Dashboard and My devices. The placeholder
   Activity and Settings items (no pages behind them) were removed. Device cards show the
   Satisfaction meter only; the old "Context fit" meter (a clamped copy of
