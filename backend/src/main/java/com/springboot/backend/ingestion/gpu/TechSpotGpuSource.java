@@ -95,7 +95,7 @@ public class TechSpotGpuSource implements IngestionSource {
         List<Payload.GpuSpec> specs = new ArrayList<>();
         Exception failure = null;
         for (var listing : list.listings()) {
-            String id = id(listing.url());
+            String id = cardId(listing.url());
             if (done.contains(id)) continue;
             if (excluded.matcher(listing.name()).find()) { done.add(id); continue; }
             if (fetched >= detailBudget || !Duration.between(start, context.now()).minus(FETCH_WINDOW).isNegative()) break;
@@ -114,7 +114,7 @@ public class TechSpotGpuSource implements IngestionSource {
 
     /** Stay on a page until every card on it has been tried; wrap after the last page. */
     static Cursor next(int page, TechSpotGpuParser.ListPage list, Set<String> done) {
-        boolean pageDone = list.listings().stream().allMatch(listing -> done.contains(id(listing.url())));
+        boolean pageDone = list.listings().stream().allMatch(listing -> done.contains(cardId(listing.url())));
         if (!pageDone) return new Cursor(page, List.copyOf(done), false);
         return page >= list.lastPage() ? new Cursor(1, List.of(), true) : new Cursor(page + 1, List.of(), false);
     }
@@ -124,7 +124,7 @@ public class TechSpotGpuSource implements IngestionSource {
     }
 
     /** The numeric card id that starts every detail path, e.g. 254404 in /specs/gpu/254404-nvidia-geforce-rtx-4070.html. */
-    static String id(URI detail) {
+    static String cardId(URI detail) {
         String slug = detail.getPath().substring(LIST_PATH.length());
         return slug.substring(0, slug.indexOf('-'));
     }

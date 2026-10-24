@@ -8,6 +8,7 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -96,7 +97,14 @@ public final class SourceContext implements AutoCloseable {
         }
         return response.body();
     }
-    private record Response(int status, byte[] body) {}
+    private record Response(int status, byte[] body) {
+        // A record's generated equals/hashCode/toString compare arrays by reference.
+        @Override public boolean equals(Object o) {
+            return o instanceof Response r && status == r.status && Arrays.equals(body, r.body);
+        }
+        @Override public int hashCode() { return 31 * Integer.hashCode(status) + Arrays.hashCode(body); }
+        @Override public String toString() { return "Response[status=" + status + ", body=" + body.length + " bytes]"; }
+    }
     /**
      * Slows later requests to one host, e.g. to stay polite to a scraped site.
      * Applies on top of the global one-second pacing and never shortens it.

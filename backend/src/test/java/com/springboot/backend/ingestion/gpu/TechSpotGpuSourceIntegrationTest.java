@@ -86,7 +86,7 @@ class TechSpotGpuSourceIntegrationTest {
 
     @Test
     void theCursorMovesOnOnlyOnceEveryCardOnThePageHasBeenTried() throws Exception {
-        var ids = names.keySet().stream().map(TechSpotGpuSource::id).toList();
+        var ids = names.keySet().stream().map(TechSpotGpuSource::cardId).toList();
         source.saveCursor(new TechSpotGpuSource.Cursor(2, ids.subList(1, ids.size()), false));
 
         run(Clock.systemUTC());
@@ -98,7 +98,7 @@ class TechSpotGpuSourceIntegrationTest {
 
     @Test
     void finishingTheLastPageWrapsToPageOneAndCompletesTheSweep() throws Exception {
-        var ids = names.keySet().stream().map(TechSpotGpuSource::id).toList();
+        var ids = names.keySet().stream().map(TechSpotGpuSource::cardId).toList();
         source.saveCursor(new TechSpotGpuSource.Cursor(4, ids.subList(1, ids.size()), false));
 
         run(Clock.systemUTC());
@@ -147,7 +147,7 @@ class TechSpotGpuSourceIntegrationTest {
         assertEquals(2, ((Payload.GpuCatalogBatch) out.getFirst().body()).gpus().size());
         var cursor = source.loadCursor();
         assertEquals(2, cursor.done().size());
-        assertFalse(cursor.done().contains(TechSpotGpuSource.id(failing.getFirst())), "the failed card is retried next run");
+        assertFalse(cursor.done().contains(TechSpotGpuSource.cardId(failing.getFirst())), "the failed card is retried next run");
     }
 
     private List<Payload> run(Clock clock) throws Exception {
