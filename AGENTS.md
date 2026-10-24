@@ -2538,6 +2538,71 @@ call** — never on a cache-hit run, which skips the shopping call entirely to
 stay inside the existing budget; price does not refresh between rediscoveries.
 The stored currency is preserved exactly. No SGD conversion is performed here.
 
+## 17.4a eBay price capture — `EbayPriceSource` (market change detection branch)
+
+A second, independent price source for the same `price_history` (§14.7) table,
+on the **same SearchAPI.io account/key** as above but a different engine
+(`ebay_search`, not `google_shopping`). Recce before building: SearchAPI.io's
+`google_shopping` is already real and working; `ebay_search` shares the exact
+`title`/`price`/`extracted_price` row shape (confirmed against SearchAPI.io's
+own docs), so `ProductMatcher`'s existing title-acceptance and price-extraction
+logic is reused rather than duplicated (`ProductMatcher.titleMatches`, a new
+public method alongside `validMatches`/`choose` — unlike those, it needs no
+`product_id`/`product_token`, since an eBay price lookup has no by-token
+review re-fetch to cache a token for). Two genuinely different providers were
+also surveyed and ruled out for this purpose: Shopee's Open Platform API is
+seller-only (OAuth per-shop, can't read a competitor's public price); eBay's
+own official Browse API (free, 5,000 calls/day, fully independent of
+SearchAPI.io's account) is a real option for *redundancy* against this
+account's shared quota running out — not built here, flagged for later if
+that's wanted.
+
+**Shape: plain round-robin, not Google Shopping's targeted/cached-token
+flow.** Every run prices the next `searchapi.ebay.max-products-per-run`
+VERIFIED smartphones in catalogue `id` order (`EbayPriceRepository
+.nextProducts`), 1 real HTTP request per product (`condition=new`,
+`sort_by=price_low_to_high` — the cheapest *new* listing is the
+representative, comparable price point, same reasoning Google Shopping
+matching already rejects used/refurbished for). Progress is a single
+persisted cursor (`EbayPriceIngestionState.catalogueCursor`), stored as a
+`system_log` row (component `SEARCHAPI_EBAY_PRICE_STATE`) — the same
+state-persistence pattern `TechApiBenchmarkRepository` already uses for
+`techapi-soc-benchmarks`, not a new migration/table. A sweep that reaches the
+end of the catalogue wraps back to the start within the same run rather than
+stopping, so coverage is a continuous round-robin, never "done."
+
+**Scheduling uses the newer per-source mechanism** (`IngestionSource
+.requestLimit()`/`executionBudget()`/`scheduleInterval()`), not
+`SourceContext`'s old shared 10-request default: 1 request per product means
+`requestLimit()` is simply the configured product count, and
+`scheduleInterval()` (default 1 day) runs this source on its own cadence
+independent of the shared scheduler tick. `scheduleCycleComplete()` returns
+`true` always — deliberately, unlike `TechApiBenchmarkSource`'s one-time
+backfill-then-incremental shape: there's no "finished" state to race toward
+faster here, and accelerating would undermine the one thing this design is
+for — never bursting past a modest, predictable request rate against a
+shared, previously-exhausted-mid-month account quota (Smartphone DB Backfill
+session, Oct 2026). Default config (10 products/run × 1/day) is ~300
+requests/month, deliberately conservative and fully config-driven
+(`SEARCHAPI_EBAY_MAX_PRODUCTS_PER_RUN`) — tune freely, the number itself
+isn't load-bearing.
+
+`price_history.phone_variant_id` is left null (model-level observation only)
+— same scope boundary §17.4's Google Shopping capture already keeps; no
+variant-level eBay attribution attempted here. Reuses `PriceHistorySink`
+unchanged (its `supports()` was already source-agnostic). **Backfilling the
+whole catalogue immediately, rather than waiting for the round-robin sweep to
+reach every product for the first time over many days, is explicitly out of
+scope** — a later, separate pass, by explicit instruction, same reasoning
+ticket 1.8 kept its schema work and backfill as separate steps.
+
+**Not yet live-verified end to end** — SearchAPI.io's account quota was still
+exhausted (confirmed live, "You have used all of the searches for the month")
+at the time this was built, so the one real run this project normally does
+before calling an integration proven has not happened yet. The response
+shape itself was independently confirmed against SearchAPI.io's own
+documentation, not against a live call.
+
 ---
 
 # 18. Current implementation snapshot on `main` — 18 Sep 2026
