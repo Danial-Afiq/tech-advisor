@@ -2831,7 +2831,6 @@ breakdown is `factor_analysis.deterministic`, and `upgrade_score` is also in
 `input_snapshot.analysis`. Both persistence paths store the scoring version at
 `input_snapshot.scoring_version` and effective priorities at
 `input_snapshot.scoring_priorities`, so old rows stay explainable after changes.
-See `docs/preference-scoring.md` for the input policy and acceptance fixtures.
 
 Still absent, deliberately:
 
