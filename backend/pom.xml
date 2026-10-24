@@ -158,6 +158,13 @@
 					-->
 					<systemPropertyVariables>
 						<POSTGRES_DB>${POSTGRES_DB}</POSTGRES_DB>
+						<!--
+							Spring keeps every distinct test context (and its Hikari pool) open for
+							the whole run. About 13 contexts x the default 10 connections exceeds
+							Postgres's default max_connections of 100 ("too many clients already").
+							Four per context covers every test and leaves headroom.
+						-->
+						<spring.datasource.hikari.maximum-pool-size>4</spring.datasource.hikari.maximum-pool-size>
 						<!-- Tests must not inherit a developer's live source opt-in or key. -->
 						<ingestion.enabled-sources></ingestion.enabled-sources>
 						<ingestion.scheduling-enabled>false</ingestion.scheduling-enabled>
