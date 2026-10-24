@@ -9,7 +9,9 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DashboardPage from "./DashboardPage";
 import { ApiError } from "../api/client";
-import type { DashboardRecommendation } from "../api/dashboard";
+import type { DashboardRecommendation, SortOption } from "../api/dashboard";
+import { CURRENCY_STORAGE_KEY } from "../components/currency/currency";
+import { CurrencyProvider } from "../components/currency/CurrencyContext";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -57,9 +59,10 @@ function CurrentSearch() {
 
 function renderPage(entry = "/dashboard") {
   return render(
-    <MemoryRouter initialEntries={[entry]}>
-      <CurrentSearch />
-      <Routes>
+    <CurrencyProvider>
+      <MemoryRouter initialEntries={[entry]}>
+        <CurrentSearch />
+        <Routes>
         <Route
           path="/dashboard"
           element={<DashboardPage />}
@@ -74,8 +77,9 @@ function renderPage(entry = "/dashboard") {
           path="/devices"
           element={<p>devices route</p>}
         />
-      </Routes>
-    </MemoryRouter>
+        </Routes>
+      </MemoryRouter>
+    </CurrencyProvider>
   );
 }
 
@@ -183,6 +187,7 @@ function deferred<T>() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.removeItem(CURRENCY_STORAGE_KEY);
 
   mocks.getSession.mockReturnValue({
     token: "user-token",
@@ -700,7 +705,7 @@ describe("DashboardPage", () => {
 
       expect(
         mocks.listDashboardRecommendations
-      ).toHaveBeenCalledWith("relevance");
+      ).toHaveBeenCalledWith("relevance", "SGD");
     });
 
     it("shows the sort from the URL and requests it", async () => {
@@ -712,7 +717,7 @@ describe("DashboardPage", () => {
 
       expect(
         mocks.listDashboardRecommendations
-      ).toHaveBeenCalledWith("price_desc");
+      ).toHaveBeenCalledWith("price_desc", "SGD");
     });
 
     it("keeps filters and resets the page when the sort changes", async () => {
@@ -735,7 +740,7 @@ describe("DashboardPage", () => {
 
       expect(
         mocks.listDashboardRecommendations
-      ).toHaveBeenLastCalledWith("price_asc");
+      ).toHaveBeenLastCalledWith("price_asc", "SGD");
     });
 
     it("drops the sort parameter when returning to the default", async () => {
@@ -765,7 +770,7 @@ describe("DashboardPage", () => {
 
       expect(
         mocks.listDashboardRecommendations
-      ).toHaveBeenCalledWith("relevance");
+      ).toHaveBeenCalledWith("relevance", "SGD");
     });
 
     it("keeps active filters while server results are re-sorted", async () => {
@@ -800,7 +805,8 @@ describe("DashboardPage", () => {
 
       await waitFor(() => {
         expect(mocks.listDashboardRecommendations).toHaveBeenLastCalledWith(
-          "price_desc"
+          "price_desc",
+          "SGD"
         );
         expectCandidateOrder("Apple iPhone 18", "Google Pixel 11");
       });
@@ -872,13 +878,15 @@ describe("DashboardPage", () => {
       await user.selectOptions(sortSelect, "price_asc");
       await waitFor(() => {
         expect(mocks.listDashboardRecommendations).toHaveBeenLastCalledWith(
-          "price_asc"
+          "price_asc",
+          "SGD"
         );
       });
       await user.selectOptions(sortSelect, "price_desc");
       await waitFor(() => {
         expect(mocks.listDashboardRecommendations).toHaveBeenLastCalledWith(
-          "price_desc"
+          "price_desc",
+          "SGD"
         );
       });
 
@@ -908,6 +916,42 @@ describe("DashboardPage", () => {
       expect(within(controls).getByRole("button", { name: "Filters" })).toBeInTheDocument();
       expect(within(controls).getByRole("combobox", { name: "Sort by" })).toBeInTheDocument();
       expect(controls).toHaveClass("flex-wrap");
+    });
+
+    it("reloads recommendation prices when the display currency changes", async () => {
+      mocks.listDashboardRecommendations.mockImplementation(
+        (_sort: SortOption, selectedCurrency: string = "SGD") =>
+          Promise.resolve(
+            allRecommendations.map((row) =>
+              selectedCurrency === "USD"
+                ? {
+                    ...row,
+                    latestPrice: Number((row.latestPrice! * 0.74).toFixed(2)),
+                    currency: "USD",
+                    priceConversionStatus: "CONVERTED",
+                  }
+                : row
+            )
+          )
+      );
+      const user = userEvent.setup();
+      renderPage();
+
+      const currency = await screen.findByRole("combobox", {
+        name: "Display currency",
+      });
+      expect(currency).toHaveValue("SGD");
+
+      await user.selectOptions(currency, "USD");
+
+      await waitFor(() => {
+        expect(mocks.listDashboardRecommendations).toHaveBeenLastCalledWith(
+          "relevance",
+          "USD"
+        );
+      });
+      expect(window.localStorage.getItem(CURRENCY_STORAGE_KEY)).toBe("USD");
+      expect(await screen.findByText(/USD\s*961\.26/)).toBeInTheDocument();
     });
   });
 
@@ -1039,7 +1083,10 @@ describe("DashboardPage", () => {
 
       expect(await screen.findByText("Recommendation was just updated")).toBeInTheDocument();
       expect(mocks.listDashboardRecommendations).toHaveBeenCalledTimes(2);
-      expect(mocks.listDashboardRecommendations).toHaveBeenLastCalledWith("relevance");
+      expect(mocks.listDashboardRecommendations).toHaveBeenLastCalledWith(
+        "relevance",
+        "SGD"
+      );
       expect(
         await screen.findByRole("button", { name: /^Remove Samsung Galaxy S26/ })
       ).toHaveAttribute("aria-pressed", "true");
