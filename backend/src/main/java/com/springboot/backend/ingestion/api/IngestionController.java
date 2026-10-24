@@ -170,42 +170,25 @@ public class IngestionController {
                     responseCode = "200",
                     description = "Validated SearchAPI product choices",
                     content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = ProductMatcher.Candidate.class)))),
-            @ApiResponse(responseCode = "400", description = "SearchAPI is disabled, the name is invalid, or no match exists", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "400", description = "SearchAPI is disabled, or the catalogue name is invalid, ambiguous, unknown, or ineligible", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "401", description = "Authentication required", content = @Content),
             @ApiResponse(responseCode = "403", description = "Caller does not have the ADMIN role", content = @Content),
             @ApiResponse(responseCode = "429", description = "SearchAPI asked the caller to retry later", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "502", description = "SearchAPI returned an unusable response", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "502", description = "SearchAPI returned an unusable response or no acceptable listing", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "503", description = "SearchAPI or ingestion storage is unavailable", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class)))
     })
     public List<ProductMatcher.Candidate> candidates(@RequestBody CandidateRequest request) {
         if (!registry.enabled(SearchApiSource.ID))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "SearchAPI ingestion is disabled.");
-        ProductName requested;
-        String category = "SMARTPHONE";
-        if (request != null && request.productId() != null) {
-            var product = chosenProduct(request.productId());
-            requested = new ProductName(product.brand(), product.model());
-            category = product.category();
-        } else {
-            String name = productName(request == null ? null : request.productName());
-            try { requested = ProductName.parse(name); }
-            catch (IllegalArgumentException invalid) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Enter both the product brand and full model name.");
-            }
-            // A name that resolves to one catalogue product is searched as that product, with its
-            // category's listing vocabulary - the identity and rules the run will validate against.
-            var catalogued = products.namedProducts(name, searchApi.settings());
-            if (catalogued.size() == 1) {
-                var product = catalogued.getFirst();
-                requested = new ProductName(product.brand(), product.model());
-                category = product.category();
-            }
-        }
+        // Searched as the catalogue product, with its category's listing vocabulary - the
+        // identity and rules the run will validate against.
+        var product = request != null && request.productId() != null ? chosenProduct(request.productId())
+                : catalogueProduct(productName(request == null ? null : request.productName()));
+        var requested = new ProductName(product.brand(), product.model());
         try (var context = new SourceContext(clock, () -> {})) {
-            var candidates = searchApi.findCandidates(context, requested, category);
-            if (candidates.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "No matching product was found. Check the brand and full model name.");
+            var candidates = searchApi.findCandidates(context, requested, product.category());
+            if (candidates.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "SearchAPI returned no matching listings for " + product.name() + ". Try finding products again.");
             return candidates;
         } catch (ResponseStatusException rejected) { throw rejected; }
         catch (SourceContext.RetryLater limited) {
@@ -265,24 +248,8 @@ public class IngestionController {
             if (externalProductId.isEmpty() || externalProductId.length() > 1000)
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Find matching products and select one before starting ingestion.");
-            var matches = products.namedProducts(name, searchApi.settings());
-            if (matches.size() > 1)
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "More than one verified product matches that name. Include the brand and full model name.");
-            if (!matches.isEmpty()) {
-                var product = matches.getFirst();
-                target = new RunLog.ProductTarget(product.id(), product.name(), externalProductId);
-            } else if (!products.namedCatalogueProducts(name).isEmpty()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "That catalogue product is not eligible for SearchAPI reviews.");
-            } else {
-                // SearchAPI never creates `products` rows (phones come from MobileAPI, GPUs from
-                // the GPU seed and TechSpot), so an unmatched name fails closed rather than starting
-                // a run that would invent a catalogue entry from an unverified admin-typed name.
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "No matching product found in the catalogue. Ingest it first (MobileAPI for "
-                                + "phones, the GPU seed or TechSpot for GPUs) before requesting SearchAPI reviews.");
-            }
+            var product = catalogueProduct(name);
+            target = new RunLog.ProductTarget(product.id(), product.name(), externalProductId);
         } else if (request.externalProductId() != null)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "A selected SearchAPI product requires a product name.");
@@ -299,6 +266,21 @@ public class IngestionController {
         if (name.isEmpty() || name.length() > 200)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter a product name of 1 to 200 characters.");
         return name;
+    }
+    private SearchApiRepository.Product catalogueProduct(String name) {
+        var matches = products.namedProducts(name, searchApi.settings());
+        if (matches.size() > 1)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "More than one verified product matches that name. Include the brand and full model name.");
+        if (!matches.isEmpty()) return matches.getFirst();
+        if (!products.namedCatalogueProducts(name).isEmpty())
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "That catalogue product is not eligible for SearchAPI reviews.");
+        // SearchAPI never creates `products` rows (phones come from MobileAPI, GPUs from the GPU
+        // seed and TechSpot), so an unmatched name fails closed before spending a provider request.
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "No matching product found in the catalogue. Use its full catalogue name, ingest it "
+                        + "first (MobileAPI for phones, the GPU seed or TechSpot for GPUs), or add/correct it in Catalogue.");
     }
     @GetMapping("/runs/{id}")
     @Operation(summary = "Get an ingestion run")

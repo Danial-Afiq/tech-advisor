@@ -52,6 +52,11 @@ class IngestionControllerTests {
         controller = new IngestionController(runner, store, registry, settings, products, searchApi, clock);
     }
 
+    private void catalogueMatch(String name) {
+        when(products.namedProducts(eq(name), any())).thenReturn(List.of(
+                new SearchApiRepository.Product(16, "Apple", "iPhone 16")));
+    }
+
     private static SourceContext.RetryLater retryLater() throws Exception {
         var ctor = SourceContext.RetryLater.class.getDeclaredConstructor(Instant.class);
         ctor.setAccessible(true);
@@ -71,7 +76,7 @@ class IngestionControllerTests {
         verifyNoInteractions(searchApi);
     }
 
-    @Test void candidatesRejectsAMalformedNameBeforeCallingSearchApi() {
+    @Test void candidatesRejectsAnUnknownCatalogueNameBeforeCallingSearchApi() {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Unknown")));
@@ -81,14 +86,17 @@ class IngestionControllerTests {
 
     @Test void candidatesRejectsWhenSearchApiFindsNothing() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         when(searchApi.findCandidates(any(), any(), any())).thenReturn(List.of());
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
-        assertEquals(HttpStatus.BAD_REQUEST, rejected.getStatusCode());
+        assertEquals(HttpStatus.BAD_GATEWAY, rejected.getStatusCode());
+        assertTrue(rejected.getReason().contains("Apple iPhone 16"));
     }
 
     @Test void candidatesReturnsWhatSearchApiFinds() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         var expected = List.of(new ProductMatcher.Candidate("ext-1", "Apple iPhone 16"));
         when(searchApi.findCandidates(any(), any(), any())).thenReturn(expected);
         assertEquals(expected, controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
@@ -96,6 +104,7 @@ class IngestionControllerTests {
 
     @Test void candidatesMapsRateLimitToTooManyRequests() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         when(searchApi.findCandidates(any(), any(), any())).thenThrow(retryLater());
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
@@ -104,6 +113,7 @@ class IngestionControllerTests {
 
     @Test void candidatesMapsTransportFailureToServiceUnavailable() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         when(searchApi.findCandidates(any(), any(), any())).thenThrow(transportFailure());
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
@@ -112,6 +122,7 @@ class IngestionControllerTests {
 
     @Test void candidatesMapsIngestionFailureToBadGateway() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         when(searchApi.findCandidates(any(), any(), any()))
                 .thenThrow(new IngestionFailure(IngestionFailure.Code.SEARCHAPI_NO_MATCH));
         var rejected = assertThrows(ResponseStatusException.class,
@@ -121,6 +132,7 @@ class IngestionControllerTests {
 
     @Test void candidatesMapsAnyOtherFailureToBadGateway() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         when(searchApi.findCandidates(any(), any(), any())).thenThrow(new RuntimeException("boom"));
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
@@ -129,6 +141,7 @@ class IngestionControllerTests {
 
     @Test void candidatesPropagatesAResponseStatusExceptionUnchanged() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         var original = new ResponseStatusException(HttpStatus.I_AM_A_TEAPOT, "unexpected");
         when(searchApi.findCandidates(any(), any(), any())).thenThrow(original);
         var thrown = assertThrows(ResponseStatusException.class,

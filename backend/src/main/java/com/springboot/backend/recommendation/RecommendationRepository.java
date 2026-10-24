@@ -14,7 +14,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 import com.springboot.backend.dto.DashboardRecommendationResponse;
 import com.springboot.backend.recommendation.RecommendationsPersisted.NotableRecommendation;
+import com.springboot.backend.recommendation.classification.SpecFactorCatalog;
 import com.springboot.backend.recommendation.classification.TierMapper;
+import tools.jackson.databind.JsonNode;
 
 /**
  * Typed-column persistence for {@code recommendations}, plus the degraded-path
@@ -31,7 +33,7 @@ public class RecommendationRepository {
     private final JdbcTemplate db;
     private final TransactionTemplate tx;
     private final ApplicationEventPublisher events;
-    private final JsonMapper json = JsonMapper.builder().findAndAddModules().build();
+    private static final JsonMapper json = JsonMapper.builder().findAndAddModules().build();
 
     public RecommendationRepository(
             JdbcTemplate db, PlatformTransactionManager manager, ApplicationEventPublisher events) {
@@ -45,8 +47,8 @@ public class RecommendationRepository {
      * the accompanying {@code system_log} failure row - in the same
      * transaction, so the failure and the recommendation it belongs to are
      * never written separately (AGENTS.md §10). The previous ACTIVE row for
-     * the same (user, candidate) pair, if any, is superseded first: this is
-     * "per-user/per-product" persistence, one current answer per pair.
+     * the same (user, device, candidate) tuple, if any, is superseded first:
+     * each owned device keeps its own current answer.
      */
     public long save(RecommendationRecord rec, Map<String, Object> degradedLog) {
         Long id = tx.execute(status -> {
@@ -130,7 +132,9 @@ public class RecommendationRepository {
                 r.confidence,
                 r.reasoning,
                 r.starred,
-                r.created_at
+                r.created_at,
+                r.input_snapshot -> 'computed' -> 'spec_deltas'
+                    AS spec_deltas
             FROM recommendations r
             JOIN user_devices ud
                 ON ud.id = r.current_device_id
@@ -199,11 +203,57 @@ public class RecommendationRepository {
                             resultSet.getObject(
                                     "created_at",
                                     java.time.OffsetDateTime.class
-                            )
+                            ),
+                            specChanges(resultSet.getString(
+                                    "spec_deltas"
+                            ))
                     ),
             userId
     );
 }
+
+    /**
+     * Numeric spec changes from {@code input_snapshot.computed.spec_deltas}
+     * ({@code {spec: {current, candidate, delta_pct}}}), biggest change first.
+     * The snapshot stores the raw observed change, so each one is
+     * direction-corrected with the same {@link SpecFactorCatalog} rule the verdict
+     * scores with: positive always means the candidate is better. Text specs and
+     * {@code price} (budget headroom, not a spec) are left out. Parsed leniently:
+     * rows written under an older shape yield an empty list rather than failing
+     * the whole dashboard.
+     */
+    static List<DashboardRecommendationResponse.SpecChange> specChanges(String specDeltasJson) {
+        if (specDeltasJson == null) {
+            return List.of();
+        }
+        List<DashboardRecommendationResponse.SpecChange> changes = new java.util.ArrayList<>();
+        try {
+            json.readTree(specDeltasJson).properties().forEach(entry -> {
+                Boolean higherIsBetter = HIGHER_IS_BETTER.get(entry.getKey());
+                JsonNode deltaPct = entry.getValue().path("delta_pct");
+                if (higherIsBetter != null && deltaPct.isNumber()) {
+                    double raw = deltaPct.asDouble();
+                    changes.add(new DashboardRecommendationResponse.SpecChange(
+                            entry.getKey(), higherIsBetter ? raw : -raw));
+                }
+            });
+        } catch (RuntimeException malformed) {
+            return List.of();
+        }
+        changes.sort(java.util.Comparator.comparingDouble(
+                (DashboardRecommendationResponse.SpecChange change) -> -Math.abs(change.deltaPct())));
+        return List.copyOf(changes);
+    }
+
+    /** Scored numeric specs and their direction, straight from the verdict's catalogue. */
+    private static final Map<String, Boolean> HIGHER_IS_BETTER = higherIsBetter();
+
+    private static Map<String, Boolean> higherIsBetter() {
+        Map<String, Boolean> rules = new java.util.HashMap<>();
+        SpecFactorCatalog.NUMERIC_SPECS.forEach(rule -> rules.put(rule.spec(), rule.higherIsBetter()));
+        rules.put(SpecFactorCatalog.BENCHMARK_SPEC, true);
+        return Map.copyOf(rules);
+    }
 
     /**
      * {@link #replaceForDevice} for one candidate of one device, in a single
@@ -247,21 +297,15 @@ public class RecommendationRepository {
     }
 
     /**
-     * Supersedes the previous ACTIVE row for the same (user, candidate) pair,
-     * if any, then inserts the new one: this is "per-user/per-product"
-     * persistence, one current answer per pair. The user's star is carried
-     * onto the new row, so re-assessment never silently unsaves it.
+     * Supersedes the previous ACTIVE row for the same (user, device, candidate)
+     * tuple, if any, then inserts the new one. The user's star is carried onto
+     * the new row, so re-assessment never silently unsaves it.
      *
-     * <p>Notifications work per <em>device</em>. The ACTIVE index is per (user,
-     * candidate), so two of a user's devices can keep taking the same row from
-     * each other; comparing against the ACTIVE row would re-notify on every
-     * re-run. Instead the new row is compared with this device's own most recent
-     * row for the candidate, superseded or not, and recorded in {@code notables}
-     * only when it is not {@code NO_MEANINGFUL_CHANGE} and there is no such row
-     * or its verdict differs. Every notification linking to any of this device's
-     * rows for the candidate is re-pointed at the new row, so it keeps (or gets
-     * back) a live link; one whose row now belongs to another device reads as no
-     * longer available until its own device holds the row again. Callers own the
+     * <p>The new row is compared with this device's own most recent row for the
+     * candidate, superseded or not, and recorded in {@code notables} only when
+     * it is not {@code NO_MEANINGFUL_CHANGE} and there is no such row or its
+     * verdict differs. Every notification linking to an older row for this
+     * device and candidate is re-pointed at the new row. Callers own the
      * transaction.
      */
     private long supersedeAndInsert(RecommendationRecord rec, Notables notables) {
@@ -274,10 +318,11 @@ public class RecommendationRepository {
 
         boolean starred = db.queryForList(
                 "UPDATE recommendations SET status='SUPERSEDED' "
-                        + "WHERE user_id=? AND candidate_product_id=? AND status='ACTIVE' "
+                        + "WHERE user_id=? AND candidate_product_id=? "
+                        + "AND current_device_id IS NOT DISTINCT FROM ?::bigint AND status='ACTIVE' "
                         + "RETURNING starred",
                 Boolean.class,
-                rec.userId(), rec.candidateProductId())
+                rec.userId(), rec.candidateProductId(), rec.currentDeviceId())
                 .contains(Boolean.TRUE);
 
         long newId = db.queryForObject(

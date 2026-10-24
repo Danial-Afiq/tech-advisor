@@ -46,6 +46,16 @@ class PayloadTests {
         assertThrows(IllegalArgumentException.class, () -> new Payload("gpu", "1", Instant.now(),
                 new Payload.GpuCatalogBatch("seed:gpus.v1", List.of())).validate("gpu"));
     }
+    @Test void specificationsImageUrlIsOptionalButMustBeHttps() {
+        assertDoesNotThrow(() -> new Payload("specs", "1", Instant.now(),
+                new Payload.Specifications("phone", "Brand", "Model", null,
+                        Map.of("battery", BigDecimal.ONE), Map.of("battery", "mAh"), List.of(),
+                        java.net.URI.create("https://img.example/thumb.png"))).validate("specs"));
+        assertThrows(IllegalArgumentException.class, () -> new Payload("specs", "1", Instant.now(),
+                new Payload.Specifications("phone", "Brand", "Model", null,
+                        Map.of("battery", BigDecimal.ONE), Map.of("battery", "mAh"), List.of(),
+                        java.net.URI.create("http://img.example/thumb.png"))).validate("specs"));
+    }
     @Test void sourceCannotEmitUnderAnotherSourcesIdentity() {
         assertThrows(IllegalArgumentException.class, () -> new Payload("other", "1", Instant.now(),
                 new Payload.Price("phone", null, BigDecimal.ONE, "SGD")).validate("expected"));

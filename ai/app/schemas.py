@@ -64,7 +64,7 @@ DegradedReason = Literal[
 
 class OwnedDevice(Strict):
     name: str
-    device_age_months: int
+    device_age_months: int | None
     condition: Literal[CONDITIONS]  # type: ignore[valid-type]
     satisfaction_score: int = Field(ge=0, le=100)
     use_cases: list[str] = []
@@ -88,8 +88,8 @@ class UserContext(Strict):
 class Candidate(Strict):
     product_id: int
     name: str
-    release_date: date
-    age_days: int
+    release_date: date | None
+    age_days: int | None
 
 
 class SpecDelta(Strict):

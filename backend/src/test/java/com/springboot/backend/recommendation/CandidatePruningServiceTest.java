@@ -32,6 +32,7 @@ import static org.mockito.Mockito.*;
 class CandidatePruningServiceTest {
 
     private static final Long DEVICE_ID = 42L;
+    private static final Long USER_ID = 7L;
     private static final Long OWNED_PRODUCT_ID = 812L;
 
     @Mock private UserDeviceRepository userDeviceRepository;
@@ -44,13 +45,11 @@ class CandidatePruningServiceTest {
     void queriesWithTheOwnedDevicesCategoryBudgetAndProduct() {
         givenDeviceWithProduct("SMARTPHONE", OWNED_PRODUCT_ID);
         givenBudget(new BigDecimal("1000.00"), "SGD");
-        when(productRepository.findCompatibleCandidates(anyString(), any(), anyLong()))
-                .thenReturn(List.of());
+        when(productRepository.findCompatibleCandidates(anyString(), any(), anyLong(), anyLong())).thenReturn(List.of());
 
         service.getViableCandidates(DEVICE_ID);
 
-        verify(productRepository).findCompatibleCandidates(
-                "SMARTPHONE", new BigDecimal("1000.00"), OWNED_PRODUCT_ID);
+        verify(productRepository).findCompatibleCandidates("SMARTPHONE", new BigDecimal("1000.00"), OWNED_PRODUCT_ID, USER_ID);
     }
 
     @Test
@@ -112,6 +111,7 @@ class CandidatePruningServiceTest {
         lenient().when(product.getCategory()).thenReturn(category);
 
         UserDevice device = mock(UserDevice.class);
+        lenient().when(device.getUserId()).thenReturn(USER_ID);
         lenient().when(device.getProduct()).thenReturn(product);
 
         when(userDeviceRepository.findByIdAndIsCurrentTrue(DEVICE_ID)).thenReturn(Optional.of(device));

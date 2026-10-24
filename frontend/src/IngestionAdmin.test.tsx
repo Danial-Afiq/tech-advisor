@@ -212,6 +212,27 @@ describe('Ingestion admin', () => {
     expect(getSession()).toMatchObject({ role: 'ADMIN' })
   })
 
+  it('keeps a lookup error visible after the background status poll succeeds', async () => {
+    signInAsAdmin()
+    const successfulRequests = searchApiServer(() => ({ ok: true, data: {} }))
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      if (url.endsWith('/searchapi/candidates')) {
+        return { ok: false, status: 502, json: async () => ({ error: 'SearchAPI returned no listings.' }) }
+      }
+      return successfulRequests(url, init)
+    }))
+
+    withAppRoutes()
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'SearchAPI customer reviews' }))
+    await chooseCatalogueProduct('iPhone', /Apple iPhone 16 Pro/)
+    await userEvent.click(screen.getByRole('button', { name: 'Find matching products' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('SearchAPI returned no listings.')
+
+    await new Promise(resolve => setTimeout(resolve, 2100))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('SearchAPI returned no listings.')
+  })
+
   it('searches the catalogue by partial text and requires a chosen product before finding listings', async () => {
     signInAsAdmin()
     const fetcher = searchApiServer(() => ({ ok: true, data: { runId: 'new' } }))

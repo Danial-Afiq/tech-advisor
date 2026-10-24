@@ -167,6 +167,34 @@ class SearchApiTests {
         assertNull(error.getCause()); assertFalse(error.toString().contains(settings.apiKey()));
     }
 
+    @Test void shoppingFlattensTopLevelAndCategorizedResults() throws Exception {
+        var context = mock(SourceContext.class);
+        when(context.get(any(), anyString(), anyString())).thenReturn("""
+                {"shopping_results":[{"product_id":"top"}],
+                 "categorized_shopping_results":[
+                   {"title":"Phones","shopping_results":[{"product_id":"nested-1"}]},
+                   {"title":"More phones","shopping_results":[{"product_id":"nested-2"}]}
+                 ]}
+                """.getBytes());
+
+        JsonNode results = new SearchApiClient(settings).shopping(context, "Apple iPhone 17 Pro Max");
+
+        assertEquals(List.of("top", "nested-1", "nested-2"),
+                java.util.stream.StreamSupport.stream(results.spliterator(), false)
+                        .map(row -> row.path("product_id").asText()).toList());
+    }
+
+    @Test void shoppingRejectsMalformedCategorizedResults() throws Exception {
+        var context = mock(SourceContext.class);
+        when(context.get(any(), anyString(), anyString()))
+                .thenReturn("{\"categorized_shopping_results\":{}}".getBytes());
+
+        var error = assertThrows(IngestionFailure.class,
+                () -> new SearchApiClient(settings).shopping(context, "phone"));
+
+        assertEquals(SEARCHAPI_MALFORMED_RESPONSE, error.code());
+    }
+
     @Test void discoveryCachedTokenAndSingleInvalidationRetry() throws Exception {
         var repository = mock(SearchApiRepository.class);
         var client = mock(SearchApiClient.class);

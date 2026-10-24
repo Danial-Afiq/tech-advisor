@@ -9,19 +9,27 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
-public interface ProductRepository extends JpaRepository<Product, Long> {
+public interface ProductRepository
+        extends JpaRepository<Product, Long> {
 
-    Optional<Product> findByBrandAndModelName(String brand, String modelName);
+    Optional<Product> findByBrandAndModelName(
+            String brand,
+            String modelName
+    );
 
-    Optional<Product> findByBrandIgnoreCaseAndModelNameIgnoreCase(String brand, String modelName);
+    Optional<Product>
+            findByBrandIgnoreCaseAndModelNameIgnoreCase(
+                    String brand,
+                    String modelName
+            );
 
-    List<Product> findAllByCategoryOrderByBrandAscModelNameAsc(String category);
+    List<Product> findAllByCategoryOrderByBrandAscModelNameAsc(
+            String category
+    );
 
     /**
-     * Latest price per product in a category, for the catalogue list. Same
-     * selection as candidate shortlisting and the dashboard's {@code latestPrice}:
-     * newest {@code observed_at}, ties broken by {@code id DESC}. Products with
-     * no price history are absent.
+     * Latest price per product in a category, for the catalogue list.
+     * Uses the newest observed_at, with id DESC to break ties.
      */
     @Query(value = """
             SELECT DISTINCT ON (ph.product_id)
@@ -33,9 +41,13 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
             WHERE p.category = :category
             ORDER BY ph.product_id, ph.observed_at DESC, ph.id DESC
             """, nativeQuery = true)
-    List<LatestPrice> findLatestPrices(@Param("category") String category);
+    List<LatestPrice> findLatestPrices(
+            @Param("category") String category
+    );
 
-    /** {@link #findLatestPrices(String)} for one product. */
+    /**
+     * Returns the latest recorded price for one product.
+     */
     @Query(value = """
             SELECT product_id AS productId, price, currency
             FROM price_history
@@ -43,26 +55,14 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
             ORDER BY observed_at DESC, id DESC
             LIMIT 1
             """, nativeQuery = true)
-    Optional<LatestPrice> findLatestPrice(@Param("productId") Long productId);
+    Optional<LatestPrice> findLatestPrice(
+            @Param("productId") Long productId
+    );
 
     /**
-     * Deterministic candidate shortlisting: same category, at or under the
-     * budget ceiling, excluding the device the user already owns.
-     *
-     * <p>Native rather than JPQL because {@code DISTINCT ON} is what lets
-     * PostgreSQL satisfy "latest price per product" from
-     * {@code idx_price_history_lookup} instead of aggregating the whole table.
-     *
-     * <p>Three details that are load-bearing:
-     * <ul>
-     *   <li>{@code ORDER BY ... id DESC} breaks ties between two observations
-     *       sharing an {@code observed_at}. Without it the chosen price is
-     *       arbitrary, and this step has to be reproducible.</li>
-     *   <li>{@code INNER JOIN} excludes products with no price history at all:
-     *       affordability cannot be verified, so it is not a candidate.</li>
-     *   <li>{@code status = 'VERIFIED'} keeps products whose brand ingestion
-     *       could not resolve out of user-facing results.</li>
-     * </ul>
+     * Deterministic candidate shortlisting: same category, verified,
+     * affordable, not the currently owned product, and not dismissed
+     * by this user during an active cooldown.
      */
     @Query(value = """
             SELECT p.id         AS productId,
@@ -78,13 +78,22 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                 ORDER BY product_id, observed_at DESC, id DESC
             ) ph ON p.id = ph.product_id
             WHERE p.category = :category
-              AND p.status   = 'VERIFIED'
-              AND ph.price  <= :budgetCeiling
-              AND p.id      <> :currentProductId
+              AND p.status = 'VERIFIED'
+              AND ph.price <= :budgetCeiling
+              AND p.id <> :currentProductId
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM recommendation_dismissals dismissal
+                  WHERE dismissal.user_id = :userId
+                    AND dismissal.candidate_product_id = p.id
+                    AND dismissal.cooldown_until > CURRENT_TIMESTAMP
+              )
             ORDER BY ph.price ASC, p.id ASC
             """, nativeQuery = true)
     List<CandidateProduct> findCompatibleCandidates(
             @Param("category") String category,
             @Param("budgetCeiling") BigDecimal budgetCeiling,
-            @Param("currentProductId") Long currentProductId);
+            @Param("currentProductId") Long currentProductId,
+            @Param("userId") Long userId
+    );
 }

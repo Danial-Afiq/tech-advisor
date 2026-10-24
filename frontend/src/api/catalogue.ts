@@ -30,6 +30,8 @@ export type SmartphoneCatalogueItem = {
   latestPrice: number | string | null;
   /** ISO 4217 code of `latestPrice`, or null. */
   currency: string | null;
+  /** https thumbnail from MobileAPI (`products.image_url`), or null when none is known. */
+  imageUrl?: string | null;
 };
 
 /** `GET /api/catalogue/smartphones` — every smartphone, ordered by brand and model. */

@@ -31,6 +31,17 @@ export type DashboardRecommendation = {
   /** The user starred (saved) this recommendation. */
   starred: boolean;
   createdAt: string;
+  /**
+   * Numeric specs the verdict compared, biggest change first. `deltaPct` is
+   * direction-corrected by the backend: positive always means better.
+   */
+  specChanges?: SpecChange[];
+};
+
+export type SpecChange = {
+  /** `phone` column (e.g. `battery_mah`), or `benchmark_score`. */
+  spec: string;
+  deltaPct: number;
 };
 
 export type RecommendationFilters = {

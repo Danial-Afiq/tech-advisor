@@ -24,6 +24,9 @@ public class DeviceResponse {
     @Schema(description = "Catalogue model name, if linked.", example = "Galaxy S22", accessMode = Schema.AccessMode.READ_ONLY)
     private final String productModelName;
 
+    @Schema(description = "Catalogue category of the linked product (e.g. SMARTPHONE), if linked.", example = "SMARTPHONE", accessMode = Schema.AccessMode.READ_ONLY)
+    private final String productCategory;
+
     @Schema(description = "User-provided device name.", example = "My Galaxy S22", accessMode = Schema.AccessMode.READ_ONLY)
     private final String customName;
 
@@ -95,6 +98,8 @@ public class DeviceResponse {
                 product == null ? null : product.getBrand();
         this.productModelName =
                 product == null ? null : product.getModelName();
+        this.productCategory =
+                product == null ? null : product.getCategory();
 
         this.customName = device.getCustomName();
         this.purchaseDate = device.getPurchaseDate();
@@ -130,6 +135,10 @@ public class DeviceResponse {
 
     public String getProductModelName() {
         return productModelName;
+    }
+
+    public String getProductCategory() {
+        return productCategory;
     }
 
     public String getCustomName() {

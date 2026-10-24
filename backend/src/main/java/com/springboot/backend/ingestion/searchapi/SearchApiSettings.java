@@ -12,7 +12,7 @@ public record SearchApiSettings(
         @DefaultValue("sg") String gl,
         @DefaultValue("en") String hl,
         @DefaultValue("Singapore") String location,
-        @DefaultValue("1") int maxProductsPerRun,
+        @DefaultValue("3") int maxProductsPerRun,
         @DefaultValue("SMARTPHONE") List<String> categories) {
     /** Product categories ProductMatcher has a listing vocabulary for (ticket 1.3 added GPU). */
     public static final Set<String> SUPPORTED_CATEGORIES = Set.of("SMARTPHONE", "GPU");

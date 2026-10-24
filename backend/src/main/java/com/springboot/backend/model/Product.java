@@ -41,6 +41,10 @@ public class Product {
     @Column(nullable = false)
     private String status;
 
+    /** Thumbnail from the specifications source (V13); null when none is known. Not admin-editable. */
+    @Column(name = "image_url")
+    private String imageUrl;
+
     @Column(name = "created_at", nullable = false)
     private OffsetDateTime createdAt;
 
@@ -74,6 +78,7 @@ public class Product {
     public String getCategory() { return category; }
     public LocalDate getReleaseDate() { return releaseDate; }
     public String getStatus() { return status; }
+    public String getImageUrl() { return imageUrl; }
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 

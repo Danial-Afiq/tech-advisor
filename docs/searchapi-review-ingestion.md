@@ -67,26 +67,36 @@ Listings are matched with the product's category rules (`ProductMatcher`).
 The admin first searches the catalogue (`GET /api/admin/ingestion/searchapi/catalogue?q=`,
 free, no SearchAPI call): eligible products whose brand and model contain every typed
 word, closest names first, at most 20. The chosen product's `productId` is then sent to
-`POST /searchapi/candidates` and `POST /runs` (a typed `productName` still works but
-must resolve to exactly one eligible product). The SearchAPI picker returns at most 20
-valid titles and external product IDs. Product tokens never reach the browser. The
-selected ID is stored in run metadata, included in idempotency checks, and revalidated
-by the worker before its token is cached. A missing or stale selection fails closed. A
-product with no eligible catalogue row cannot be chosen — ingest it first; this source
+`POST /searchapi/candidates` and `POST /runs`. A typed `productName` still works, but
+the backend first resolves it to exactly one eligible catalogue row and uses that row's
+canonical brand/model and category for the provider query, so an unknown or ineligible
+name never spends a provider request. (This picker supersedes main's smartphone-only
+type-ahead for this page, which could not target GPUs.) The SearchAPI picker returns at
+most 20 valid titles and external product IDs. Product tokens never reach the browser.
+SearchAPI can return product rows either at top-level `shopping_results` or inside
+`categorized_shopping_results`; both documented shapes are flattened before matching.
+The selected ID is stored in run metadata and included in idempotency checks, while
+its validated token remains in a ten-minute in-memory backend cache. The worker
+consumes that exact token instead of repeating the unstable Shopping lookup. A backend
+restart or expired entry falls back to worker-side lookup and revalidation. A missing
+or stale selection fails closed. A product with no eligible catalogue row cannot be
+chosen — ingest it first or add/correct it through the admin catalogue; this source
 never creates a `products` row. An existing ineligible catalogue row is never promoted.
 
 Mappings are scoped by product, provider, canonical name, `gl`, `hl`, and location.
 A canonical-name or locale change misses the cache. Only a clear HTTP 400 saying a
 cached `product_token` is invalid or expired causes invalidation and one rediscovery.
-A newly discovered invalid token fails without another loop. There is no token TTL.
+A newly discovered invalid token fails without another loop. The persistent mapping
+has no token TTL; only the picker cache has the ten-minute expiry.
 
 Request use per product is fixed:
 
 - cached token: two review searches;
 - uncached token: one Shopping discovery plus two review searches;
-- named admin flow: one additional Shopping preview search.
+- named admin flow with a warm picker cache: one Shopping search plus two review searches.
 
-There is no pagination. Invalid-token recovery may add the single rediscovery within
+There is no pagination. A restart or expired picker entry may add one worker-side
+Shopping lookup. Invalid-token recovery may add the single rediscovery within
 the shared cap. Do not add preview, validation, or pagination calls without reviewing
 SearchAPI quota impact.
 
@@ -124,7 +134,7 @@ SEARCHAPI_API_KEY=your-private-key
 SEARCHAPI_GL=sg
 SEARCHAPI_HL=en
 SEARCHAPI_LOCATION=Singapore
-SEARCHAPI_MAX_PRODUCTS_PER_RUN=1
+SEARCHAPI_MAX_PRODUCTS_PER_RUN=3
 SEARCHAPI_CATEGORIES=SMARTPHONE,GPU
 
 INGESTION_ENABLED_SOURCES=searchapi-google-product-reviews
@@ -143,7 +153,7 @@ EMBEDDER=model2vec
 VITE_API_BASE_URL=http://localhost:18087
 ```
 
-`SEARCHAPI_MAX_PRODUCTS_PER_RUN` defaults to 1 and accepts at most 3 — the real
+`SEARCHAPI_MAX_PRODUCTS_PER_RUN` defaults to 3 and accepts at most 3 — the real
 ceiling under `SourceContext`'s 10-request-per-run budget, since each uncached
 product costs 3 requests (1 discovery + 2 review searches). Enabling the
 source without `SEARCHAPI_API_KEY` fails startup. `ADMIN_PASSWORD` must be at
@@ -240,8 +250,10 @@ It complements `searchapi-smoke.ps1`, which checks the HTTP/admin ingestion work
 
 - **Source disabled:** add the source ID to `INGESTION_ENABLED_SOURCES` and restart.
 - **No matching product:** a catalogue search that lists nothing means no eligible
-  `VERIFIED` row in an enabled category; ingest the product first. A SearchAPI
-  search with no listings means no title passed the category's rules; accessories
+  `VERIFIED` row in an enabled category; ingest the product first or correct it in
+  Catalogue. A typed name must be the row's full catalogue name.
+- **No SearchAPI listing:** the catalogue match succeeded but no title in either
+  supported result shape passed the category's rules (502); retry later. Accessories
   and conflicting variants are deliberately rejected.
 - **Empty successful run:** SearchAPI returned no reviews that passed normalization.
 - **401/403:** check `SEARCHAPI_API_KEY`; provider messages and credentials are not
