@@ -36,54 +36,130 @@ public final class ProductMatcher {
             "5g", "4g", "gb", "tb", "black", "white", "blue", "green", "pink", "purple", "red", "gold",
             "silver", "gray", "grey", "titanium", "natural", "desert", "midnight", "starlight",
             "dual", "sim", "esim", "singtel", "starhub", "m1", "verizon", "at", "t", "mobile");
+    /**
+     * Ticket 1.3. GPU listings are partner boards ("MSI GeForce RTX 4070 Ventus 2X 12G OC"), so
+     * the board maker and its line words are allowed suffixes, the chip vendor need not appear,
+     * and the longer titles get a lower core-token share. Tier words (Ti, Super, XT, XTX, GRE)
+     * and four-digit numbers are never suffixes, so a 4070 never matches a 4070 Ti or a 4060.
+     * Memory sizes are split from their unit ("12GB", "12G", "12 GB" all read as 12 gb), and a
+     * memory size in the catalogue name ("RTX 3060 12GB") must appear in the title but may sit
+     * anywhere in it, since boards put it after their line name.
+     */
+    private record Rules(Set<String> reject, Set<String> suffix, String extra, boolean brandRequired,
+                         double minCoreShare, boolean splitMemory) {}
+    private static final Rules PHONE = new Rules(REJECT, SUFFIX, "(?:64|128|256|512|1024)(?:gb)?|[124]tb",
+            true, 0.4, false);
+    private static final Set<String> GPU_REJECT = union(REJECT, Set.of("laptop", "notebook", "riser",
+            "waterblock", "backplate", "bracket", "prebuilt"));
+    private static final Set<String> GPU_SUFFIX = Set.of("nvidia", "amd", "intel",
+            "asus", "rog", "strix", "tuf", "dual", "prime", "proart", "msi", "ventus", "gaming", "trio", "slim",
+            "inspire", "shadow", "suprim", "expert", "gigabyte", "aorus", "eagle", "windforce", "aero", "elite",
+            "master", "zotac", "twin", "edge", "amp", "trinity", "airo", "solid", "pny", "verto", "xlr8", "epic",
+            "palit", "jetstream", "infinity", "stormx", "gamerock", "gainward", "ghost", "phantom", "python",
+            "inno3d", "ichill", "colorful", "igame", "ultra", "vulcan", "galax", "kfa2", "evga", "ftw3", "xc",
+            "sapphire", "pulse", "nitro", "pure", "powercolor", "red", "devil", "dragon", "hellhound", "fighter",
+            "reaper", "xfx", "speedster", "swft", "merc", "qick", "asrock", "challenger", "steel", "legend",
+            "taichi", "sparkle", "titan", "roc", "acer", "predator", "bifrost", "nova", "maxsun", "yeston",
+            "oc", "edition", "founders", "limited", "graphics", "card", "video", "gpu", "pci", "pcie", "express",
+            "e", "hdmi", "dp", "displayport", "gddr5", "gddr5x", "gddr6", "gddr6x", "gddr7", "gb", "bit", "x",
+            "fan", "fans", "triple", "white", "black", "lhr", "boost", "overclocked", "low", "profile", "lp",
+            "mini", "itx", "compact", "new", "with");
+    private static final Rules GPU = new Rules(GPU_REJECT, GPU_SUFFIX,
+            "\\d{1,3}|[1-4]x|x\\d{1,2}|v\\d", false, 0.2, true);
+    private static final java.util.regex.Pattern MEMORY = java.util.regex.Pattern.compile("(\\d{1,3})gb?");
+    private static Rules rules(String category) { return "GPU".equals(category) ? GPU : PHONE; }
+    private static Set<String> union(Set<String> a, Set<String> b) {
+        var all = new HashSet<>(a); all.addAll(b); return Set.copyOf(all);
+    }
+    /** For GPUs, "12GB" and "12G" become "12", "gb", so every spelling of a memory size reads the same. */
+    private static List<String> tokens(String value, Rules rules) {
+        var plain = tokens(value);
+        if (!rules.splitMemory()) return plain;
+        var split = new ArrayList<String>();
+        for (String token : plain) {
+            var memory = MEMORY.matcher(token);
+            if (memory.matches()) { split.add(memory.group(1)); split.add("gb"); }
+            else split.add(token);
+        }
+        return split;
+    }
+    private static boolean containsRun(List<String> haystack, List<String> run) {
+        return run.isEmpty() || (" " + String.join(" ", haystack) + " ").contains(" " + String.join(" ", run) + " ");
+    }
     static List<String> tokens(String value) {
         return Arrays.stream(Normalizer.normalize(value, Normalizer.Form.NFKC).toLowerCase(Locale.ROOT)
                 .replace("+", " plus ").replaceAll("[^\\p{L}\\p{N}]+", " ").trim().split(" +"))
                 .filter(s -> !s.isBlank()).toList();
     }
     public static boolean accepts(String brand, String model, String title) {
-        List<String> b = tokens(brand), m = tokens(model), t = tokens(title);
-        if (b.isEmpty() || m.isEmpty() || !t.containsAll(b) || !t.containsAll(m)
-                || t.stream().anyMatch(REJECT::contains)) return false;
+        return accepts("SMARTPHONE", brand, model, title);
+    }
+    public static boolean accepts(String category, String brand, String model, String title) {
+        Rules rules = rules(category);
+        List<String> b = tokens(brand, rules), m = tokens(model, rules), t = tokens(title, rules);
+        if (b.isEmpty() || m.isEmpty() || (rules.brandRequired() && !t.containsAll(b)) || !t.containsAll(m)
+                || t.stream().anyMatch(rules.reject()::contains)) return false;
+        // A trailing memory size may sit anywhere in a GPU title; the rest of the model may not.
+        List<String> memory = rules.splitMemory() && m.size() > 2 && m.getLast().equals("gb")
+                && m.get(m.size() - 2).matches("\\d+") ? m.subList(m.size() - 2, m.size()) : List.of();
+        List<String> name = m.subList(0, m.size() - memory.size());
         // Ordered, contiguous model tokens prevent mixed-model titles matching a bag of words.
-        if (!String.join(" ", t).contains(String.join(" ", m))) return false;
-        var expected = new HashSet<>(b); expected.addAll(m);
+        if (rules.splitMemory() ? !containsRun(t, name) || !containsRun(t, memory)
+                : !String.join(" ", t).contains(String.join(" ", m))) return false;
+        var expected = new HashSet<>(b); expected.addAll(name);
         if (expected.stream().anyMatch(token -> Collections.frequency(t, token) > 1)) return false;
+        expected.addAll(memory);
         int core = 0;
         for (String token : t) {
             if (expected.contains(token)) { core++; continue; }
-            if (!SUFFIX.contains(token) && !token.matches("(?:64|128|256|512|1024)(?:gb)?|[124]tb")) return false;
+            if (!rules.suffix().contains(token) && !token.matches(rules.extra())) return false;
         }
-        return (double) core / t.size() >= 0.4;
+        return (double) core / t.size() >= rules.minCoreShare();
     }
     public static Match choose(String brand, String model, JsonNode results) {
-        var matches = validMatches(brand, model, results);
+        return choose("SMARTPHONE", brand, model, results);
+    }
+    /**
+     * For a GPU, equally specific partner boards are all listings of the same chip, so the
+     * first in Google's order wins instead of failing as ambiguous; reviews attach to the
+     * reference product either way. Phones keep failing closed.
+     */
+    public static Match choose(String category, String brand, String model, JsonNode results) {
+        var matches = validMatches(category, brand, model, results);
         if (matches.isEmpty()) throw new IngestionFailure(SEARCHAPI_NO_MATCH);
         int bestScore = matches.values().stream().mapToInt(
                 match -> extraTokenCount(brand, model, match.title())).min().orElseThrow();
         var best = matches.values().stream().filter(
                 match -> extraTokenCount(brand, model, match.title()) == bestScore).toList();
-        if (best.size() != 1) throw new IngestionFailure(SEARCHAPI_AMBIGUOUS_MATCH);
+        if (best.size() != 1 && rules(category) != GPU) throw new IngestionFailure(SEARCHAPI_AMBIGUOUS_MATCH);
         return best.getFirst();
     }
 
     public static Match choose(String brand, String model, JsonNode results, String externalProductId) {
-        Match selected = validMatches(brand, model, results).get(externalProductId);
+        return choose("SMARTPHONE", brand, model, results, externalProductId);
+    }
+    public static Match choose(String category, String brand, String model, JsonNode results,
+                               String externalProductId) {
+        Match selected = validMatches(category, brand, model, results).get(externalProductId);
         if (selected == null) throw new IngestionFailure(SEARCHAPI_NO_MATCH);
         return selected;
     }
 
     public static List<Candidate> candidates(String brand, String model, JsonNode results) {
-        return candidateMatches(brand, model, results).stream()
+        return candidates("SMARTPHONE", brand, model, results);
+    }
+    public static List<Candidate> candidates(String category, String brand, String model, JsonNode results) {
+        return candidateMatches(category, brand, model, results).stream()
                 .map(match -> new Candidate(match.externalId(), match.title())).toList();
     }
 
     /** Validated picker matches, including the server-only tokens discarded by the response DTO. */
-    public static List<Match> candidateMatches(String brand, String model, JsonNode results) {
-        return validMatches(brand, model, results).values().stream().limit(20).toList();
+    public static List<Match> candidateMatches(String category, String brand, String model, JsonNode results) {
+        return validMatches(category, brand, model, results).values().stream().limit(20).toList();
     }
 
-    private static Map<String, Match> validMatches(String brand, String model, JsonNode results) {
+    private static Map<String, Match> validMatches(String category, String brand, String model,
+                                                   JsonNode results) {
         var matches = new LinkedHashMap<String, Match>();
         Comparator<Match> specificity = Comparator
                 .comparingInt((Match match) -> extraTokenCount(brand, model, match.title()))
@@ -94,7 +170,7 @@ public final class ProductMatcher {
             String token = row.path("product_token").asText("");
             if (!id.isBlank() && id.length() <= 1000 && !token.isBlank()
                     && title.length() <= 1000 && token.length() <= 16000
-                    && accepts(brand, model, title)) {
+                    && accepts(category, brand, model, title)) {
                 Match match = new Match(id, token, title, extractedPrice(row), currencyOf(row));
                 matches.merge(id, match, (a, z) -> specificity.compare(a, z) <= 0 ? a : z);
             }

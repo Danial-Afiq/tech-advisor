@@ -4,6 +4,7 @@ import com.springboot.backend.ingestion.core.IngestionSink;
 import com.springboot.backend.ingestion.core.IngestionSource;
 import com.springboot.backend.ingestion.core.Payload;
 import com.springboot.backend.ingestion.core.SourceContext;
+import com.springboot.backend.ingestion.searchapi.SearchApiSettings;
 import com.springboot.backend.ingestion.searchapi.SearchApiSource;
 import java.sql.Timestamp;
 import java.util.*;
@@ -20,7 +21,16 @@ public class ReviewBatchSink implements IngestionSink {
     private final ReviewEmbeddingClient embeddings;
     private final TransactionTemplate transaction;
     private final JsonMapper json = JsonMapper.builder().build();
+    /** Comma-joined SearchAPI categories; a batch for any other category is refused. */
+    private final String categories;
+    /** Smartphones only, the behaviour before categories were configurable. */
     public ReviewBatchSink(JdbcTemplate db, ReviewEmbeddingClient embeddings, PlatformTransactionManager manager) {
+        this(db, embeddings, manager, new SearchApiSettings("", "sg", "en", "Singapore", 1));
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public ReviewBatchSink(JdbcTemplate db, ReviewEmbeddingClient embeddings, PlatformTransactionManager manager,
+                           SearchApiSettings settings) {
+        this.categories = String.join(",", settings.categories());
         this.db = db; this.embeddings = embeddings; this.transaction = new TransactionTemplate(manager);
         transaction.setTimeout(10);
     }
@@ -47,8 +57,8 @@ public class ReviewBatchSink implements IngestionSink {
         return transaction.execute(status -> {
             // Lock identity while writing and recheck eligibility after external calls.
             var eligible = db.queryForList("""
-                    SELECT id FROM products WHERE id=? AND category='SMARTPHONE' AND status='VERIFIED' FOR SHARE
-                    """, Long.class, batch.productId());
+                    SELECT id FROM products WHERE id=? AND category = ANY(string_to_array(?, ',')) AND status='VERIFIED' FOR SHARE
+                    """, Long.class, batch.productId(), categories);
             if (eligible.isEmpty()) throw new IllegalStateException("Review product no longer eligible");
             int inserted = 0;
             for (int i = 0; i < fresh.size(); i++) {

@@ -11,9 +11,17 @@ import org.springframework.stereotype.Repository;
 public class SearchApiRepository {
     private final JdbcTemplate db;
     public SearchApiRepository(JdbcTemplate db) { this.db = db; }
-    public record Product(long id, String brand, String model) {
+    public record Product(long id, String brand, String model, String category) {
+        /** A smartphone, the only category before ticket 1.3. */
+        public Product(long id, String brand, String model) { this(id, brand, model, "SMARTPHONE"); }
         public String name() { return brand + " " + model; }
     }
+    private static final String PRODUCT_COLUMNS = "id, brand, model_name, category";
+    private static Product product(java.sql.ResultSet r, int n) throws java.sql.SQLException {
+        return new Product(r.getLong(1), r.getString(2), r.getString(3), r.getString(4));
+    }
+    /** Categories travel as one comma-joined parameter matched with string_to_array. */
+    private static String categories(SearchApiSettings s) { return String.join(",", s.categories()); }
     /**
      * Excludes products already attempted for this provider/locale (VALID or
      * INVALID row in external_product_mapping) - otherwise the untargeted
@@ -23,18 +31,18 @@ public class SearchApiRepository {
      */
     public List<Product> products(SearchApiSettings s) {
         return db.query("""
-                SELECT id, brand, model_name FROM products p
-                WHERE status='VERIFIED' AND category='SMARTPHONE'
+                SELECT id, brand, model_name, category FROM products p
+                WHERE status='VERIFIED' AND category = ANY(string_to_array(?, ','))
                   AND NOT EXISTS (SELECT 1 FROM external_product_mapping m
                                   WHERE m.product_id=p.id AND m.provider=? AND m.gl=? AND m.hl=? AND m.location=?)
                 ORDER BY id LIMIT ?
-                """, (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)),
+                """, SearchApiRepository::product, categories(s),
                 SearchApiSource.PROVIDER, s.gl(), s.hl(), s.location(), s.maxProductsPerRun());
     }
-    public Optional<Product> eligibleProduct(long productId) {
-        return db.query("SELECT id, brand, model_name FROM products WHERE id=? "
-                + "AND status='VERIFIED' AND category='SMARTPHONE'",
-                (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)), productId).stream().findFirst();
+    public Optional<Product> eligibleProduct(long productId, SearchApiSettings s) {
+        return db.query("SELECT " + PRODUCT_COLUMNS + " FROM products WHERE id=? "
+                + "AND status='VERIFIED' AND category = ANY(string_to_array(?, ','))",
+                SearchApiRepository::product, productId, categories(s)).stream().findFirst();
     }
     /**
      * Fuzzy-matched against ProductMatcher's token logic, not exact-string
@@ -47,18 +55,42 @@ public class SearchApiRepository {
      * catalogue's scale, revisit if it ever grows large. Two rows suffice
      * to detect an ambiguous name.
      */
-    public List<Product> namedProducts(String rawName) {
+    public List<Product> namedProducts(String rawName, SearchApiSettings s) {
         var candidates = db.query("""
-                SELECT id, brand, model_name FROM products WHERE status='VERIFIED' AND category='SMARTPHONE'
+                SELECT id, brand, model_name, category FROM products
+                WHERE status='VERIFIED' AND category = ANY(string_to_array(?, ','))
                 ORDER BY id
-                """, (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)));
+                """, SearchApiRepository::product, categories(s));
         return ProductMatcher.matchCatalogue(rawName, candidates, Product::name, Product::model).stream()
                 .limit(2).toList();
     }
-    /** Same match, without the VERIFIED/SMARTPHONE filter - distinguishes "doesn't exist" from "exists but ineligible". */
+    /**
+     * Loose catalogue search behind the admin product picker: every typed word must appear in
+     * "brand model" in any order, so "RTX 3060" lists "NVIDIA GeForce RTX 3060 12GB" and the
+     * Ti beside it. Safe to be loose because the admin chooses from the list and nothing here
+     * calls SearchAPI. Closest names (fewest extra words) come first.
+     */
+    public List<Product> searchCatalogue(String query, SearchApiSettings s, int limit) {
+        List<String> words = ProductMatcher.tokens(query == null ? "" : query);
+        if (words.isEmpty()) return List.of();
+        // tokens() leaves only letters and digits, so no LIKE wildcard can reach the pattern.
+        String[] patterns = words.stream().map(word -> "%" + word + "%").toArray(String[]::new);
+        var rows = db.query("""
+                SELECT id, brand, model_name, category FROM products
+                WHERE status='VERIFIED' AND category = ANY(string_to_array(?, ','))
+                  AND (brand || ' ' || model_name) ILIKE ALL (?)
+                ORDER BY id
+                """, SearchApiRepository::product, categories(s), patterns);
+        return rows.stream()
+                .filter(row -> ProductMatcher.tokens(row.name()).containsAll(words))
+                .sorted(java.util.Comparator.comparingInt((Product row) -> ProductMatcher.tokens(row.name()).size())
+                        .thenComparing(Product::name))
+                .limit(limit).toList();
+    }
+    /** Same match, without the status/category filter - distinguishes "doesn't exist" from "exists but ineligible". */
     public List<Product> namedCatalogueProducts(String rawName) {
-        var candidates = db.query("SELECT id, brand, model_name FROM products ORDER BY id",
-                (r, n) -> new Product(r.getLong(1), r.getString(2), r.getString(3)));
+        var candidates = db.query("SELECT " + PRODUCT_COLUMNS + " FROM products ORDER BY id",
+                SearchApiRepository::product);
         return ProductMatcher.matchCatalogue(rawName, candidates, Product::name, Product::model).stream()
                 .limit(2).toList();
     }
