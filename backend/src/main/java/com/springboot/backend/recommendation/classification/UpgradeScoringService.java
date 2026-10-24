@@ -1,6 +1,7 @@
 package com.springboot.backend.recommendation.classification;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -114,12 +115,11 @@ public class UpgradeScoringService {
     private int priority(Object raw) {
         if (raw instanceof Number number) {
             try {
-                BigDecimal value = new BigDecimal(number.toString());
                 // Fractional, NaN and infinite priorities are invalid; do not
                 // silently truncate them or overflow large legacy integers.
-                value.toBigIntegerExact();
-                return value.max(BigDecimal.valueOf(settings.priorityMin()))
-                        .min(BigDecimal.valueOf(settings.priorityMax())).intValueExact();
+                BigInteger value = new BigDecimal(number.toString()).toBigIntegerExact();
+                return value.max(BigInteger.valueOf(settings.priorityMin()))
+                        .min(BigInteger.valueOf(settings.priorityMax())).intValueExact();
             } catch (ArithmeticException | NumberFormatException ignored) {
                 // Defined fallback for malformed legacy JSONB values.
             }
