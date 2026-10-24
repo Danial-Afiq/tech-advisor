@@ -75,7 +75,8 @@ export function RecommendationCard({
               }}
             />
           )}
-          <div className="min-w-0 flex-1">
+          {/* The min width makes the verdict wrap below on narrow cards instead of covering the title. */}
+          <div className="min-w-[150px] flex-1">
             <p className="m-0 text-[11px] font-bold tracking-[0.12em] text-[#9fb1c9] uppercase">
               {showDevice ? "For your device" : "Suggested product"}
             </p>
@@ -91,7 +92,7 @@ export function RecommendationCard({
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <span
               className={`badge rounded-full px-3 py-[14px] text-[11px] font-semibold ${verdict.badgeClass}`}
             >
