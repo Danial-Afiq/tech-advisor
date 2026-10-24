@@ -1,12 +1,12 @@
 # SearchAPI customer-review ingestion
 
-This source attaches owner reviews to canonical `VERIFIED` smartphones. MobileAPI
-(ticket 1.2) is the sole source of truth for `products`/`phone` rows — this source
-never creates one. A named admin run resolves the typed name against the existing
-catalogue (fuzzy-matched, not exact-string — see `ProductMatcher.matchCatalogue`)
-and fails closed if nothing eligible matches, rather than inventing a catalogue
-entry from an unverified admin-typed name. It does not score upgrades, select
-recommendation candidates, or call an LLM.
+This source attaches owner reviews to canonical `VERIFIED` smartphones and GPUs
+(`SEARCHAPI_CATEGORIES`, default `SMARTPHONE,GPU`). It never creates a `products`
+row: phones come from MobileAPI (ticket 1.2) and admin catalogue CRUD, GPUs from the
+GPU seed and TechSpot (ticket 1.3). An admin run targets a product the admin chose
+from a catalogue search, and fails closed if nothing eligible matches rather than
+inventing a catalogue entry. It does not score upgrades, select recommendation
+candidates, or call an LLM.
 
 ## How the flow works
 
@@ -45,28 +45,43 @@ The source ID is `searchapi-google-product-reviews`; the stored provider value i
 configured `gl`, `hl`, and `location` values. The defaults are Singapore, English,
 and `sg`.
 
-The matcher requires the canonical brand and ordered, contiguous model tokens.
-It rejects accessories, refurbished or used listings, conflicting models, repeated
-core tokens, and unknown suffixes. Untargeted ingestion chooses the valid identity
-with the fewest extra variant words and rejects equally specific distinct matches.
+Listings are matched with the product's category rules (`ProductMatcher`).
 
-The admin picker offers verified catalogue matches while the admin types, then the
-backend resolves the submitted name to one existing `VERIFIED` smartphone
-and uses that row's canonical brand/model for the provider query. This prevents a
-free-text SearchAPI hit from looking selectable when the catalogue cannot accept the
-run, and avoids spending a provider request for an unknown or ineligible product.
-It returns at most 20 valid titles and external product IDs. Product tokens never
-reach the browser. SearchAPI can return product rows either at top-level
-`shopping_results` or inside `categorized_shopping_results`; both documented shapes
-are flattened before matching. The selected ID is stored in run metadata, included
-in idempotency checks, while its validated token remains in a ten-minute in-memory
-backend cache. The worker consumes that exact token instead of repeating the unstable
-Shopping lookup. A backend restart or expired entry falls back to the previous
-worker-side lookup and revalidation. A missing or stale selection fails closed. A
-name with no eligible catalogue match
-fails closed too — ingest the device via MobileAPI first or add/correct it through
-the admin catalogue; this source never creates a `products`/`phone` row. An existing
-ineligible catalogue row is never promoted.
+- **Smartphones:** the matcher requires the canonical brand and ordered, contiguous
+  model tokens. It rejects accessories, refurbished or used listings, conflicting
+  models, repeated core tokens, and unknown suffixes. Untargeted ingestion chooses
+  the valid identity with the fewest extra variant words and rejects equally specific
+  distinct matches.
+- **GPUs (ticket 1.3):** listings are partner boards, so board makers and line words
+  (ASUS, MSI, Gigabyte, Zotac, Sapphire, TUF, Ventus, Windforce, Pulse, OC, GDDR6X,
+  "Graphics Card", fan counts…) are allowed suffixes and the chip vendor need not
+  appear. Tier words (Ti, Super, XT, XTX, GRE) and four-digit numbers are never
+  suffixes, so a 4070 never matches a 4070 Ti or a 4060. Memory sizes read the same
+  in any spelling (12GB, 12G, 12 GB); a size in the catalogue name ("RTX 3060 12GB")
+  must appear somewhere in the title. Waterblocks, risers, backplates, brackets,
+  laptops and prebuilt PCs are rejected. Equally specific boards pick Google's first
+  listing instead of failing as ambiguous, because any of them is a listing of the
+  same chip and reviews attach to the reference product. A GPU price is stored for
+  the product only; the phone storage-variant lookup is skipped.
+
+The admin first searches the catalogue (`GET /api/admin/ingestion/searchapi/catalogue?q=`,
+free, no SearchAPI call): eligible products whose brand and model contain every typed
+word, closest names first, at most 20. The chosen product's `productId` is then sent to
+`POST /searchapi/candidates` and `POST /runs`. A typed `productName` still works, but
+the backend first resolves it to exactly one eligible catalogue row and uses that row's
+canonical brand/model and category for the provider query, so an unknown or ineligible
+name never spends a provider request. (This picker supersedes main's smartphone-only
+type-ahead for this page, which could not target GPUs.) The SearchAPI picker returns at
+most 20 valid titles and external product IDs. Product tokens never reach the browser.
+SearchAPI can return product rows either at top-level `shopping_results` or inside
+`categorized_shopping_results`; both documented shapes are flattened before matching.
+The selected ID is stored in run metadata and included in idempotency checks, while
+its validated token remains in a ten-minute in-memory backend cache. The worker
+consumes that exact token instead of repeating the unstable Shopping lookup. A backend
+restart or expired entry falls back to worker-side lookup and revalidation. A missing
+or stale selection fails closed. A product with no eligible catalogue row cannot be
+chosen — ingest it first or add/correct it through the admin catalogue; this source
+never creates a `products` row. An existing ineligible catalogue row is never promoted.
 
 Mappings are scoped by product, provider, canonical name, `gl`, `hl`, and location.
 A canonical-name or locale change misses the cache. Only a clear HTTP 400 saying a
@@ -120,6 +135,7 @@ SEARCHAPI_GL=sg
 SEARCHAPI_HL=en
 SEARCHAPI_LOCATION=Singapore
 SEARCHAPI_MAX_PRODUCTS_PER_RUN=3
+SEARCHAPI_CATEGORIES=SMARTPHONE,GPU
 
 INGESTION_ENABLED_SOURCES=searchapi-google-product-reviews
 INGESTION_SCHEDULING_ENABLED=false
@@ -180,10 +196,11 @@ Then start the frontend with `npm run dev`, open
 
 1. Sign in through `/login` with the configured ADMIN account.
 2. Check **SearchAPI customer reviews**.
-3. Type part of the name and choose the exact verified catalogue smartphone.
-4. Select **Find matching products**.
-5. Choose one exact SearchAPI product.
-6. Select **Run now** and inspect the result/history.
+3. Type part of the brand or model in **Product name** and select **Search catalogue**.
+4. Choose the product under **Select a catalogue product**.
+5. Select **Find matching products** (one billed SearchAPI call).
+6. Choose one SearchAPI product under **Select a SearchAPI product**.
+7. Select **Run now** and inspect the result/history.
 
 The helper below instead starts an untargeted run against an existing eligible
 catalogue phone and polls it to completion:
@@ -232,11 +249,12 @@ It complements `searchapi-smoke.ps1`, which checks the HTTP/admin ingestion work
 ## Failures and troubleshooting
 
 - **Source disabled:** add the source ID to `INGESTION_ENABLED_SOURCES` and restart.
-- **No catalogue smartphone:** use the row's full catalogue name and confirm it is a
-  `VERIFIED` smartphone; otherwise ingest it via MobileAPI or correct it in Catalogue.
-- **No SearchAPI listing:** the catalogue match succeeded but the provider returned no
-  acceptable listing in either supported result shape; retry later. Accessories and
-  conflicting variants are deliberately rejected.
+- **No matching product:** a catalogue search that lists nothing means no eligible
+  `VERIFIED` row in an enabled category; ingest the product first or correct it in
+  Catalogue. A typed name must be the row's full catalogue name.
+- **No SearchAPI listing:** the catalogue match succeeded but no title in either
+  supported result shape passed the category's rules (502); retry later. Accessories
+  and conflicting variants are deliberately rejected.
 - **Empty successful run:** SearchAPI returned no reviews that passed normalization.
 - **401/403:** check `SEARCHAPI_API_KEY`; provider messages and credentials are not
   copied into run history.
