@@ -1,5 +1,5 @@
 import { Tag } from "../ui/Tag";
-import { budgetLabel } from "./deviceOptions";
+import { URGENCIES, budgetLabel } from "./deviceOptions";
 import type { UpgradePreferences } from "./types";
 
 /** Compact budget / urgency / priorities box shown on a device card. */
@@ -16,7 +16,9 @@ export function UpgradeProfileSummary({
           {budgetLabel(prefs)}
         </span>
       </div>
-      <div className="text-[12px] text-[#8fa0b8]">{prefs.urgency}</div>
+      <div className="text-[12px] text-[#8fa0b8]">
+        {URGENCIES.find((option) => option.value === prefs.urgency && option.value)?.label ?? "No urgency set"}
+      </div>
       <div className="mt-2 flex flex-wrap gap-[6px]">
         {prefs.priorities.length > 0 ? (
           prefs.priorities.slice(0, 4).map((p) => <Tag key={p}>{p}</Tag>)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch, ApiError } from './api/client'
 import { getSession, clearSession } from './api/session'
@@ -14,8 +14,13 @@ import { Field, FormError, Input } from './components/ui/Form'
 import { LoadingBlock } from './components/ui/LoadingBlock'
 import { PageHeader } from './components/ui/PageHeader'
 import { Tag } from './components/ui/Tag'
+import { CatalogueSearchInput } from './components/devices/CatalogueSearchInput'
+import { catalogueName, matchCatalogue } from './components/devices/catalogue'
+import { useSmartphoneCatalogue } from './components/devices/useSmartphoneCatalogue'
 
-type Source = { sourceId: string; enabled: boolean; simulation: boolean; nextAllowedAt: string | null }
+type Source = { sourceId: string; enabled: boolean; simulation: boolean; nextAllowedAt: string | null;
+  phase?: 'INITIAL_BACKFILL' | 'INCREMENTAL'; completedUnits?: number;
+  totalUnits?: number; observationsIngested?: number; productsCovered?: number }
 type Run = { runId: string; status: string; triggerType: string; requestedAt: string; startedAt: string | null;
   product?: { productId: number | null; productName: string; externalProductId?: string | null } | null;
   finishedAt: string | null; processedPayloadCount: number; errorStackCount: number;
@@ -23,7 +28,10 @@ type Run = { runId: string; status: string; triggerType: string; requestedAt: st
 type Schedule = { enabled: boolean; intervalHours: number; nextScheduledAt: string | null; activeRunId: string | null }
 type ProductCandidate = { externalProductId: string; title: string }
 const SEARCHAPI_SOURCE = 'searchapi-google-product-reviews'
-const sourceLabel = (id: string) => id === SEARCHAPI_SOURCE ? 'SearchAPI customer reviews' : id
+const TECHAPI_SOURCE = 'techapi-soc-benchmarks'
+const sourceLabel = (id: string) => id === SEARCHAPI_SOURCE
+  ? 'SearchAPI customer reviews'
+  : id === TECHAPI_SOURCE ? 'TechAPI processor benchmarks' : id
 const when = (value: string | null) => value ? new Date(value).toLocaleString() : '—'
 
 /**
@@ -51,10 +59,21 @@ export default function IngestionAdmin() {
   const [productName, setProductName] = useState('')
   const [candidates, setCandidates] = useState<ProductCandidate[]>([])
   const [externalProductId, setExternalProductId] = useState('')
-  const [error, setError] = useState('')
+  const [statusError, setStatusError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [finding, setFinding] = useState(false)
   const searchApiSelected = selected.includes(SEARCHAPI_SOURCE)
+  const techApi = sources.find(source => source.sourceId === TECHAPI_SOURCE)
+  const catalogue = useSmartphoneCatalogue(!!account && account.role === 'ADMIN' && searchApiSelected)
+  const verifiedCatalogue = useMemo(
+    () => catalogue.items.filter(item => item.status === 'VERIFIED'),
+    [catalogue.items],
+  )
+  const productSuggestions = useMemo(
+    () => matchCatalogue(verifiedCatalogue, productName),
+    [productName, verifiedCatalogue],
+  )
 
   const request = useCallback(<T,>(path: string, init?: { method?: string; body?: unknown; headers?: Record<string, string> }) =>
     apiFetch<T>(`/api/admin/ingestion${path}`, init), [])
@@ -73,7 +92,7 @@ export default function IngestionAdmin() {
     let stopped = false
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
-      try { await refresh(); setError('') }
+      try { await refresh(); setStatusError('') }
       catch (e) {
         if (stopped) return
         if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
@@ -81,7 +100,7 @@ export default function IngestionAdmin() {
           setAccount(null)
           void navigate('/login', { replace: true })
         }
-        else setError((e as Error).message)
+        else setStatusError((e as Error).message)
       }
       finally { if (!stopped) { setReady(true); timer = setTimeout(poll, 2000) } }
     }
@@ -92,12 +111,12 @@ export default function IngestionAdmin() {
   async function start() {
     if (!account) return
     if (searchApiSelected && !productName.trim()) {
-      setError('Enter the smartphone name to import its customer reviews.'); return
+      setActionError('Enter the smartphone name to import its customer reviews.'); return
     }
     if (searchApiSelected && !externalProductId) {
-      setError('Find matching products and select one before starting ingestion.'); return
+      setActionError('Find matching products and select one before starting ingestion.'); return
     }
-    setSubmitting(true); setError('')
+    setSubmitting(true); setActionError('')
     const payload = { sources: [...selected].sort((a, b) => a.localeCompare(b)), reason: reason.trim() || null,
       ...(searchApiSelected ? { productName: productName.trim(), externalProductId } : {}) }
     const body = JSON.stringify(payload)
@@ -113,7 +132,7 @@ export default function IngestionAdmin() {
         void navigate('/login', { replace: true })
         return
       }
-      setError((e as Error).message)
+      setActionError((e as Error).message)
       await refresh().catch(() => {})
     }
     finally { setSubmitting(false) }
@@ -121,13 +140,14 @@ export default function IngestionAdmin() {
 
   async function findProducts() {
     if (!account || !productName.trim()) {
-      setError('Enter the smartphone brand and full model name first.'); return
+      setActionError('Enter the smartphone brand and full model name first.'); return
     }
-    setFinding(true); setError(''); setCandidates([]); setExternalProductId('')
+    setFinding(true); setActionError(''); setCandidates([]); setExternalProductId('')
     try {
       const found = await request<ProductCandidate[]>('/searchapi/candidates', { method: 'POST',
         body: { productName: productName.trim() } })
       setCandidates(found)
+      setActionError('')
     } catch (e) {
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
         clearSession()
@@ -135,7 +155,7 @@ export default function IngestionAdmin() {
         void navigate('/login', { replace: true })
         return
       }
-      setError((e as Error).message)
+      setActionError((e as Error).message)
     }
     finally { setFinding(false) }
   }
@@ -163,7 +183,7 @@ export default function IngestionAdmin() {
       <div className="mx-auto max-w-[1100px]">
         <PageHeader eyebrow="Tech Advisor · Admin" title="Market data ingestion"
           description="Import market updates and customer reviews for your catalogue." />
-        <FormError message={error} />
+        <FormError message={actionError || statusError} />
         {!ready ? <LoadingBlock label="Loading ingestion status…" /> : <>
           <div className="grid grid-cols-3 gap-4 max-[700px]:grid-cols-1">
             <Card><div className="card-body gap-1 p-[18px]">
@@ -180,6 +200,31 @@ export default function IngestionAdmin() {
               <strong className="text-[17px] text-[#eef5ff]">{schedule?.activeRunId ? 'Running' : 'Ready'}</strong>
             </div></Card>
           </div>
+
+          {techApi?.phase === 'INITIAL_BACKFILL' && <Card className="mt-6"><div className="card-body gap-4 p-[22px]">
+            <div>
+              <Eyebrow>TechAPI processor benchmarks</Eyebrow>
+              <h2 className="m-0 text-[19px] font-bold text-[#eef5ff]">Initial backfill</h2>
+            </div>
+            <div>
+              <div className="flex justify-between gap-4 text-[13px] text-[#c6d1df]">
+                <span>Initial backfill progress</span>
+                <span>{techApi.completedUnits ?? 0} / {techApi.totalUnits ?? 0} processor records checked</span>
+              </div>
+              <progress className="progress progress-primary mt-2 w-full"
+                aria-label="TechAPI initial backfill progress"
+                value={techApi.completedUnits ?? 0} max={Math.max(techApi.totalUnits ?? 0, 1)} />
+            </div>
+            <div className="grid grid-cols-2 gap-3 max-[500px]:grid-cols-1">
+              <div><Eyebrow>Observations ingested</Eyebrow>
+                <strong className="text-[17px] text-[#eef5ff]">{techApi.observationsIngested ?? 0}</strong></div>
+              <div><Eyebrow>Products covered</Eyebrow>
+                <strong className="text-[17px] text-[#eef5ff]">{techApi.productsCovered ?? 0}</strong></div>
+            </div>
+            <p className="m-0 text-[13px] text-[#8fa0b8]">
+              Run TechAPI processor benchmarks again to continue from the saved checkpoint.
+            </p>
+          </div></Card>}
 
           <Card className="mt-6"><div className="card-body p-[22px]">
             <h2 className="m-0 text-[19px] font-bold text-[#eef5ff]">Run a market update</h2>
@@ -210,16 +255,18 @@ export default function IngestionAdmin() {
               </fieldset>
 
               {searchApiSelected && <div className="grid gap-3 rounded-[12px] border border-white/[0.09] p-4">
-                <Field label="Smartphone name">
-                  <Input id="ingestion-product-name" value={productName} maxLength={200} required
-                    disabled={submitting || finding || !!schedule?.activeRunId} aria-describedby="ingestion-product-help"
-                    onChange={e => { setProductName(e.target.value); setCandidates([]); setExternalProductId('') }}
+                <Field label="Smartphone name" htmlFor="ingestion-product-name">
+                  <CatalogueSearchInput id="ingestion-product-name" value={productName} maxLength={200} required
+                    disabled={submitting || finding || !!schedule?.activeRunId}
+                    suggestions={productSuggestions}
+                    onChange={value => { setProductName(value); setCandidates([]); setExternalProductId(''); setActionError('') }}
+                    onPick={item => { setProductName(catalogueName(item)); setCandidates([]); setExternalProductId(''); setActionError('') }}
+                    hint={catalogue.status === 'loading' ? 'Loading verified smartphones…'
+                      : catalogue.status === 'unavailable' ? 'Catalogue suggestions are unavailable; enter the exact full name.'
+                      : productName.trim() && productSuggestions.length === 0 ? 'No verified catalogue smartphone matches this text.'
+                      : 'Choose a verified catalogue smartphone, then select its SearchAPI listing.'}
                     placeholder="For example, Apple iPhone 16 Pro" />
                 </Field>
-                <small id="ingestion-product-help" className="text-[12px] text-[#8fa0b8]">
-                  Enter the brand followed by the full model, already ingested via MobileAPI, then find and select
-                  the SearchAPI product whose reviews you want.
-                </small>
                 <Button type="button" variant="secondary" className="justify-self-start" loading={finding}
                   disabled={submitting || finding || !!schedule?.activeRunId || !productName.trim()}
                   onClick={() => void findProducts()}>

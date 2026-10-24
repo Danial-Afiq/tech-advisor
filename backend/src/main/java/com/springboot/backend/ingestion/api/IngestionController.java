@@ -87,12 +87,17 @@ public class IngestionController {
             java.time.Instant nextScheduledAt,
             String activeRunId) {}
 
-    @Schema(name = "IngestionSourceResponse", description = "Registered ingestion source and cooldown state.")
+    @Schema(name = "IngestionSourceResponse", description = "Registered ingestion source, schedule and optional progress state.")
     public record SourceResponse(
             @Schema(example = "searchapi-google-product-reviews") String sourceId,
             boolean enabled,
             boolean simulation,
-            java.time.Instant nextAllowedAt) {}
+            java.time.Instant nextAllowedAt,
+            String phase,
+            Long completedUnits,
+            Long totalUnits,
+            Long observationsIngested,
+            Long productsCovered) {}
 
     @Schema(name = "IngestionErrorResponse", description = "Rejected ingestion operation.")
     public record ErrorResponse(
@@ -123,27 +128,23 @@ public class IngestionController {
                     responseCode = "200",
                     description = "Validated SearchAPI product choices",
                     content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = ProductMatcher.Candidate.class)))),
-            @ApiResponse(responseCode = "400", description = "SearchAPI is disabled, the name is invalid, or no match exists", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "400", description = "SearchAPI is disabled, or the catalogue name is invalid, ambiguous, unknown, or ineligible", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "401", description = "Authentication required", content = @Content),
             @ApiResponse(responseCode = "403", description = "Caller does not have the ADMIN role", content = @Content),
             @ApiResponse(responseCode = "429", description = "SearchAPI asked the caller to retry later", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "502", description = "SearchAPI returned an unusable response", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "502", description = "SearchAPI returned an unusable response or no acceptable listing", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "503", description = "SearchAPI or ingestion storage is unavailable", content = @Content(mediaType = "application/json", schema = @Schema(implementation = ErrorResponse.class)))
     })
     public List<ProductMatcher.Candidate> candidates(@RequestBody CandidateRequest request) {
         if (!registry.enabled(SearchApiSource.ID))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "SearchAPI ingestion is disabled.");
         String name = productName(request == null ? null : request.productName());
-        ProductName requested;
-        try { requested = ProductName.parse(name); }
-        catch (IllegalArgumentException invalid) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Enter both the smartphone brand and full model name.");
-        }
+        var product = catalogueProduct(name);
+        var requested = new ProductName(product.brand(), product.model());
         try (var context = new SourceContext(clock, () -> {})) {
             var candidates = searchApi.findCandidates(context, requested);
-            if (candidates.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "No matching smartphone was found. Check the brand and full model name.");
+            if (candidates.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "SearchAPI returned no matching listings for " + product.name() + ". Try finding products again.");
             return candidates;
         } catch (ResponseStatusException rejected) { throw rejected; }
         catch (SourceContext.RetryLater limited) {
@@ -194,24 +195,8 @@ public class IngestionController {
             if (externalProductId.isEmpty() || externalProductId.length() > 1000)
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "Find matching products and select one before starting ingestion.");
-            var matches = products.namedProducts(name);
-            if (matches.size() > 1)
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "More than one verified smartphone matches that name. Include the brand and full model name.");
-            if (!matches.isEmpty()) {
-                var product = matches.getFirst();
-                target = new RunLog.ProductTarget(product.id(), product.name(), externalProductId);
-            } else if (!products.namedCatalogueProducts(name).isEmpty()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "That catalogue product is not an eligible verified smartphone.");
-            } else {
-                // MobileAPI is the sole source of truth for `products` rows - SearchAPI never
-                // creates one, so an unmatched name fails closed rather than starting a run that
-                // would otherwise invent a catalogue entry from an unverified admin-typed name.
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "No matching smartphone found in the catalogue. Ingest this device via "
-                                + "MobileAPI before requesting SearchAPI reviews for it.");
-            }
+            var product = catalogueProduct(name);
+            target = new RunLog.ProductTarget(product.id(), product.name(), externalProductId);
         } else if (request.externalProductId() != null)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "A selected SearchAPI product requires a smartphone name.");
@@ -223,6 +208,21 @@ public class IngestionController {
         if (name.isEmpty() || name.length() > 200)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Enter a product name of 1 to 200 characters.");
         return name;
+    }
+    private SearchApiRepository.Product catalogueProduct(String name) {
+        var matches = products.namedProducts(name);
+        if (matches.size() > 1)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "More than one verified smartphone matches that name. Include the brand and full model name.");
+        if (!matches.isEmpty()) return matches.getFirst();
+        if (!products.namedCatalogueProducts(name).isEmpty())
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "That catalogue product is not an eligible verified smartphone.");
+        // MobileAPI is the sole source of truth for `products` rows - SearchAPI never creates
+        // one, so an unmatched name fails closed before spending a provider request.
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "No matching smartphone found in the catalogue. Use its full catalogue name, "
+                        + "ingest it via MobileAPI, or add/correct it in Catalogue first.");
     }
     @GetMapping("/runs/{id}")
     @Operation(summary = "Get an ingestion run")
@@ -284,7 +284,7 @@ public class IngestionController {
     @ApiResponses({
             @ApiResponse(
                     responseCode = "200",
-                    description = "Source availability and cooldown state",
+                    description = "Source availability, schedule and optional progress state",
                     content = @Content(mediaType = "application/json", array = @ArraySchema(schema = @Schema(implementation = SourceResponse.class)))),
             @ApiResponse(responseCode = "401", description = "Authentication required", content = @Content),
             @ApiResponse(responseCode = "403", description = "Caller does not have the ADMIN role", content = @Content),
@@ -296,6 +296,13 @@ public class IngestionController {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("sourceId", source.sourceId()); row.put("enabled", registry.enabled(source.sourceId()));
             row.put("simulation", source.simulation()); row.put("nextAllowedAt", state.nextAllowed.get(source.sourceId()));
+            source.progress().ifPresent(progress -> {
+                row.put("phase", progress.phase());
+                row.put("completedUnits", progress.completedUnits());
+                row.put("totalUnits", progress.totalUnits());
+                row.put("observationsIngested", progress.observationsIngested());
+                row.put("productsCovered", progress.productsCovered());
+            });
             return row;
         }).toList();
     }

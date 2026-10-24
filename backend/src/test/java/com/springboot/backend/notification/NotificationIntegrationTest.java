@@ -128,14 +128,13 @@ class NotificationIntegrationTest {
     }
 
     @Test
-    void anotherDeviceTakingOverTheRowNotifiesThatDeviceAndLeavesTheFirstLinkUnavailable() throws Exception {
+    void anotherDeviceKeepsBothRecommendationsAndNotificationLinksAvailable() throws Exception {
         evaluate(rec(productA, "WORTH_WATCHING"));
-        long firstDevicesRow = activeId(productA);
+        long firstDevicesRow = activeId(productA, deviceId);
         long secondDevice = db.queryForObject(
                 "INSERT INTO user_devices (user_id, custom_name, is_current) VALUES (?, 'Work phone', TRUE) RETURNING id",
                 Long.class, owner.getId());
 
-        // The ACTIVE index is per (user, candidate), so this supersedes the first device's row.
         RecommendationRecord onSecond = new RecommendationRecord(owner.getId(), secondDevice, productA, null,
                 "WORTH_WATCHING", null, Map.of(), Map.of(), "reasoning", null, null);
         recommendations.replaceForDevice(secondDevice, List.of(productA), List.of(onSecond));
@@ -143,16 +142,16 @@ class NotificationIntegrationTest {
         List<Map<String, Object>> rows = notifications();
         assertThat(rows).hasSize(2);
         assertThat((String) rows.getFirst().get("message")).endsWith("for your Work phone.");
-        assertThat(rows.getFirst().get("recommendation_id")).isEqualTo(activeId(productA));
+        assertThat(rows.getFirst().get("recommendation_id")).isEqualTo(activeId(productA, secondDevice));
         assertThat(rows.get(1).get("recommendation_id")).isEqualTo(firstDevicesRow);
 
         mvc.perform(get("/api/notifications").header("Authorization", "Bearer " + jwtService.generateToken(owner)))
                 .andExpect(jsonPath("$.items[0].available").value(true))
-                .andExpect(jsonPath("$.items[1].available").value(false));
+                .andExpect(jsonPath("$.items[1].available").value(true));
     }
 
     @Test
-    void twoDevicesTakingTurnsOverOneCandidateDoNotRenotify() throws Exception {
+    void unchangedRerunsForTwoDevicesDoNotRenotify() throws Exception {
         long secondDevice = db.queryForObject(
                 "INSERT INTO user_devices (user_id, custom_name, is_current) VALUES (?, 'Work phone', TRUE) RETURNING id",
                 Long.class, owner.getId());
@@ -163,16 +162,15 @@ class NotificationIntegrationTest {
         recommendations.replaceForDevice(secondDevice, List.of(productA), List.of(onSecond));
         assertThat(notifications()).hasSize(2);
 
-        // Each re-run takes the (user, candidate) ACTIVE row back; nothing changed for either device.
+        // Each device updates only its own row; unchanged verdicts do not notify again.
         evaluate(rec(productA, "WORTH_WATCHING"));
         recommendations.replaceForDevice(secondDevice, List.of(productA), List.of(onSecond));
         evaluate(rec(productA, "WORTH_WATCHING"));
 
         assertThat(notifications()).hasSize(2);
-        // The first device holds the row again, so its notification opens the live card.
         long firstDevicesNotification = (Long) notifications().get(1).get("id");
         assertThat(db.queryForObject("SELECT recommendation_id FROM notifications WHERE id=?",
-                Long.class, firstDevicesNotification)).isEqualTo(activeId(productA));
+                Long.class, firstDevicesNotification)).isEqualTo(activeId(productA, deviceId));
     }
 
     @Test
@@ -381,6 +379,13 @@ class NotificationIntegrationTest {
         return db.queryForObject(
                 "SELECT id FROM recommendations WHERE user_id=? AND candidate_product_id=? AND status='ACTIVE'",
                 Long.class, owner.getId(), productId);
+    }
+
+    private long activeId(long productId, long currentDeviceId) {
+        return db.queryForObject(
+                "SELECT id FROM recommendations WHERE user_id=? AND current_device_id=? "
+                        + "AND candidate_product_id=? AND status='ACTIVE'",
+                Long.class, owner.getId(), currentDeviceId, productId);
     }
 
     private List<Map<String, Object>> notifications() {

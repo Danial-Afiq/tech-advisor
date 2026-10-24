@@ -60,7 +60,7 @@ class IngestionOrchestratorUnitTests {
 
         orchestrator.scheduled();
 
-        verify(store).admit(List.of("simulated-release"), "scheduler", null, null, true, true);
+        verify(store).admitScheduled(List.of(simulated));
     }
 
     @Test void scheduledMarksTheRunAsNonSimulationWhenAnyRealSourceIsIncluded() {
@@ -71,6 +71,6 @@ class IngestionOrchestratorUnitTests {
 
         orchestrator.scheduled();
 
-        verify(store).admit(List.of("mobileapi-smartphone"), "scheduler", null, null, true, false);
+        verify(store).admitScheduled(List.of(real));
     }
 }

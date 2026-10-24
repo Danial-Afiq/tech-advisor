@@ -40,6 +40,7 @@ class CandidateFilterIntegrationTest {
 
     private Long ownedProductId;
     private Long userDeviceId;
+    private Long userId;
 
     @BeforeEach
     void seedOwnedDevice() {
@@ -52,7 +53,7 @@ class CandidateFilterIntegrationTest {
         db.update("DELETE FROM user_devices");
         db.update("DELETE FROM products");
 
-        Long userId = db.queryForObject("""
+        userId = db.queryForObject("""
                 INSERT INTO users (email, role, password_hash)
                 VALUES (?, 'USER', '{noop}unused') RETURNING id
                 """, Long.class, "candidate-filter-" + System.nanoTime() + "@example.test");
@@ -161,6 +162,40 @@ class CandidateFilterIntegrationTest {
         price(cheaper, "810.00", LATER);
 
         assertEquals(List.of(cheaper, dearer), productIds(service.getViableCandidates(userDeviceId)));
+    }
+
+    @Test
+    void excludesAProductDuringAnActiveDismissalCooldown() {
+
+        Long dismissedProduct = product("Google", "Pixel 10", "SMARTPHONE", "VERIFIED");
+
+        price(dismissedProduct, "900.00", LATER);
+
+        db.update(
+                """
+                INSERT INTO recommendation_dismissals ( user_id, candidate_product_id, reason,cooldown_until)
+                VALUES (?, ?,'TOO_EXPENSIVE', CURRENT_TIMESTAMP + INTERVAL '30 days') """, userId, dismissedProduct);
+
+        assertTrue(
+                service.getViableCandidates(userDeviceId).isEmpty(),
+                "A product under active cooldown must " + "not be shortlisted again");
+    }
+
+    @Test
+    void includesAProductAfterItsDismissalCooldownExpires() {
+
+        Long previouslyDismissedProduct = product("Google", "Pixel 10", "SMARTPHONE", "VERIFIED");
+
+        price(previouslyDismissedProduct, "900.00", LATER);
+
+        db.update(
+                """
+                INSERT INTO recommendation_dismissals ( user_id,  candidate_product_id, reason, cooldown_until)
+                VALUES (?, ?, 'TOO_EXPENSIVE', CURRENT_TIMESTAMP - INTERVAL '1 day') """, userId, previouslyDismissedProduct);
+
+        assertEquals(
+                List.of(previouslyDismissedProduct),
+                productIds(service.getViableCandidates(userDeviceId)), "An expired cooldown must not permanently " + "exclude the product");
     }
 
     private Long product(String brand, String model, String category, String status) {

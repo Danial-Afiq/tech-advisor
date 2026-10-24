@@ -12,11 +12,14 @@ import com.springboot.backend.ingestion.run.RunStore;
 import com.springboot.backend.ingestion.searchapi.ProductMatcher;
 import com.springboot.backend.ingestion.searchapi.SearchApiRepository;
 import com.springboot.backend.ingestion.searchapi.SearchApiSource;
+import com.springboot.backend.ingestion.techapi.TechApiBenchmarkSource;
 import java.security.Principal;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -49,6 +52,11 @@ class IngestionControllerTests {
         controller = new IngestionController(runner, store, registry, settings, products, searchApi, clock);
     }
 
+    private void catalogueMatch(String name) {
+        when(products.namedProducts(name)).thenReturn(List.of(
+                new SearchApiRepository.Product(16, "Apple", "iPhone 16")));
+    }
+
     private static SourceContext.RetryLater retryLater() throws Exception {
         var ctor = SourceContext.RetryLater.class.getDeclaredConstructor(Instant.class);
         ctor.setAccessible(true);
@@ -68,7 +76,7 @@ class IngestionControllerTests {
         verifyNoInteractions(searchApi);
     }
 
-    @Test void candidatesRejectsAMalformedNameBeforeCallingSearchApi() {
+    @Test void candidatesRejectsAnUnknownCatalogueNameBeforeCallingSearchApi() {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Unknown")));
@@ -78,14 +86,17 @@ class IngestionControllerTests {
 
     @Test void candidatesRejectsWhenSearchApiFindsNothing() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         when(searchApi.findCandidates(any(), any())).thenReturn(List.of());
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
-        assertEquals(HttpStatus.BAD_REQUEST, rejected.getStatusCode());
+        assertEquals(HttpStatus.BAD_GATEWAY, rejected.getStatusCode());
+        assertTrue(rejected.getReason().contains("Apple iPhone 16"));
     }
 
     @Test void candidatesReturnsWhatSearchApiFinds() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         var expected = List.of(new ProductMatcher.Candidate("ext-1", "Apple iPhone 16"));
         when(searchApi.findCandidates(any(), any())).thenReturn(expected);
         assertEquals(expected, controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
@@ -93,6 +104,7 @@ class IngestionControllerTests {
 
     @Test void candidatesMapsRateLimitToTooManyRequests() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         when(searchApi.findCandidates(any(), any())).thenThrow(retryLater());
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
@@ -101,6 +113,7 @@ class IngestionControllerTests {
 
     @Test void candidatesMapsTransportFailureToServiceUnavailable() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         when(searchApi.findCandidates(any(), any())).thenThrow(transportFailure());
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
@@ -109,6 +122,7 @@ class IngestionControllerTests {
 
     @Test void candidatesMapsIngestionFailureToBadGateway() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         when(searchApi.findCandidates(any(), any()))
                 .thenThrow(new IngestionFailure(IngestionFailure.Code.SEARCHAPI_NO_MATCH));
         var rejected = assertThrows(ResponseStatusException.class,
@@ -118,6 +132,7 @@ class IngestionControllerTests {
 
     @Test void candidatesMapsAnyOtherFailureToBadGateway() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         when(searchApi.findCandidates(any(), any())).thenThrow(new RuntimeException("boom"));
         var rejected = assertThrows(ResponseStatusException.class,
                 () -> controller.candidates(new IngestionController.CandidateRequest("Apple iPhone 16")));
@@ -126,6 +141,7 @@ class IngestionControllerTests {
 
     @Test void candidatesPropagatesAResponseStatusExceptionUnchanged() throws Exception {
         when(registry.enabled(SearchApiSource.ID)).thenReturn(true);
+        catalogueMatch("Apple iPhone 16");
         var original = new ResponseStatusException(HttpStatus.I_AM_A_TEAPOT, "unexpected");
         when(searchApi.findCandidates(any(), any())).thenThrow(original);
         var thrown = assertThrows(ResponseStatusException.class,
@@ -151,6 +167,22 @@ class IngestionControllerTests {
         assertEquals(202, response.getStatusCode().value());
         assertEquals("/api/admin/ingestion/runs/run-1", response.getHeaders().getLocation().toString());
         assertSame(run, response.getBody());
+    }
+
+    @Test void administratorCanTriggerTechApiBenchmarkIngestionManually() {
+        when(registry.select(List.of(TechApiBenchmarkSource.ID)))
+                .thenReturn(List.of(TechApiBenchmarkSource.ID));
+        var run = new RunLog(); run.runId = "techapi-run";
+        when(runner.manual(List.of(TechApiBenchmarkSource.ID), "admin",
+                "techapi-key", "refresh benchmarks", null)).thenReturn(run);
+
+        var response = controller.start(new IngestionController.Request(
+                List.of(TechApiBenchmarkSource.ID), "refresh benchmarks", null, null),
+                "techapi-key", () -> "admin");
+
+        assertEquals(202, response.getStatusCode().value());
+        assertEquals("/api/admin/ingestion/runs/techapi-run",
+                response.getHeaders().getLocation().toString());
     }
 
     @Test void getReturnsWhateverTheStoreHasForThatRunId() {
@@ -203,6 +235,29 @@ class IngestionControllerTests {
         simulatedRow.put("sourceId", "simulated-release"); simulatedRow.put("enabled", false);
         simulatedRow.put("simulation", true); simulatedRow.put("nextAllowedAt", null);
         assertEquals(List.of(mobileApiRow, simulatedRow), rows);
+    }
+
+    @Test void sourcesIncludesTechApiInitialBackfillProgress() {
+        var state = new CoordinatorState();
+        when(store.state()).thenReturn(state);
+        var techApi = mock(IngestionSource.class);
+        when(techApi.sourceId()).thenReturn(TechApiBenchmarkSource.ID);
+        when(techApi.scheduleInterval()).thenReturn(Optional.of(Duration.ofDays(14)));
+        when(techApi.progress()).thenReturn(Optional.of(new IngestionSource.Progress(
+                "INITIAL_BACKFILL", 40, 100, 12, 6)));
+        when(registry.all()).thenReturn(List.of(techApi));
+        when(registry.enabled(TechApiBenchmarkSource.ID)).thenReturn(true);
+
+        var row = controller.sources().getFirst();
+
+        assertEquals("INITIAL_BACKFILL", row.get("phase"));
+        assertEquals(40L, row.get("completedUnits"));
+        assertEquals(100L, row.get("totalUnits"));
+        assertEquals(12L, row.get("observationsIngested"));
+        assertEquals(6L, row.get("productsCovered"));
+        assertFalse(row.containsKey("nextScheduledAt"));
+        assertFalse(row.containsKey("initialBackfillComplete"));
+        assertFalse(row.containsKey("initialBackfillCompletedAt"));
     }
 
     @Test void unavailableRespondsWith503AndAClearMessage() {

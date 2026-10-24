@@ -182,6 +182,17 @@ class OpenApiDocumentationTests {
                 .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.currency.pattern").value("[A-Z]{3}"))
                 .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.budget").exists())
                 .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.currency").exists())
+                .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.upgradeUrgency.enum").isArray())
+                .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.brandFlexibility.enum").isArray())
+                .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.priorities").exists())
+                .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.painPoints").exists())
+                .andExpect(jsonPath("$.components.schemas.DeviceRequest.properties.notes").exists())
+                .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.upgradeUrgency").exists())
+                .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.brandFlexibility").exists())
+                .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.priorities").exists())
+                .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.painPoints").exists())
+                .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.notes").exists())
+                .andExpect(jsonPath("$.components.schemas.DeviceResponse.properties.productCategory").exists())
                 .andExpect(jsonPath("$.components.schemas.LoginResponse.properties.role.enum").isArray());
     }
 }

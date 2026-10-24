@@ -29,11 +29,21 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
      * base-tier figure phone.storage_gb has always held. Empty (not null) when the source gives
      * no breakdown; SmartphoneCatalogSink falls back to values.get("storage") alone in that case
      * so a product still gets at least one phone_variants row.
+     *
+     * imageUrl (V13): the source's product thumbnail, stored in products.image_url. Nullable;
+     * when present it must be an absolute https URL, because the browser loads it directly.
      */
     public record Specifications(String productReference, String brand, String modelName, String chipset,
                                  Map<String, BigDecimal> values, Map<String, String> units,
-                                 List<Integer> storageOptionsGb) implements Body {
+                                 List<Integer> storageOptionsGb, URI imageUrl) implements Body {
         public Specifications { storageOptionsGb = List.copyOf(storageOptionsGb); }
+
+        /** For sources without product images. */
+        public Specifications(String productReference, String brand, String modelName, String chipset,
+                              Map<String, BigDecimal> values, Map<String, String> units,
+                              List<Integer> storageOptionsGb) {
+            this(productReference, brand, modelName, chipset, values, units, storageOptionsGb, null);
+        }
     }
     /**
      * variantReference is nullable: a source that can't attribute this price to one exact
@@ -43,8 +53,12 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
      * sink's job, same division of responsibility as productReference always had.
      */
     public record Price(String productReference, String variantReference, BigDecimal amount, String currency) implements Body {}
-    public record Benchmark(String productReference, String name, BigDecimal score, String unit)
-            implements Body {}
+    public record Benchmark(String productReference, String name, BigDecimal score, String unit,
+                            boolean higherIsBetter, String provenance) implements Body {
+        public Benchmark(String productReference, String name, BigDecimal score, String unit) {
+            this(productReference, name, score, unit, true, null);
+        }
+    }
 
     public void validate(String expectedSource) {
         if (!expectedSource.equals(sourceId) || externalId == null || externalId.isBlank()
@@ -78,7 +92,8 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
                         || s.units().values().stream().anyMatch(Payload::blank)
                         // storageOptionsGb itself is never null here - the record's compact
                         // constructor already rejects that via List.copyOf, same as ReviewBatch.
-                        || s.storageOptionsGb().stream().anyMatch(gb -> gb <= 0))
+                        || s.storageOptionsGb().stream().anyMatch(gb -> gb <= 0)
+                        || s.imageUrl() != null && !isHttpsImageUrl(s.imageUrl()))
                     throw new IllegalArgumentException("Invalid specifications");
                 // chipset is intentionally not required here: the catalogue schema allows it null,
                 // matching the "accept null for fields the source doesn't provide" ticket rule.
@@ -90,10 +105,18 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
                     throw new IllegalArgumentException("Invalid price");
             }
             case Benchmark b -> {
-                if (blank(b.productReference()) || blank(b.name()) || b.score() == null || blank(b.unit()))
+                if (blank(b.productReference()) || blank(b.name()) || b.score() == null
+                        || b.score().signum() <= 0 || blank(b.unit())
+                        || b.provenance() != null && b.provenance().isBlank())
                     throw new IllegalArgumentException("Invalid benchmark");
             }
         }
     }
     private static boolean blank(String value) { return value == null || value.isBlank(); }
+
+    /** An absolute https URL short enough to store and render as an image source. */
+    public static boolean isHttpsImageUrl(URI url) {
+        return url.isAbsolute() && "https".equalsIgnoreCase(url.getScheme())
+                && url.getHost() != null && url.toString().length() <= 2048;
+    }
 }

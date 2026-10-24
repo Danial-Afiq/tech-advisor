@@ -1,13 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type SubmitEvent } from "react";
 import { useCurrency } from "../components/currency/currency";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   DEFAULT_SORT,
+  DISMISSAL_REASON_OPTIONS,
   SORT_OPTIONS,
+  dismissRecommendation,
   listDashboardRecommendations,
   parseSort,
   setRecommendationStarred,
   type DashboardRecommendation,
+  type RecommendationDismissalReason,
   type SortOption,
 } from "../api/dashboard";
 import { signOut } from "../api/auth";
@@ -20,7 +23,7 @@ import { RECOMMENDATION_QUERY_PARAM } from "../components/notifications/notifica
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { Callout } from "../components/ui/Callout";
-import { Select } from "../components/ui/Form";
+import {Field, FormError, Select, Textarea,} from "../components/ui/Form";
 import { LoadingBlock } from "../components/ui/LoadingBlock";
 import { Modal, ModalActions } from "../components/ui/Modal";
 import { ToastStack } from "../components/ui/ToastStack";
@@ -29,9 +32,13 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { EmptyState } from "../components/ui/EmptyState";
 import { RecommendationFilterDropdown } from "../components/recommendations/RecommendationFilterDropdown";
 import {
+  TOP_RECOMMENDATIONS_PER_DEVICE,
   emptyRecommendationFilters,
   filterRecommendations,
+  groupRecommendationsByDevice,
 } from "../components/recommendations/recommendationOptions";
+import { SpecComparison } from "../components/recommendations/SpecComparison";
+import { useComparisonSpecs } from "../components/recommendations/useComparisonSpecs";
 import {
   DASHBOARD_PATH,
   DEVICES_PATH,
@@ -69,8 +76,23 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filters, setFilters] = useState(emptyRecommendationFilters);
+  // Devices whose "Show all" is on; the rest show their top picks only.
+  const [expandedDevices, setExpandedDevices] = useState<ReadonlySet<number>>(
+    () => new Set()
+  );
+  const specs = useComparisonSpecs();
   const [pendingUnstar, setPendingUnstar] =
     useState<DashboardRecommendation | null>(null);
+  const [pendingDismissal, setPendingDismissal] =
+    useState<DashboardRecommendation | null>(null);
+  const [dismissalReason, setDismissalReason] =
+    useState<RecommendationDismissalReason>("NOT_INTERESTED");
+  const [dismissalComment, setDismissalComment] =
+    useState("");
+  const [dismissalPending, setDismissalPending] =
+    useState(false);
+  const [dismissalError, setDismissalError] =
+    useState<string | null>(null);
   const [starPendingIds, setStarPendingIds] = useState<ReadonlySet<number>>(
     () => new Set()
   );
@@ -159,6 +181,16 @@ export default function DashboardPage() {
     filters
   );
 
+  const deviceGroups = groupRecommendationsByDevice(filteredRecommendations);
+
+  const toggleDeviceExpanded = (deviceId: number) =>
+    setExpandedDevices((current) => {
+      const next = new Set(current);
+      if (next.has(deviceId)) next.delete(deviceId);
+      else next.add(deviceId);
+      return next;
+    });
+
   const savedCount = recommendations.filter(
     (recommendation) => recommendation.starred
   ).length;
@@ -242,6 +274,86 @@ export default function DashboardPage() {
     setPendingUnstar(null);
   };
 
+  const openDismissal = (
+    recommendation: DashboardRecommendation
+  ) => {
+    setPendingDismissal(recommendation);
+    setDismissalReason("NOT_INTERESTED");
+    setDismissalComment("");
+    setDismissalError(null);
+  };
+
+  const closeDismissal = () => {
+    if (!dismissalPending) {
+      setPendingDismissal(null);
+      setDismissalError(null);
+    }
+  };
+
+  const submitDismissal = async (
+    event: SubmitEvent<HTMLFormElement>
+  ) => {
+    event.preventDefault();
+
+    if (!pendingDismissal) {
+      return;
+    }
+
+    const recommendation = pendingDismissal;
+    const id = recommendation.recommendationId;
+
+    setDismissalPending(true);
+    setDismissalError(null);
+
+    try {
+      await dismissRecommendation(
+        id,
+        dismissalReason,
+        dismissalComment
+      );
+
+      setRecommendations((current) =>
+        current.filter(
+          (row) => row.recommendationId !== id
+        )
+      );
+
+      setPendingDismissal(null);
+
+      pushToast(
+        "Recommendation dismissed",
+        `${candidateName(recommendation)} has been removed from your dashboard.`,
+        "✓"
+      );
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        void navigate(LOGIN_PATH, { replace: true });
+        return;
+      }
+
+      if (err instanceof ApiError && err.status === 404) {
+        setPendingDismissal(null);
+        setRefreshing(true);
+        setReloadCount((count) => count + 1);
+
+        pushToast(
+          "Recommendation was just updated",
+          "Your dashboard has been refreshed with the latest recommendations.",
+          "!"
+        );
+        return;
+      }
+
+      setDismissalError(
+        err instanceof Error
+          ? err.message
+          : "The recommendation could not be dismissed."
+      );
+    } finally {
+      setDismissalPending(false);
+    }
+  };
+
   const handleSortChange = (newSort: SortOption) => {
     // Copy every existing query parameter and change only `sort`.
     const next = new URLSearchParams(searchParams);
@@ -291,7 +403,7 @@ export default function DashboardPage() {
       <PageHeader
         eyebrow="Upgrade overview"
         title="Your recommendations"
-        description="See which registered devices require your attention and review their latest upgrade outcomes."
+        description="The verdict is our analysis of specs, price and your budget. The owner evidence grade (A–F) is separate: it summarises what owners of the suggested phone report."
       />
 
       {!loading &&
@@ -299,34 +411,34 @@ export default function DashboardPage() {
         recommendations.length > 0 && (
           <section
             aria-label="Recommendation summary"
-            className="mb-5 grid grid-cols-3 gap-4 max-[900px]:grid-cols-1"
+            className="mb-5 grid grid-cols-3 gap-4 max-[620px]:gap-2"
           >
-            <Card className="p-5">
-              <p className="m-0 text-[12px] font-semibold tracking-[0.08em] text-[#8fa0b8] uppercase">
+            <Card className="p-5 max-[620px]:p-3">
+              <p className="m-0 text-[12px] font-semibold tracking-[0.08em] text-[#8fa0b8] uppercase max-[620px]:text-[10px] max-[620px]:tracking-[0.04em]">
                 Active recommendations
               </p>
 
-              <p className="mt-2 mb-0 text-[30px] font-bold text-[#eef5ff]">
+              <p className="mt-2 mb-0 text-[30px] font-bold text-[#eef5ff] max-[620px]:text-[22px]">
                 {recommendations.length}
               </p>
             </Card>
 
-            <Card className="p-5">
-              <p className="m-0 text-[12px] font-semibold tracking-[0.08em] text-[#8fa0b8] uppercase">
+            <Card className="p-5 max-[620px]:p-3">
+              <p className="m-0 text-[12px] font-semibold tracking-[0.08em] text-[#8fa0b8] uppercase max-[620px]:text-[10px] max-[620px]:tracking-[0.04em]">
                 Devices requiring attention
               </p>
 
-              <p className="mt-2 mb-0 text-[30px] font-bold text-[#f8d77d]">
+              <p className="mt-2 mb-0 text-[30px] font-bold text-[#f8d77d] max-[620px]:text-[22px]">
                 {attentionCount}
               </p>
             </Card>
 
-            <Card className="p-5">
-              <p className="m-0 text-[12px] font-semibold tracking-[0.08em] text-[#8fa0b8] uppercase">
+            <Card className="p-5 max-[620px]:p-3">
+              <p className="m-0 text-[12px] font-semibold tracking-[0.08em] text-[#8fa0b8] uppercase max-[620px]:text-[10px] max-[620px]:tracking-[0.04em]">
                 No immediate upgrade
               </p>
 
-              <p className="mt-2 mb-0 text-[30px] font-bold text-[#83e4c1]">
+              <p className="mt-2 mb-0 text-[30px] font-bold text-[#83e4c1] max-[620px]:text-[22px]">
                 {noUpgradeCount}
               </p>
             </Card>
@@ -468,19 +580,81 @@ export default function DashboardPage() {
         filteredRecommendations.length > 0 && (
           <section
             aria-label="Device recommendations"
-            className="grid grid-cols-2 gap-4 max-[1000px]:grid-cols-1"
+            className="grid gap-6"
           >
-            {filteredRecommendations.map((recommendation) => (
-              <RecommendationCard
-                key={recommendation.recommendationId}
-                recommendation={recommendation}
-                highlighted={recommendation.recommendationId === highlightId}
-                onToggleStar={handleToggleStar}
-                starPending={starPendingIds.has(
-                  recommendation.recommendationId
-                )}
-              />
-            ))}
+            {deviceGroups.map((group) => {
+              const total = group.recommendations.length;
+              const limit = TOP_RECOMMENDATIONS_PER_DEVICE;
+              // A card opened from a notification is never hidden behind "Show all".
+              const expanded =
+                expandedDevices.has(group.deviceId) ||
+                group.recommendations
+                  .slice(limit)
+                  .some((row) => row.recommendationId === highlightId);
+              const shown = expanded
+                ? group.recommendations
+                : group.recommendations.slice(0, limit);
+
+              return (
+                <section
+                  key={group.deviceId}
+                  aria-label={`Recommendations for ${group.deviceName}`}
+                >
+                  <div className="mb-[10px] flex flex-wrap items-end justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="m-0 text-[11px] font-bold tracking-[0.12em] text-[#9fb1c9] uppercase">
+                        For your device
+                      </p>
+                      <h3 className="mt-1 mb-0 text-[19px] font-bold text-[#eef5ff]">
+                        {group.deviceName}
+                      </h3>
+                      <p className="mt-1 mb-0 text-[12px] text-[#8fa0b8]">
+                        {total > limit && !expanded
+                          ? `Top ${limit} of ${total} recommendations`
+                          : `${total} recommendation${total === 1 ? "" : "s"}`}
+                      </p>
+                    </div>
+
+                    {total > limit && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-expanded={expanded}
+                        onClick={() => toggleDeviceExpanded(group.deviceId)}
+                      >
+                        {expanded ? `Show top ${limit}` : `Show all ${total}`}
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4 max-[1000px]:grid-cols-1">
+                    {shown.map((recommendation) => (
+                      <RecommendationCard
+                        key={recommendation.recommendationId}
+                        recommendation={recommendation}
+                        showDevice={false}
+                        image={specs.candidateImage(recommendation.candidateProductId)}
+                        highlighted={recommendation.recommendationId === highlightId}
+                        onToggleStar={handleToggleStar}
+                        onDismiss={openDismissal}
+                        starPending={starPendingIds.has(
+                          recommendation.recommendationId
+                        )}
+                      >
+                        <SpecComparison
+                          currentName={group.deviceName}
+                          candidateName={candidateName(recommendation)}
+                          loading={specs.loading}
+                          current={specs.currentSpecs(recommendation.currentDeviceId)}
+                          candidate={specs.candidateSpecs(recommendation.candidateProductId)}
+                          changes={recommendation.specChanges}
+                        />
+                      </RecommendationCard>
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
           </section>
         )}
 
@@ -505,6 +679,81 @@ export default function DashboardPage() {
               Remove
             </Button>
           </ModalActions>
+        </Modal>
+      )}
+
+      {pendingDismissal && (
+        <Modal
+          eyebrow="Recommendation feedback"
+          title="Dismiss this recommendation?"
+          width="max-w-[520px]"
+          onClose={closeDismissal}
+        >
+          <p className="mt-0 mb-4 text-[13px] leading-[1.6] text-[#8fa0b8]">
+            Tell us why {candidateName(pendingDismissal)} is not suitable
+            for {` ${pendingDismissal.currentDeviceName}`}. This product
+            will be excluded temporarily while the feedback cooldown is
+            active.
+          </p>
+
+          <form onSubmit={submitDismissal}>
+            <Field
+              label="Reason"
+              htmlFor="dismissal-reason"
+            >
+              <Select
+                id="dismissal-reason"
+                value={dismissalReason}
+                options={DISMISSAL_REASON_OPTIONS}
+                onChange={(event) =>
+                  setDismissalReason(
+                    event.target
+                      .value as RecommendationDismissalReason
+                  )
+                }
+              />
+            </Field>
+
+            <Field
+              label="Additional comment (optional)"
+              htmlFor="dismissal-comment"
+            >
+              <Textarea
+                id="dismissal-comment"
+                value={dismissalComment}
+                maxLength={1000}
+                placeholder="Add any extra details that may improve future recommendations."
+                onChange={(event) =>
+                  setDismissalComment(event.target.value)
+                }
+              />
+
+              <p className="m-0 text-right text-[11px] text-[#8fa0b8]">
+                {dismissalComment.length}/1000
+              </p>
+            </Field>
+
+            <FormError message={dismissalError} />
+
+            <ModalActions>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={dismissalPending}
+                onClick={closeDismissal}
+              >
+                Cancel
+              </Button>
+
+              <Button
+                type="submit"
+                variant="danger"
+                loading={dismissalPending}
+              >
+                Dismiss recommendation
+              </Button>
+            </ModalActions>
+          </form>
         </Modal>
       )}
 

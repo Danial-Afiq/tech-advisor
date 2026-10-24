@@ -11,9 +11,13 @@ export type UpgradePreferences = {
   /** ISO 4217 code for `budget` (`device_preferences.currency`). Unset means SGD. */
   currency?: string | null;
   priorities: string[];
+  /** Saved factor weights; selecting a new priority gives it equal weight (1). */
+  priorityWeights?: Record<string, number>;
   urgency: string;
   brandFlex: string;
   painPoints: string;
+  /** Preserve an existing JSON array until its text is edited. */
+  painPointsJson?: string;
   notes: string;
 };
 

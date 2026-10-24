@@ -27,6 +27,7 @@ paths:
   /api/admin/ingestion/searchapi/candidates:
     post:
       summary: Find validated SearchAPI products for manual selection
+      description: Resolves one existing verified catalogue smartphone first, then searches SearchAPI using its canonical brand and model.
       requestBody:
         required: true
         content:
@@ -49,11 +50,11 @@ paths:
                   properties:
                     externalProductId: { type: string }
                     title: { type: string }
-        '400': { $ref: '#/components/responses/Invalid' }
+        '400': { description: Invalid, unknown, ambiguous, or ineligible catalogue smartphone }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '429': { description: SearchAPI rate limited the discovery request }
-        '502': { description: SearchAPI returned an unusable response }
+        '502': { description: SearchAPI returned an unusable response or no acceptable listing }
         '503': { description: SearchAPI could not be reached }
   /api/admin/ingestion/runs:
     post:
@@ -153,7 +154,7 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/admin/ingestion/sources:
     get:
-      summary: Registered sources and persistent cooldowns
+      summary: Registered sources, schedules, cooldowns and optional progress
       responses:
         '200':
           description: Available source modules
@@ -168,6 +169,11 @@ paths:
                     enabled: { type: boolean }
                     simulation: { type: boolean }
                     nextAllowedAt: { type: string, format: date-time, nullable: true }
+                    phase: { type: string, enum: [INITIAL_BACKFILL, INCREMENTAL], nullable: true }
+                    completedUnits: { type: integer, format: int64, nullable: true }
+                    totalUnits: { type: integer, format: int64, nullable: true }
+                    observationsIngested: { type: integer, format: int64, nullable: true }
+                    productsCovered: { type: integer, format: int64, nullable: true }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '503': { $ref: '#/components/responses/Unavailable' }

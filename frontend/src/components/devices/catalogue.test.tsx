@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { SmartphoneCatalogueItem } from "../../api/catalogue";
@@ -13,6 +13,8 @@ import {
 import { deviceFromApi, deviceToRequest } from "./deviceApi";
 import type { DeviceResponse } from "./deviceApi";
 import { DeviceFormModal } from "./DeviceFormModal";
+import { DeviceThumb } from "./DeviceThumb";
+import { defaultPrefs } from "./deviceOptions";
 import type { Device } from "./types";
 import type { SmartphoneCatalogue } from "./useSmartphoneCatalogue";
 
@@ -42,6 +44,8 @@ const phone = (
   ipRating: null,
   os: null,
   softwareSupportYears: null,
+  latestPrice: null,
+  currency: null,
   ...specs,
 });
 
@@ -116,6 +120,25 @@ describe("catalogue helpers", () => {
     });
   });
 
+  it("uses the catalogue thumbnail as the device image, and keeps it on a card", () => {
+    const device = {
+      id: "1", productId: 12, type: "Phone", brand: "Apple", model: "iPhone 15 Pro",
+      primary: false, use: "", purchaseDate: "", upgradePreferences: defaultPrefs(),
+    } as Device;
+    const thumb = "https://api.mobileapi.dev/devices/12/thumb.png";
+    expect(withCatalogue(device, { ...iphone, imageUrl: thumb }).image).toBe(thumb);
+    expect(withCatalogue(device, { ...iphone, imageUrl: null }).image).toBeUndefined();
+
+    render(<DeviceThumb device={{ ...device, image: thumb }} />);
+    const image = screen.getByRole("img", { name: "Apple iPhone 15 Pro product image" });
+    expect(image).toHaveAttribute("src", thumb);
+
+    // A broken link falls back to the type icon instead of a broken-image box.
+    fireEvent.error(image);
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByText("📱")).toBeInTheDocument();
+  });
+
   it("sends overrides keyed by phone column name", () => {
     const device = {
       id: "1",
@@ -172,6 +195,11 @@ describe("clearing a prefilled spec", () => {
       specOverrides: request.specOverrides,
       budget: null,
       currency: null,
+      upgradeUrgency: null,
+      brandFlexibility: null,
+      priorities: null,
+      painPoints: null,
+      notes: null,
       current: true,
       createdAt: "",
       updatedAt: "",

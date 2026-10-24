@@ -24,6 +24,9 @@ public class DeviceResponse {
     @Schema(description = "Catalogue model name, if linked.", example = "Galaxy S22", accessMode = Schema.AccessMode.READ_ONLY)
     private final String productModelName;
 
+    @Schema(description = "Catalogue category of the linked product (e.g. SMARTPHONE), if linked.", example = "SMARTPHONE", accessMode = Schema.AccessMode.READ_ONLY)
+    private final String productCategory;
+
     @Schema(description = "User-provided device name.", example = "My Galaxy S22", accessMode = Schema.AccessMode.READ_ONLY)
     private final String customName;
 
@@ -55,6 +58,23 @@ public class DeviceResponse {
             accessMode = Schema.AccessMode.READ_ONLY)
     private final String currency;
 
+    @Schema(description = "Saved upgrade urgency, or null if unset.", example = "NOT_URGENT", accessMode = Schema.AccessMode.READ_ONLY)
+    private final String upgradeUrgency;
+
+    @Schema(description = "Saved brand flexibility, or null if unset.", example = "FLEXIBLE", accessMode = Schema.AccessMode.READ_ONLY)
+    private final String brandFlexibility;
+
+    @Schema(description = "JSON-encoded factor-to-integer priority weights; null when there is no preferences row.",
+            example = "{\"battery\":5,\"camera\":4}", accessMode = Schema.AccessMode.READ_ONLY)
+    private final String priorities;
+
+    @Schema(description = "JSON-encoded pain points; null when there is no preferences row.",
+            example = "\"Battery drains too quickly\"", accessMode = Schema.AccessMode.READ_ONLY)
+    private final String painPoints;
+
+    @Schema(description = "Optional saved notes for replacing this device.", accessMode = Schema.AccessMode.READ_ONLY)
+    private final String notes;
+
     @Schema(description = "Whether this device remains active on the account.", example = "true", accessMode = Schema.AccessMode.READ_ONLY)
     private final boolean current;
 
@@ -78,6 +98,8 @@ public class DeviceResponse {
                 product == null ? null : product.getBrand();
         this.productModelName =
                 product == null ? null : product.getModelName();
+        this.productCategory =
+                product == null ? null : product.getCategory();
 
         this.customName = device.getCustomName();
         this.purchaseDate = device.getPurchaseDate();
@@ -89,6 +111,11 @@ public class DeviceResponse {
                 preference == null ? null : preference.getBudget();
         this.currency =
                 preference == null ? null : preference.getCurrency();
+        this.upgradeUrgency = preference == null ? null : preference.getUpgradeUrgency();
+        this.brandFlexibility = preference == null ? null : preference.getBrandFlexibility();
+        this.priorities = preference == null ? null : preference.getPriorities();
+        this.painPoints = preference == null ? null : preference.getPainPoints();
+        this.notes = preference == null ? null : preference.getNotes();
         this.current = device.isCurrent();
         this.createdAt = device.getCreatedAt();
         this.updatedAt = device.getUpdatedAt();
@@ -108,6 +135,10 @@ public class DeviceResponse {
 
     public String getProductModelName() {
         return productModelName;
+    }
+
+    public String getProductCategory() {
+        return productCategory;
     }
 
     public String getCustomName() {
@@ -141,6 +172,12 @@ public class DeviceResponse {
     public String getCurrency() {
         return currency;
     }
+
+    public String getUpgradeUrgency() { return upgradeUrgency; }
+    public String getBrandFlexibility() { return brandFlexibility; }
+    public String getPriorities() { return priorities; }
+    public String getPainPoints() { return painPoints; }
+    public String getNotes() { return notes; }
 
     public boolean isCurrent() {
         return current;

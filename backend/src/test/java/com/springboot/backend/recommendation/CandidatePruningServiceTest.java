@@ -35,6 +35,7 @@ import static org.mockito.Mockito.*;
 class CandidatePruningServiceTest {
 
     private static final Long DEVICE_ID = 42L;
+    private static final Long USER_ID = 7L;
     private static final Long OWNED_PRODUCT_ID = 812L;
 
     @Mock private UserDeviceRepository userDeviceRepository;
@@ -48,13 +49,13 @@ class CandidatePruningServiceTest {
     void queriesPricedProductsForTheOwnedDevicesCategory() {
         givenDeviceWithProduct("SMARTPHONE", OWNED_PRODUCT_ID);
         givenBudget(new BigDecimal("1000.00"), "SGD");
-        when(productRepository.findPricedCandidates(anyString(), anyLong()))
+        when(productRepository.findPricedCandidates(anyString(), anyLong(), anyLong()))
                 .thenReturn(List.of());
 
         service.getViableCandidates(DEVICE_ID);
 
         verify(productRepository).findPricedCandidates(
-                "SMARTPHONE", OWNED_PRODUCT_ID);
+                "SMARTPHONE", OWNED_PRODUCT_ID, USER_ID);
         verifyNoInteractions(currencyConversionService);
     }
 
@@ -64,7 +65,7 @@ class CandidatePruningServiceTest {
         givenBudget(new BigDecimal("200.00"), "SGD");
         CandidateProduct overBudget = candidate(1L, "185.00", "USD");
         CandidateProduct affordable = candidate(2L, "149.99", "USD");
-        when(productRepository.findPricedCandidates("SMARTPHONE", OWNED_PRODUCT_ID))
+        when(productRepository.findPricedCandidates("SMARTPHONE", OWNED_PRODUCT_ID, USER_ID))
                 .thenReturn(List.of(overBudget, affordable));
         when(currencyConversionService.convertAllForComparison(anyList(), eq("SGD")))
                 .thenReturn(List.of(
@@ -84,7 +85,7 @@ class CandidatePruningServiceTest {
         givenDeviceWithProduct("SMARTPHONE", OWNED_PRODUCT_ID);
         givenBudget(new BigDecimal("200.00"), "SGD");
         CandidateProduct candidate = candidate(1L, "99.00", "USD");
-        when(productRepository.findPricedCandidates("SMARTPHONE", OWNED_PRODUCT_ID))
+        when(productRepository.findPricedCandidates("SMARTPHONE", OWNED_PRODUCT_ID, USER_ID))
                 .thenReturn(List.of(candidate));
         when(currencyConversionService.convertAllForComparison(anyList(), eq("SGD")))
                 .thenReturn(List.of(conversion(
@@ -152,6 +153,7 @@ class CandidatePruningServiceTest {
         lenient().when(product.getCategory()).thenReturn(category);
 
         UserDevice device = mock(UserDevice.class);
+        lenient().when(device.getUserId()).thenReturn(USER_ID);
         lenient().when(device.getProduct()).thenReturn(product);
 
         when(userDeviceRepository.findByIdAndIsCurrentTrue(DEVICE_ID)).thenReturn(Optional.of(device));

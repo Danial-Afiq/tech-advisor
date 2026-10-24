@@ -21,11 +21,12 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * Reduces the catalogue to the products that are actually compatible and
- * affordable for one owned device, before any AI runs.
+ * Reduces the catalogue to products that are compatible and
+ * affordable for one owned device before any AI processing.
  *
  * <p>This exists so hard constraints never reach the model. Category and
- * budget are exact facts; a language model asked to honour them is both
+ * budget are exact facts, and active product-dismissal cooldowns are enforced
+ * before candidates are loaded. A language model asked to honour them is both
  * unreliable and expensive, since every product that survives costs embedding
  * comparisons, retrieval and prompt tokens downstream. Everything here is
  * deterministic querying and currency conversion - no embeddings, retrieval,
@@ -34,10 +35,15 @@ import java.util.List;
 @Service
 public class CandidatePruningService {
 
-    private static final Logger LOG = LoggerFactory.getLogger(CandidatePruningService.class);
+    private static final Logger LOG =
+            LoggerFactory.getLogger(
+                    CandidatePruningService.class
+            );
 
-    private final UserDeviceRepository userDeviceRepository;
-    private final DevicePreferenceRepository devicePreferenceRepository;
+    private final UserDeviceRepository
+            userDeviceRepository;
+    private final DevicePreferenceRepository
+            devicePreferenceRepository;
     private final ProductRepository productRepository;
     private final CurrencyConversionService currencyConversionService;
 
@@ -47,18 +53,22 @@ public class CandidatePruningService {
             ProductRepository productRepository,
             CurrencyConversionService currencyConversionService) {
 
-        this.userDeviceRepository = userDeviceRepository;
-        this.devicePreferenceRepository = devicePreferenceRepository;
+        this.userDeviceRepository =
+                userDeviceRepository;
+        this.devicePreferenceRepository =
+                devicePreferenceRepository;
         this.productRepository = productRepository;
         this.currencyConversionService = currencyConversionService;
     }
 
     @Transactional(readOnly = true)
-    public List<CandidateProduct> getViableCandidates(Long userDeviceId) {
+    public List<CandidateProduct> getViableCandidates(
+            Long userDeviceId) {
+
         Context context = resolve(userDeviceId);
 
         List<CandidateProduct> candidates = productRepository.findPricedCandidates(
-                context.category(), context.ownedProductId());
+                context.category(), context.ownedProductId(), context.userId());
         if (candidates.isEmpty()) {
             return candidates;
         }
@@ -105,31 +115,53 @@ public class CandidatePruningService {
     }
 
     /**
-     * Loads everything the filter needs, failing loudly when the device cannot
-     * be evaluated at all.
+     * Loads the owned device and its upgrade preferences.
      *
-     * <p>A device with no catalogue link is rejected rather than queried with a
-     * null category: the whole point of the step is that a candidate matches
-     * the owned device's category, and there is no honest way to do that when
-     * we do not know what the user owns.
+     * <p>A device without a catalogue product cannot be evaluated
+     * because its product category is unknown.
      */
     private Context resolve(Long userDeviceId) {
-        UserDevice device = userDeviceRepository.findByIdAndIsCurrentTrue(userDeviceId)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "Owned device " + userDeviceId + " not found"));
 
-        DevicePreference preference = devicePreferenceRepository.findById(userDeviceId)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "Upgrade preferences not configured for device " + userDeviceId));
+        UserDevice device = userDeviceRepository
+                .findByIdAndIsCurrentTrue(userDeviceId)
+                .orElseThrow(() ->
+                        new ResourceNotFoundException(
+                                "Owned device "
+                                        + userDeviceId
+                                        + " not found"
+                        )
+                );
+
+        DevicePreference preference =
+                devicePreferenceRepository
+                        .findById(userDeviceId)
+                        .orElseThrow(() ->
+                                new ResourceNotFoundException(
+                                        "Upgrade preferences "
+                                                + "not configured "
+                                                + "for device "
+                                                + userDeviceId
+                                )
+                        );
 
         Product owned = device.getProduct();
+
         if (owned == null) {
             throw new ResourceNotFoundException(
-                    "Owned device " + userDeviceId + " has no catalogue link, "
-                            + "so its category cannot be determined");
+                    "Owned device "
+                            + userDeviceId
+                            + " has no catalogue link, "
+                            + "so its category cannot "
+                            + "be determined"
+            );
         }
 
-        return new Context(owned.getCategory(), owned.getId(), preference);
+        return new Context(
+                device.getUserId(),
+                owned.getCategory(),
+                owned.getId(),
+                preference
+        );
     }
 
     private record BudgetCandidate(
@@ -145,5 +177,11 @@ public class CandidatePruningService {
         @Override public String getCurrency() { return currency; }
     }
 
-    private record Context(String category, Long ownedProductId, DevicePreference preference) {}
+    private record Context(
+            Long userId,
+            String category,
+            Long ownedProductId,
+            DevicePreference preference
+    ) {
+    }
 }

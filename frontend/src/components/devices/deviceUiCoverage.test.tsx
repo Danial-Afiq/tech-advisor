@@ -7,7 +7,6 @@ import { DeviceCard } from "./DeviceCard";
 import { PhoneSpecsDropdown } from "./PhoneSpecsDropdown";
 import { PriorityPicker } from "./PriorityPicker";
 import { UpgradePreferencesModal } from "./UpgradePreferencesModal";
-import { ScanOverlay } from "./ScanOverlay";
 import { useToasts } from "../ui/useToasts";
 import { defaultPrefs, ageLabel, deviceIcon, formatDate, money } from "./deviceOptions";
 import { formatSpec, PHONE_SPEC_GROUPS } from "./phoneSpecs";
@@ -99,7 +98,6 @@ describe("device UI coverage", () => {
     const onAdd = vi.fn();
     const onEdit = vi.fn();
     const onPrefs = vi.fn();
-    const onSimulate = vi.fn();
     const onRemove = vi.fn();
 
     const { rerender } = render(
@@ -113,22 +111,25 @@ describe("device UI coverage", () => {
         devices={[device, { ...device, id: "2", type: "Laptop", image: undefined, primary: false }]}
         onEdit={onEdit}
         onEditPreferences={onPrefs}
-        onSimulate={onSimulate}
         onRemove={onRemove}
       />
     );
 
     await user.click(screen.getAllByRole("button", { name: "Edit device" })[0]);
     await user.click(screen.getAllByRole("button", { name: "Upgrade preferences" })[0]);
-    await user.click(screen.getAllByRole("button", { name: /Simulate update/ })[0]);
     await user.click(screen.getAllByRole("button", { name: "Remove" })[0]);
     expect(onEdit).toHaveBeenCalled();
     expect(onPrefs).toHaveBeenCalled();
-    expect(onSimulate).toHaveBeenCalled();
     expect(onRemove).toHaveBeenCalled();
+    expect(screen.getAllByText("Satisfaction").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Context fit")).not.toBeInTheDocument();
 
-    rerender(<DeviceCard device={{ ...device, satisfaction: undefined, condition: undefined }} compact />);
+    rerender(<DeviceCard device={{ ...device, satisfaction: undefined, condition: undefined }} />);
     expect(screen.queryByText("Satisfaction")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Set a budget/)).not.toBeInTheDocument();
+    rerender(<DeviceCard device={{ ...device, upgradePreferences: defaultPrefs() }} onEditPreferences={onPrefs} />);
+    expect(screen.getByText(/Set a budget in Upgrade preferences/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Upgrade preferences" })).toHaveClass("btn-primary");
   });
 
   it("shows phone specs for populated and empty data", () => {
@@ -161,32 +162,19 @@ describe("device UI coverage", () => {
 
     fireEvent.change(screen.getByLabelText("Maximum budget"), { target: { value: "2500" } });
     await user.click(screen.getByRole("button", { name: "Camera" }));
-    fireEvent.change(screen.getByLabelText("Upgrade urgency"), { target: { value: "I like staying current" } });
-    fireEvent.change(screen.getByLabelText("Brand flexibility for this replacement"), { target: { value: "No preference" } });
+    fireEvent.change(screen.getByLabelText("Upgrade urgency"), { target: { value: "URGENT" } });
+    fireEvent.change(screen.getByLabelText("Brand flexibility for this replacement"), { target: { value: "EXTREMELY_FLEXIBLE" } });
     await user.type(screen.getByLabelText("Current pain points"), "Battery");
     await user.type(screen.getByLabelText("Anything else for this device?"), "No launch day");
 
     await user.click(screen.getByRole("button", { name: "Save upgrade profile" }));
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
       budget: 2500,
-      urgency: "I like staying current",
-      brandFlex: "No preference",
+      urgency: "URGENT",
+      brandFlex: "EXTREMELY_FLEXIBLE",
     }));
     await user.click(screen.getByRole("button", { name: "Skip for now" }));
     expect(onClose).toHaveBeenCalled();
-  });
-
-  it("completes scan animation and cleans up timers", () => {
-    vi.useFakeTimers();
-    const onComplete = vi.fn();
-    const { unmount } = render(<ScanOverlay device={device} onComplete={onComplete} />);
-    expect(screen.getByText(/Evaluating Apple iPhone 13/)).toBeInTheDocument();
-    act(() => {
-      vi.advanceTimersByTime(4 * 620 + 450);
-    });
-    expect(onComplete).toHaveBeenCalledTimes(1);
-    unmount();
-    vi.useRealTimers();
   });
 
   it("adds and removes toasts", () => {
