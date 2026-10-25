@@ -5,7 +5,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -60,9 +59,25 @@ public interface ProductRepository
     );
 
     /**
-     * Deterministic candidate shortlisting: same category, verified,
-     * affordable, not the currently owned product, and not dismissed
-     * by this user during an active cooldown.
+     * Loads deterministic candidate inputs: same category, verified identity,
+     * latest known price, not the device the user already owns, and not dismissed
+     * by this user during an active cooldown. Currency conversion and the budget
+     * ceiling are applied by CandidatePruningService.
+     *
+     * <p>Native rather than JPQL because {@code DISTINCT ON} is what lets
+     * PostgreSQL satisfy "latest price per product" from
+     * {@code idx_price_history_lookup} instead of aggregating the whole table.
+     *
+     * <p>Three details that are load-bearing:
+     * <ul>
+     *   <li>{@code ORDER BY ... id DESC} breaks ties between two observations
+     *       sharing an {@code observed_at}. Without it the chosen price is
+     *       arbitrary, and this step has to be reproducible.</li>
+     *   <li>{@code INNER JOIN} excludes products with no price history at all:
+     *       affordability cannot be verified, so it is not a candidate.</li>
+     *   <li>{@code status = 'VERIFIED'} keeps products whose brand ingestion
+     *       could not resolve out of user-facing results.</li>
+     * </ul>
      */
     @Query(value = """
             SELECT p.id         AS productId,
@@ -78,9 +93,8 @@ public interface ProductRepository
                 ORDER BY product_id, observed_at DESC, id DESC
             ) ph ON p.id = ph.product_id
             WHERE p.category = :category
-              AND p.status = 'VERIFIED'
-              AND ph.price <= :budgetCeiling
-              AND p.id <> :currentProductId
+              AND p.status   = 'VERIFIED'
+              AND p.id      <> :currentProductId
               AND NOT EXISTS (
                   SELECT 1
                   FROM recommendation_dismissals dismissal
@@ -88,11 +102,10 @@ public interface ProductRepository
                     AND dismissal.candidate_product_id = p.id
                     AND dismissal.cooldown_until > CURRENT_TIMESTAMP
               )
-            ORDER BY ph.price ASC, p.id ASC
+            ORDER BY p.id ASC
             """, nativeQuery = true)
-    List<CandidateProduct> findCompatibleCandidates(
+    List<CandidateProduct> findPricedCandidates(
             @Param("category") String category,
-            @Param("budgetCeiling") BigDecimal budgetCeiling,
             @Param("currentProductId") Long currentProductId,
             @Param("userId") Long userId
     );

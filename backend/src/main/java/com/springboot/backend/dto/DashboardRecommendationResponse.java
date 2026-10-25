@@ -3,6 +3,7 @@ package com.springboot.backend.dto;
 import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 
@@ -64,6 +65,15 @@ public record DashboardRecommendationResponse(
         OffsetDateTime createdAt,
 
         @Schema(
+                description = "Whether the displayed price is original, converted, stale, or unavailable",
+                example = "CONVERTED"
+        )
+        String priceConversionStatus,
+
+        @Schema(nullable = true, example = "2026-10-19")
+        LocalDate exchangeRateDate,
+
+        @Schema(
                 description =
                         "Numeric specs the deterministic verdict compared, from "
                                 + "input_snapshot.computed.spec_deltas, biggest change first. "
@@ -73,6 +83,31 @@ public record DashboardRecommendationResponse(
         )
         List<SpecChange> specChanges
 ) {
+    public DashboardRecommendationResponse withDisplayedPrice(
+            BigDecimal price,
+            String displayCurrency,
+            String conversionStatus,
+            LocalDate rateDate) {
+        return new DashboardRecommendationResponse(
+                recommendationId,
+                currentDeviceId,
+                currentDeviceName,
+                candidateProductId,
+                candidateBrand,
+                candidateModelName,
+                price,
+                displayCurrency,
+                verdict,
+                confidence,
+                reasoning,
+                starred,
+                createdAt,
+                conversionStatus,
+                rateDate,
+                specChanges
+        );
+    }
+
     /**
      * @param spec     the {@code phone} column (e.g. {@code battery_mah}), or
      *                 {@code benchmark_score}

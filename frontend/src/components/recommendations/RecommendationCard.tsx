@@ -5,6 +5,7 @@ import { DeviceThumb } from "../devices/DeviceThumb";
 import {
   evidenceGradeText,
   formatRecommendationPrice,
+  priceConversionNote,
   recommendationCardId,
   verdictPresentation,
 } from "./recommendationPresentation";
@@ -41,6 +42,10 @@ export function RecommendationCard({
 }) {
   const verdict = verdictPresentation(
     recommendation.verdict
+  );
+  const conversionNote = priceConversionNote(
+    recommendation.priceConversionStatus ?? "ORIGINAL",
+    recommendation.exchangeRateDate ?? null
   );
 
   const candidateName = [
@@ -140,6 +145,12 @@ export function RecommendationCard({
           <p className="mt-3 mb-0 flex grow-0 flex-wrap items-baseline gap-x-2 text-[12px] text-[#8fa0b8]">
             Indicative price
             <span className="text-[18px] font-bold text-[#a998ff]">{price}</span>
+          </p>
+        )}
+
+        {conversionNote && (
+          <p className="mt-1 mb-0 text-[11px] leading-[1.45] text-[#f6b84b]">
+            {conversionNote}
           </p>
         )}
 

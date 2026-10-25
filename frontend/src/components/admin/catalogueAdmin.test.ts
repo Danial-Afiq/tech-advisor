@@ -168,7 +168,7 @@ describe("catalogue prices", () => {
   });
 
   it("formats the price like recommendation cards, or null without one", () => {
-    expect(catalogueItemPrice(dear)).toMatch(/^S?\$1,299\.50$/);
+    expect(catalogueItemPrice(dear)?.replace(/\u00a0/g, " ")).toBe("SGD 1,299.50");
     expect(catalogueItemPrice(none)).toBeNull();
   });
 });
