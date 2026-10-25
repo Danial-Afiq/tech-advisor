@@ -122,7 +122,8 @@ public class UpgradeClassificationService {
                 readJsonObject(device.getSpecOverrides(), "spec_overrides", userDeviceId),
                 benchmarkRepository.findLatestPerBenchmark(owned.getId()),
                 preference.getBudget(),
-                preference.getCurrency());
+                preference.getCurrency(),
+                readJsonObject(preference.getPriorities(), "priorities", userDeviceId));
     }
 
     /**
@@ -149,10 +150,7 @@ public class UpgradeClassificationService {
                 owned.budget(),
                 owned.currency());
 
-        // device_preferences.priorities are deliberately not read here: the
-        // verdict weights every factor equally for now (§27.5). They still reach
-        // the AI service through the assess request.
-        UpgradeScore score = scoringService.score(comparison);
+        UpgradeScore score = scoringService.score(comparison, owned.priorities());
 
         // The early preference-gate exit (§7.1): when the comparison rests on too
         // little data, say NO_MEANINGFUL_CHANGE rather than inventing a tier. The
@@ -208,6 +206,7 @@ public class UpgradeClassificationService {
      * @param benchmarks    the latest observation per benchmark
      * @param budget        {@code device_preferences.budget}
      * @param currency      {@code device_preferences.currency}
+     * @param priorities    the device's priority JSONB object, loaded once per run
      */
     public record OwnedSide(
             Long userDeviceId,
@@ -216,13 +215,15 @@ public class UpgradeClassificationService {
             Map<String, Object> specOverrides,
             List<BenchmarkResult> benchmarks,
             BigDecimal budget,
-            String currency) {
+            String currency,
+            Map<String, Object> priorities) {
 
         public OwnedSide {
             // Not Map.copyOf: it rejects null values, and a null override is a
             // spec the owner deliberately cleared (SpecComparisonService).
             specOverrides = Collections.unmodifiableMap(new HashMap<>(specOverrides));
             benchmarks = List.copyOf(benchmarks);
+            priorities = Collections.unmodifiableMap(new HashMap<>(priorities));
         }
     }
 }

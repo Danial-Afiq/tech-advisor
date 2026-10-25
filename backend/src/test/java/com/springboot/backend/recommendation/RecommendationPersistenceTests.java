@@ -15,6 +15,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import tools.jackson.databind.json.JsonMapper;
@@ -30,6 +31,9 @@ import tools.jackson.databind.json.JsonMapper;
  */
 @SuppressWarnings("unchecked")
 @SpringBootTest(properties = {"ingestion.reconciliation-enabled=false", "logging.level.root=WARN", "debug=false"})
+// This HTTP stub's dynamic port creates a unique context; release its pool so
+// the complete suite stays within PostgreSQL's connection limit (AGENTS §20.1).
+@DirtiesContext
 class RecommendationPersistenceTests {
     static HttpServer server;
     static final AtomicReference<String> RESPONSE = new AtomicReference<>();
@@ -190,6 +194,22 @@ class RecommendationPersistenceTests {
                 (int) db.queryForObject(
                         "SELECT count(*) FROM system_log WHERE component='recommendation_ai'", Integer.class),
                 "a successful assessment logs no failure");
+    }
+
+    @Test
+    void aiAssessmentKeepsThePrioritiesUsedByClassificationEvenWhenLivePreferencesDiffer() {
+        RESPONSE.set(successBody());
+        RecommendationInput original = input();
+        Map<String, Object> deterministic = Map.of(
+                "priorities", Map.of("battery", 1, "performance", 5),
+                "scoring_version", "test-priority-snapshot");
+        long id = service.assessAndPersist(new RecommendationInput(userId, null, null,
+                original.request(), deterministic));
+
+        Map<String, Object> snapshot = jsonColumn(id, "input_snapshot");
+        assertEquals(Map.of("battery", 1, "performance", 5), snapshot.get("scoring_priorities"));
+        assertEquals("test-priority-snapshot", snapshot.get("scoring_version"));
+        assertEquals(deterministic, jsonColumn(id, "factor_analysis").get("deterministic"));
     }
 
     @Test

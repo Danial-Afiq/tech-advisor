@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * Tunable inputs to the deterministic upgrade score (AGENTS.md §7.1).
  *
- * <p>These are configuration, not product truth. §27.5 records the weights and
+ * <p>These are configuration, not product truth. §27.5 records the caps and
  * band thresholds as an <em>unresolved</em> decision: the values bound here are
  * defensible starting points that the product owner is expected to calibrate
  * against representative product pairs, and §0.2 forbids presenting them as
@@ -20,6 +20,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param minSpecCoverage   fraction of scorable factors that must be measurable
  *                          before a score means anything
  * @param scorePrecision    decimal places the 0-1 score is rounded to
+ * @param priorityMin       lower bound for integer priorities (zero excludes a factor)
+ * @param priorityMax       upper bound for integer priorities
+ * @param defaultPriority   positive uniform priority for empty/all-zero profiles
+ * @param missingPriority   priority for omitted/invalid factors in a selected profile
  */
 @ConfigurationProperties("recommendation.scoring")
 public record ScoringSettings(
@@ -28,7 +32,11 @@ public record ScoringSettings(
         double consideringThreshold,
         double strongThreshold,
         double minSpecCoverage,
-        int scorePrecision) {
+        int scorePrecision,
+        int priorityMin,
+        int priorityMax,
+        int defaultPriority,
+        int missingPriority) {
 
     public ScoringSettings {
         if (scoringVersion == null || scoringVersion.isBlank()) {
@@ -52,6 +60,13 @@ public record ScoringSettings(
         if (scorePrecision < 0 || scorePrecision > 6) {
             throw new IllegalArgumentException(
                     "recommendation.scoring.score-precision must be 0-6, but was " + scorePrecision);
+        }
+        if (priorityMin < 0 || priorityMax <= priorityMin
+                || defaultPriority <= 0 || defaultPriority < priorityMin || defaultPriority > priorityMax
+                || missingPriority < priorityMin || missingPriority > priorityMax) {
+            throw new IllegalArgumentException(
+                    "Priority bounds must be nonnegative and ordered, defaults must be in range, "
+                            + "and default-priority must be positive");
         }
     }
 }
