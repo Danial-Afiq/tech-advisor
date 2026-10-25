@@ -179,6 +179,8 @@ public class DeterministicRecommendationService {
         snapshot.put("candidate", candidateInfo);
         snapshot.put("computed", toMap(classification.toComputed(null)));
         snapshot.put("analysis", toMap(classification.toAnalysis()));
+        snapshot.put("scoring_priorities", classification.score().prioritiesUsed());
+        snapshot.put("scoring_version", classification.scoringVersion());
         return snapshot;
     }
 

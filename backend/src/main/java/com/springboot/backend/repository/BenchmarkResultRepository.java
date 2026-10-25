@@ -23,7 +23,7 @@ public interface BenchmarkResultRepository extends JpaRepository<BenchmarkResult
      * whichever rows happen to come back first.
      *
      * <p>The {@code id DESC} tiebreaker matches
-     * {@link ProductRepository#findCompatibleCandidates} and exists for the same
+     * {@link ProductRepository#findPricedCandidates} and exists for the same
      * reason: two observations sharing an {@code observed_at} would otherwise
      * resolve arbitrarily and the score would stop being reproducible.
      */

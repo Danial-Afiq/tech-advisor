@@ -316,13 +316,18 @@ class RecommendationEmailIntegrationTest {
                 """
                 {
                   "deterministic": {
-                    "battery": {
-                      "priority": 5,
-                      "impact": "HIGH_POSITIVE"
-                    },
-                    "camera": {
-                      "priority": 4,
-                      "impact": "POSITIVE"
+                    "weighting": "PRIORITY_NORMALIZED",
+                    "factors": {
+                      "battery": {
+                        "priority": 5,
+                        "contribution": 0.6,
+                        "impact": "HIGH_POSITIVE"
+                      },
+                      "camera": {
+                        "priority": 4,
+                        "contribution": 0.2,
+                        "impact": "POSITIVE"
+                      }
                     }
                   }
                 }

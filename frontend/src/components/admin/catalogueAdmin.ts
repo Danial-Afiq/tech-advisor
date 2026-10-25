@@ -222,7 +222,7 @@ export function sortItems(items: SmartphoneCatalogueItem[], sort: string) {
   return [...items].sort(option.compare);
 }
 
-/** "S$849.00", or null when the entry has no price history. */
+/** "SGD 849.00", or null when the entry has no price history. */
 export const catalogueItemPrice = (item: SmartphoneCatalogueItem) =>
   item.latestPrice === null
     ? null

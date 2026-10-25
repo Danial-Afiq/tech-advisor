@@ -4,6 +4,7 @@ import type { NavItem, NavKey } from "./Sidebar";
 import type { ShellUser } from "./ProfileCard";
 import { ThemeRoot } from "./ThemeRoot";
 import { Topbar } from "./Topbar";
+import { CurrencySelector } from "../currency/CurrencySelector";
 
 /**
  * Signed-in page frame: themed root (`ThemeRoot`), sidebar, top bar and a
@@ -40,7 +41,15 @@ export function AppShell({
           onSignOut={onSignOut}
         />
         <main className="min-w-0">
-          <Topbar title={title} actions={topbarActions} />
+          <Topbar
+            title={title}
+            actions={
+              <>
+                <CurrencySelector />
+                {topbarActions}
+              </>
+            }
+          />
           <div className="mx-auto max-w-[1500px] p-[26px] max-[860px]:px-[14px] max-[860px]:py-[18px]">
             {children}
           </div>

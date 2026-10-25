@@ -9,6 +9,8 @@ import java.time.ZoneOffset;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -80,7 +82,7 @@ class UpgradeClassificationIntegrationTest {
                 ownedProductId);
 
         preferences("1200.00", """
-                {"battery": 5, "performance": 4, "display": 4, "portability": 3}
+                {"battery": 5, "performance": 4, "display": 4, "portability": 3, "longevity": 3}
                 """);
     }
 
@@ -219,9 +221,58 @@ class UpgradeClassificationIntegrationTest {
 
         @SuppressWarnings("unchecked")
         Map<String, Object> battery = (Map<String, Object>) perFactor.get(Factors.BATTERY);
-        assertFalse(battery.containsKey("priority"), "user priorities do not weight the verdict yet (§27.5)");
-        assertEquals("EQUAL", factors.get("weighting"));
+        assertEquals(5, battery.get("priority"));
+        assertEquals(5.0 / 19.0, (double) battery.get("weight"), 1e-12);
+        assertEquals((double) battery.get("improvement") * (double) battery.get("weight"),
+                (double) battery.get("contribution"), 1e-12);
+        assertEquals("PRIORITY_NORMALIZED", factors.get("weighting"));
         assertEquals("HIGH_POSITIVE", battery.get("impact"));
+    }
+
+    @Test
+    void theSameCandidateReceivesDifferentScoresAndVerdictsForOppositeUsers() {
+        // Fixed fixture: only a moderate battery-capacity gain, with every other
+        // measured spec unchanged and price exactly at budget.
+        Long candidate = product("Test", "Battery improvement");
+        phone(candidate, 5180, 8, 60, 220, 128);
+        db.update("UPDATE device_preferences SET priorities = ?::jsonb WHERE user_device_id = ?",
+                "{\"battery\": 5, \"performance\": 1}", userDeviceId);
+        Long otherUser = db.queryForObject("""
+                INSERT INTO users (email, role, password_hash)
+                VALUES (?, 'USER', '{noop}unused') RETURNING id
+                """, Long.class, "opposite-" + System.nanoTime() + "@example.test");
+        Long otherDevice = db.queryForObject("""
+                INSERT INTO user_devices (user_id, product_id) VALUES (?, ?) RETURNING id
+                """, Long.class, otherUser, ownedProductId);
+        db.update("""
+                INSERT INTO device_preferences (user_device_id, budget, currency, priorities)
+                VALUES (?, 1200, 'SGD', '{"battery": 1, "performance": 5}'::jsonb)
+                """, otherDevice);
+        entityManager.clear();
+
+        UpgradeClassification batteryFirst = service.classify(userDeviceId, candidate, new BigDecimal("1200"));
+        UpgradeClassification performanceFirst = service.classify(otherDevice, candidate, new BigDecimal("1200"));
+        assertEquals(TierMapper.WORTH_CONSIDERING, batteryFirst.verdict());
+        assertEquals(TierMapper.NO_MEANINGFUL_CHANGE, performanceFirst.verdict());
+        assertTrue(batteryFirst.upgradeScore() > performanceFirst.upgradeScore());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"null", "[]", "\"bad\"", "{\"unknown\": 5}",
+            "{\"battery\": 0, \"performance\": 0}", "{\"battery\": \"invalid\"}"})
+    void malformedLegacyPriorityObjectsHaveADefinedFallback(String priorities) {
+        Long candidate = product("Test", "Legacy preferences");
+        phone(candidate, 5500, 16, 144, 180, 512);
+        db.update("UPDATE device_preferences SET priorities = ?::jsonb WHERE user_device_id = ?",
+                priorities, userDeviceId);
+        entityManager.clear();
+        UpgradeClassification result = service.classify(userDeviceId, candidate, new BigDecimal("1000"));
+        assertTrue(Double.isFinite(result.upgradeScore()));
+        assertFalse(result.isInsufficientSpecCoverage());
+        result.score().factorScores().values().forEach(factor -> {
+            assertEquals(settings.defaultPriority(), factor.priority());
+            assertEquals(1.0 / result.score().factorScores().size(), factor.weight(), 1e-12);
+        });
     }
 
     // --- fixtures ---------------------------------------------------------
