@@ -7,7 +7,7 @@ import {
 } from "./currency";
 
 export function CurrencyProvider({ children }: { children: ReactNode }) {
-  const [currency, setCurrencyState] = useState<Currency>(storedCurrency);
+  const [currency, setCurrencyState] = useState<Currency>(() => storedCurrency());
 
   const setCurrency = (next: Currency) => {
     setCurrencyState(next);

@@ -31,6 +31,8 @@ public class FrankfurterClient {
     }
 
     List<Rate> latestRates() {
+        // Frankfurter V2 /rates returns a flat array of {date, base, quote, rate} rows.
+        // Do not parse this as the V1 /latest object, which wraps values in a rates map.
         Rate[] response = client.get()
                 .uri(uriBuilder -> uriBuilder
                         .path("/v2/rates")
