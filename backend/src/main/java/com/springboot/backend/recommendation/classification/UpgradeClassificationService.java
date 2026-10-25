@@ -3,12 +3,10 @@ package com.springboot.backend.recommendation.classification;
 import com.springboot.backend.exception.ResourceNotFoundException;
 import com.springboot.backend.model.BenchmarkResult;
 import com.springboot.backend.model.DevicePreference;
-import com.springboot.backend.model.Phone;
 import com.springboot.backend.model.Product;
 import com.springboot.backend.model.UserDevice;
 import com.springboot.backend.repository.BenchmarkResultRepository;
 import com.springboot.backend.repository.DevicePreferenceRepository;
-import com.springboot.backend.repository.PhoneRepository;
 import com.springboot.backend.repository.UserDeviceRepository;
 import java.math.BigDecimal;
 import java.util.Collections;
@@ -41,7 +39,7 @@ public class UpgradeClassificationService {
 
     private final UserDeviceRepository userDeviceRepository;
     private final DevicePreferenceRepository devicePreferenceRepository;
-    private final PhoneRepository phoneRepository;
+    private final CategorySpecRegistry specMappings;
     private final BenchmarkResultRepository benchmarkRepository;
     private final SpecComparisonService comparisonService;
     private final UpgradeScoringService scoringService;
@@ -52,7 +50,7 @@ public class UpgradeClassificationService {
     public UpgradeClassificationService(
             UserDeviceRepository userDeviceRepository,
             DevicePreferenceRepository devicePreferenceRepository,
-            PhoneRepository phoneRepository,
+            CategorySpecRegistry specMappings,
             BenchmarkResultRepository benchmarkRepository,
             SpecComparisonService comparisonService,
             UpgradeScoringService scoringService,
@@ -61,7 +59,7 @@ public class UpgradeClassificationService {
 
         this.userDeviceRepository = userDeviceRepository;
         this.devicePreferenceRepository = devicePreferenceRepository;
-        this.phoneRepository = phoneRepository;
+        this.specMappings = specMappings;
         this.benchmarkRepository = benchmarkRepository;
         this.comparisonService = comparisonService;
         this.scoringService = scoringService;
@@ -111,13 +109,16 @@ public class UpgradeClassificationService {
                     "Owned device " + userDeviceId + " has no catalogue link, so it cannot be compared");
         }
 
-        Phone ownedSpecs = phoneRepository.findById(owned.getId())
+        CategorySpecMapping<?> mapping = specMappings.forCategory(owned.getCategory());
+        Object ownedSpecs = mapping.load(owned.getId())
+                .<Object>map(specs -> specs)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "No specifications recorded for owned product " + owned.getId()));
 
         return new OwnedSide(
                 userDeviceId,
                 device.getUserId(),
+                mapping,
                 ownedSpecs,
                 readJsonObject(device.getSpecOverrides(), "spec_overrides", userDeviceId),
                 benchmarkRepository.findLatestPerBenchmark(owned.getId()),
@@ -133,21 +134,12 @@ public class UpgradeClassificationService {
      * shortlist can skip it and carry on.
      */
     public UpgradeClassification classify(OwnedSide owned, Long candidateProductId, BigDecimal candidatePrice) {
-        Phone candidateSpecs = phoneRepository.findById(candidateProductId)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "No specifications recorded for candidate product " + candidateProductId));
-
         List<BenchmarkResult> candidateBenchmarks = benchmarkRepository.findLatestPerBenchmark(candidateProductId);
 
-        SpecComparison comparison = comparisonService.compare(
-                owned.specs(),
-                owned.specOverrides(),
-                candidateSpecs,
-                owned.benchmarks(),
-                candidateBenchmarks,
-                candidatePrice,
-                owned.budget(),
-                owned.currency());
+        // Pruning only shortlists candidates of the owned device's category, so
+        // the owned side's mapping also reads the candidate.
+        SpecComparison comparison = compare(owned.mapping(), owned, candidateProductId, candidateBenchmarks,
+                candidatePrice);
 
         // device_preferences.priorities are deliberately not read here: the
         // verdict weights every factor equally for now (§27.5). They still reach
@@ -177,6 +169,32 @@ public class UpgradeClassificationService {
                 verdict, score.score(), score, comparison, settings.scoringVersion());
     }
 
+    private <T> SpecComparison compare(
+            CategorySpecMapping<T> mapping,
+            OwnedSide owned,
+            Long candidateProductId,
+            List<BenchmarkResult> candidateBenchmarks,
+            BigDecimal candidatePrice) {
+
+        T candidateSpecs = mapping.load(candidateProductId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "No specifications recorded for candidate product " + candidateProductId));
+
+        @SuppressWarnings("unchecked") // loaded by this same mapping in loadOwnedSide
+        T ownedSpecs = (T) owned.specs();
+
+        return comparisonService.compare(
+                mapping.rules(),
+                ownedSpecs,
+                owned.specOverrides(),
+                candidateSpecs,
+                owned.benchmarks(),
+                candidateBenchmarks,
+                candidatePrice,
+                owned.budget(),
+                owned.currency());
+    }
+
     /**
      * Parses one of the user-controlled JSONB columns.
      *
@@ -203,7 +221,9 @@ public class UpgradeClassificationService {
      *
      * @param userDeviceId  the owned device
      * @param userId        the device's owner
-     * @param specs         the catalogue spec sheet for the owned product
+     * @param mapping       the owned product's category mapping
+     * @param specs         the catalogue spec sheet for the owned product,
+     *                      as loaded by {@code mapping}
      * @param specOverrides the owner's {@code spec_overrides}, already parsed
      * @param benchmarks    the latest observation per benchmark
      * @param budget        {@code device_preferences.budget}
@@ -212,7 +232,8 @@ public class UpgradeClassificationService {
     public record OwnedSide(
             Long userDeviceId,
             Long userId,
-            Phone specs,
+            CategorySpecMapping<?> mapping,
+            Object specs,
             Map<String, Object> specOverrides,
             List<BenchmarkResult> benchmarks,
             BigDecimal budget,

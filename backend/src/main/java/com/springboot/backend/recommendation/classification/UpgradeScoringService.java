@@ -68,7 +68,7 @@ public class UpgradeScoringService {
             total += contribution;
         }
 
-        double coverage = coverage(byFactor.keySet());
+        double coverage = coverage(byFactor.keySet(), comparison.unmeasurableFactors());
 
         // An empty comparison and a comparison showing no change both average to
         // zero, and they mean completely different things. Coverage is what
@@ -96,12 +96,12 @@ public class UpgradeScoringService {
      *
      * <p>Measured against every factor with at least one spec column, not all
      * twelve - judging against all twelve would permanently fail every
-     * comparison, since five of them have no measurable column in V6 at all
-     * (see {@link SpecFactorCatalog}).
+     * comparison, since every category leaves some factors with no measurable
+     * column at all (see {@link CategorySpecMapping}).
      */
-    private double coverage(Set<String> measuredFactors) {
+    private double coverage(Set<String> measuredFactors, List<String> unmeasurable) {
         List<String> expected = Factors.ALL.stream()
-                .filter(f -> !SpecFactorCatalog.UNSCORED_FACTORS.contains(f))
+                .filter(f -> !unmeasurable.contains(f))
                 .toList();
 
         if (expected.isEmpty()) {

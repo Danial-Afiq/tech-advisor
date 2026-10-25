@@ -35,7 +35,7 @@ class SpecComparisonServiceTest {
     }
 
     private SpecComparison compare(Phone owned, Phone candidate) {
-        return service.compare(owned, Map.of(), candidate, List.of(), List.of(), null, null, "SGD");
+        return service.compare(PhoneSpecMapping.RULES, owned, Map.of(), candidate, List.of(), List.of(), null, null, "SGD");
     }
 
     @Test
@@ -86,7 +86,7 @@ class SpecComparisonServiceTest {
         Phone candidate = Phone.builder(2L).storageGb(256).build();
 
         SpecComparison result = service.compare(
-                owned, Map.of("storage_gb", 512), candidate, List.of(), List.of(), null, null, "SGD");
+                PhoneSpecMapping.RULES, owned, Map.of("storage_gb", 512), candidate, List.of(), List.of(), null, null, "SGD");
 
         ScoredSpec storage = result.scored().stream()
                 .filter(s -> s.spec().equals("storage_gb"))
@@ -105,7 +105,7 @@ class SpecComparisonServiceTest {
         cleared.put("storage_gb", null);
 
         SpecComparison result = service.compare(
-                owned, cleared, candidate, List.of(), List.of(), null, null, "SGD");
+                PhoneSpecMapping.RULES, owned, cleared, candidate, List.of(), List.of(), null, null, "SGD");
 
         assertTrue(result.skippedSpecs().contains("storage_gb"));
         assertTrue(result.scored().stream().noneMatch(s -> s.spec().equals("storage_gb")));
@@ -122,7 +122,7 @@ class SpecComparisonServiceTest {
         overrides.put("os", null);                       // cleared as wrong or unknown
 
         SpecComparison result = service.compare(
-                owned, overrides, candidate, List.of(), List.of(), null, null, "SGD");
+                PhoneSpecMapping.RULES, owned, overrides, candidate, List.of(), List.of(), null, null, "SGD");
 
         assertEquals("Snapdragon 8 Gen 3", result.specDeltas().get("chipset").current());
         assertNull(result.specDeltas().get("os").current());
@@ -137,7 +137,7 @@ class SpecComparisonServiceTest {
         Phone candidate = Phone.builder(2L).storageGb(256).build();
 
         SpecComparison result = service.compare(
-                owned, Map.of("storage_gb", "not a number"), candidate, List.of(), List.of(), null, null, "SGD");
+                PhoneSpecMapping.RULES, owned, Map.of("storage_gb", "not a number"), candidate, List.of(), List.of(), null, null, "SGD");
 
         ScoredSpec storage = result.scored().stream()
                 .filter(s -> s.spec().equals("storage_gb"))
@@ -153,7 +153,7 @@ class SpecComparisonServiceTest {
 
         // A completion-time benchmark: 100s -> 50s is a 50% improvement.
         SpecComparison result = service.compare(
-                owned,
+                PhoneSpecMapping.RULES, owned,
                 Map.of(),
                 candidate,
                 List.of(benchmark(1, "render_seconds", 100, false)),
@@ -168,7 +168,7 @@ class SpecComparisonServiceTest {
     @Test
     void onlyBenchmarksBothProductsRanAreCompared() {
         SpecComparison result = service.compare(
-                phone(1, 4000, 8, 200),
+                PhoneSpecMapping.RULES, phone(1, 4000, 8, 200),
                 Map.of(),
                 phone(2, 4000, 8, 200),
                 List.of(benchmark(1, "geekbench", 1000, true)),
@@ -184,12 +184,12 @@ class SpecComparisonServiceTest {
     @Test
     void incompatibleUnitsOrDirectionsAreNeverCompared() {
         SpecComparison wrongUnit = service.compare(
-                phone(1, 4000, 8, 200), Map.of(), phone(2, 4000, 8, 200),
+                PhoneSpecMapping.RULES, phone(1, 4000, 8, 200), Map.of(), phone(2, 4000, 8, 200),
                 List.of(benchmark(1, "same-name", 100, "seconds", false)),
                 List.of(benchmark(2, "same-name", 50, "points", false)),
                 null, null, "SGD");
         SpecComparison wrongDirection = service.compare(
-                phone(1, 4000, 8, 200), Map.of(), phone(2, 4000, 8, 200),
+                PhoneSpecMapping.RULES, phone(1, 4000, 8, 200), Map.of(), phone(2, 4000, 8, 200),
                 List.of(benchmark(1, "same-name", 100, "points", false)),
                 List.of(benchmark(2, "same-name", 50, "points", true)),
                 null, null, "SGD");
@@ -201,7 +201,7 @@ class SpecComparisonServiceTest {
     @Test
     void underBudgetIsANegativeVsBudgetAndPositiveValue() {
         SpecComparison result = service.compare(
-                phone(1, 4000, 8, 200),
+                PhoneSpecMapping.RULES, phone(1, 4000, 8, 200),
                 Map.of(),
                 phone(2, 4000, 8, 200),
                 List.of(),
@@ -222,7 +222,7 @@ class SpecComparisonServiceTest {
     @Test
     void overBudgetScoresNegativelyRatherThanNeutrally() {
         SpecComparison result = service.compare(
-                phone(1, 4000, 8, 200),
+                PhoneSpecMapping.RULES, phone(1, 4000, 8, 200),
                 Map.of(),
                 phone(2, 4000, 8, 200),
                 List.of(),

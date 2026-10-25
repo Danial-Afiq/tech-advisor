@@ -322,7 +322,7 @@ class DevicePreferencesIntegrationTest {
         };
         UpgradeClassification classification = new UpgradeClassification("WORTH_CONSIDERING", 0.7,
                 new UpgradeScore(0.7, true, Map.of(), List.of("battery"), 1.0),
-                new SpecComparison(List.of(), Map.of(), null, null, List.of()), "test");
+                new SpecComparison(List.of(), Map.of(), null, null, List.of(), List.of()), "test");
         var built = assessmentFactory.build(deviceId, new CandidateEvaluation.Classified(shortlisted, classification), null);
         assertTrue(built.complete(), () -> "Missing analysis context: " + built.missing());
         var context = built.request().userContext().preferences();

@@ -14,6 +14,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 import com.springboot.backend.dto.DashboardRecommendationResponse;
 import com.springboot.backend.recommendation.RecommendationsPersisted.NotableRecommendation;
+import com.springboot.backend.recommendation.classification.CategorySpecMapping;
+import com.springboot.backend.recommendation.classification.CategorySpecRegistry;
 import com.springboot.backend.recommendation.classification.SpecFactorCatalog;
 import com.springboot.backend.recommendation.classification.TierMapper;
 import tools.jackson.databind.JsonNode;
@@ -33,13 +35,18 @@ public class RecommendationRepository {
     private final JdbcTemplate db;
     private final TransactionTemplate tx;
     private final ApplicationEventPublisher events;
+    private final Map<String, Boolean> higherIsBetter;
     private static final JsonMapper json = JsonMapper.builder().findAndAddModules().build();
 
     public RecommendationRepository(
-            JdbcTemplate db, PlatformTransactionManager manager, ApplicationEventPublisher events) {
+            JdbcTemplate db,
+            PlatformTransactionManager manager,
+            ApplicationEventPublisher events,
+            CategorySpecRegistry specMappings) {
         this.db = db;
         this.tx = new TransactionTemplate(manager);
         this.events = events;
+        this.higherIsBetter = higherIsBetter(specMappings);
     }
 
     /**
@@ -208,7 +215,7 @@ public class RecommendationRepository {
                             null,
                             specChanges(resultSet.getString(
                                     "spec_deltas"
-                            ))
+                            ), higherIsBetter)
                     ),
             userId
     );
@@ -218,20 +225,21 @@ public class RecommendationRepository {
      * Numeric spec changes from {@code input_snapshot.computed.spec_deltas}
      * ({@code {spec: {current, candidate, delta_pct}}}), biggest change first.
      * The snapshot stores the raw observed change, so each one is
-     * direction-corrected with the same {@link SpecFactorCatalog} rule the verdict
+     * direction-corrected with the same {@link CategorySpecMapping} rule the verdict
      * scores with: positive always means the candidate is better. Text specs and
      * {@code price} (budget headroom, not a spec) are left out. Parsed leniently:
      * rows written under an older shape yield an empty list rather than failing
      * the whole dashboard.
      */
-    static List<DashboardRecommendationResponse.SpecChange> specChanges(String specDeltasJson) {
+    static List<DashboardRecommendationResponse.SpecChange> specChanges(
+            String specDeltasJson, Map<String, Boolean> directions) {
         if (specDeltasJson == null) {
             return List.of();
         }
         List<DashboardRecommendationResponse.SpecChange> changes = new java.util.ArrayList<>();
         try {
             json.readTree(specDeltasJson).properties().forEach(entry -> {
-                Boolean higherIsBetter = HIGHER_IS_BETTER.get(entry.getKey());
+                Boolean higherIsBetter = directions.get(entry.getKey());
                 JsonNode deltaPct = entry.getValue().path("delta_pct");
                 if (higherIsBetter != null && deltaPct.isNumber()) {
                     double raw = deltaPct.asDouble();
@@ -247,12 +255,14 @@ public class RecommendationRepository {
         return List.copyOf(changes);
     }
 
-    /** Scored numeric specs and their direction, straight from the verdict's catalogue. */
-    private static final Map<String, Boolean> HIGHER_IS_BETTER = higherIsBetter();
-
-    private static Map<String, Boolean> higherIsBetter() {
+    /**
+     * Scored numeric specs and their direction, straight from every category's
+     * mapping. Spec keys are column names, so they do not collide across categories.
+     */
+    static Map<String, Boolean> higherIsBetter(CategorySpecRegistry mappings) {
         Map<String, Boolean> rules = new java.util.HashMap<>();
-        SpecFactorCatalog.NUMERIC_SPECS.forEach(rule -> rules.put(rule.spec(), rule.higherIsBetter()));
+        mappings.all().forEach(mapping -> mapping.rules().numericSpecs()
+                .forEach(rule -> rules.put(rule.spec(), rule.higherIsBetter())));
         rules.put(SpecFactorCatalog.BENCHMARK_SPEC, true);
         return Map.copyOf(rules);
     }

@@ -1,7 +1,6 @@
 package com.springboot.backend.recommendation.classification;
 
 import com.springboot.backend.model.BenchmarkResult;
-import com.springboot.backend.model.Phone;
 import com.springboot.backend.recommendation.AssessRequest;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -23,9 +22,11 @@ import org.springframework.stereotype.Service;
 public class SpecComparisonService {
 
     /**
+     * @param rules               the category's column rules, from its
+     *                            {@link CategorySpecMapping}
      * @param owned               reference spec sheet from the catalogue
      * @param ownedOverrides      the owner's {@code spec_overrides}, keyed by
-     *                            {@code phone} column name. These win over the
+     *                            spec column name. These win over the
      *                            catalogue so one user's actual configuration
      *                            can differ from the shared product record
      *                            without mutating it (AGENTS.md §14.3)
@@ -35,10 +36,11 @@ public class SpecComparisonService {
      * @param candidatePrice      latest observed price, or null when unpriced
      * @param budget              the configured budget, or null when unset
      */
-    public SpecComparison compare(
-            Phone owned,
+    public <T> SpecComparison compare(
+            SpecRules<T> rules,
+            T owned,
             Map<String, Object> ownedOverrides,
-            Phone candidate,
+            T candidate,
             List<BenchmarkResult> ownedBenchmarks,
             List<BenchmarkResult> candidateBenchmarks,
             BigDecimal candidatePrice,
@@ -49,7 +51,7 @@ public class SpecComparisonService {
         Map<String, AssessRequest.SpecDelta> deltas = new LinkedHashMap<>();
         List<String> skipped = new ArrayList<>();
 
-        for (SpecFactorCatalog.SpecRule rule : SpecFactorCatalog.NUMERIC_SPECS) {
+        for (SpecRules.SpecRule<T> rule : rules.numericSpecs()) {
             Double from = overrideOr(ownedOverrides, rule.spec(), rule.reader().apply(owned));
             Double to = SpecFactorCatalog.toDouble(rule.reader().apply(candidate));
 
@@ -70,7 +72,7 @@ public class SpecComparisonService {
             deltas.put(rule.spec(), new AssessRequest.SpecDelta(from, to, round1(rawPct)));
         }
 
-        for (SpecFactorCatalog.TextSpecRule rule : SpecFactorCatalog.TEXT_SPECS) {
+        for (SpecRules.TextSpecRule<T> rule : rules.textSpecs()) {
             String from = textOverrideOr(ownedOverrides, rule.spec(), rule.reader().apply(owned));
             String to = rule.reader().apply(candidate);
             if (from == null && to == null) {
@@ -84,7 +86,7 @@ public class SpecComparisonService {
         Double uplift = benchmarkUplift(ownedBenchmarks, candidateBenchmarks, scored, deltas, skipped);
         AssessRequest.Price price = priceAgainstBudget(candidatePrice, budget, currency, scored, deltas, skipped);
 
-        return new SpecComparison(scored, deltas, uplift, price, skipped);
+        return new SpecComparison(scored, deltas, uplift, price, skipped, rules.unscoredFactors());
     }
 
     /**

@@ -8,6 +8,7 @@ import com.springboot.backend.ingestion.core.Payload;
 import com.springboot.backend.ingestion.core.SourceContext;
 import com.springboot.backend.model.Phone;
 import com.springboot.backend.recommendation.classification.SpecComparisonService;
+import com.springboot.backend.recommendation.classification.PhoneSpecMapping;
 import com.springboot.backend.recommendation.classification.SpecFactorCatalog;
 import com.springboot.backend.repository.BenchmarkResultRepository;
 import java.math.BigDecimal;
@@ -75,7 +76,7 @@ class TechApiBenchmarkSinkTests {
         sink.accept("run-1", benchmark(candidateId, TechApiBenchmarkSource.GEEKBENCH_MULTI, "3000"));
 
         var result = comparisons.compare(
-                Phone.builder(ownedId).build(), Map.of(), Phone.builder(candidateId).build(),
+                PhoneSpecMapping.RULES, Phone.builder(ownedId).build(), Map.of(), Phone.builder(candidateId).build(),
                 benchmarks.findLatestPerBenchmark(ownedId),
                 benchmarks.findLatestPerBenchmark(candidateId), null, null, "SGD");
 
