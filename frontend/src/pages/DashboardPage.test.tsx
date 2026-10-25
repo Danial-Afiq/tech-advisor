@@ -419,8 +419,9 @@ describe("DashboardPage", () => {
     expect(within(nav).getAllByRole("button").map((button) => button.textContent)).toEqual([
       "⌂Dashboard",
       "▣My devices",
+      "⚙Settings",
     ]);
-    expect(screen.queryByRole("button", { name: /Activity|Settings/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Activity" })).not.toBeInTheDocument();
   });
 
   it("signs out from the sidebar and returns to login", async () => {

@@ -11,6 +11,7 @@ export type UserResponse = {
   email: string;
   role: string;
   createdAt: string;
+  recommendationEmailsEnabled: boolean;
 };
 
 /** Backend rule (`RegisterRequest`): passwords need at least 8 characters. */
@@ -44,4 +45,15 @@ export async function signUp(email: string, password: string): Promise<Session> 
 
 export function signOut() {
   clearSession();
+}
+
+export function getProfile() {
+  return apiFetch<UserResponse>("/api/profile");
+}
+
+export function updateRecommendationEmailPreference(enabled: boolean) {
+  return apiFetch<UserResponse>("/api/profile/email-notifications", {
+    method: "PUT",
+    body: { enabled },
+  });
 }

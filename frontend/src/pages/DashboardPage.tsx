@@ -42,6 +42,7 @@ import {
   DASHBOARD_PATH,
   DEVICES_PATH,
   LOGIN_PATH,
+  SETTINGS_PATH,
 } from "../routing/paths";
 import { RecommendationCard } from "../components/recommendations/RecommendationCard";
 import {
@@ -376,6 +377,10 @@ export default function DashboardPage() {
 
     if (key === "devices") {
       void navigate(DEVICES_PATH);
+    }
+
+    if (key === "settings") {
+      void navigate(SETTINGS_PATH);
     }
   };
 

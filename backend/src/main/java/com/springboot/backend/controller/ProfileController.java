@@ -16,6 +16,10 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import com.springboot.backend.dto.EmailNotificationPreferenceRequest;
+import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 
 @RestController
 @RequestMapping("/api/profile")
@@ -42,13 +46,23 @@ public class ProfileController {
                     description = "The authenticated account no longer exists",
                     content = @Content(mediaType = "application/json", schema = @Schema(implementation = ApiErrorResponse.class)))
     })
-    public ResponseEntity<UserResponse> getProfile(
-            Authentication authentication) {
+
+    public ResponseEntity<UserResponse> getProfile( Authentication authentication) {
 
         String email = authentication.getName();
 
-        UserResponse profile =
-                userService.getProfile(email);
+        UserResponse profile = userService.getProfile(email);
+
+        return ResponseEntity.ok(profile);
+    }
+
+    @PutMapping("/email-notifications")
+    @Operation(summary = "Update recommendation email preference")
+    public ResponseEntity<UserResponse> updateEmailNotificationPreference(
+        Authentication authentication,
+        @Valid @RequestBody EmailNotificationPreferenceRequest request) {
+
+        UserResponse profile = userService.updateEmailNotificationPreference(authentication.getName(),request.enabled());
 
         return ResponseEntity.ok(profile);
     }

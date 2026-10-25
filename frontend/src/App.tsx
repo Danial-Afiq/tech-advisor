@@ -18,7 +18,9 @@ import {
   DEVICES_PATH,
   LOGIN_PATH,
   RECOMMENDATIONS_PATH,
+  SETTINGS_PATH,
 } from "./routing/paths";
+import SettingsPage from "./pages/SettingsPage";
 
 function App() {
   return (
@@ -33,10 +35,9 @@ function App() {
         <Route element={<RequireRole role="USER" />}>
           <Route path={DASHBOARD_PATH} element={<DashboardPage />} />
           <Route
-            path={RECOMMENDATIONS_PATH}
-            element={<Navigate to={DASHBOARD_PATH} replace />}
-          />
+            path={RECOMMENDATIONS_PATH} element={<Navigate to={DASHBOARD_PATH} replace />}/>
           <Route path={DEVICES_PATH} element={<DevicesPageTest />} />
+          <Route path={SETTINGS_PATH} element={<SettingsPage />} />
         </Route>
 
         <Route element={<RequireRole role="ADMIN" />}>
