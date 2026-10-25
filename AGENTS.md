@@ -166,7 +166,7 @@ The product monitors changing technology/market conditions and reassesses whethe
 
 The current product and recommendation implementation remains **smartphone-first**. The canonical Sprint 1 database foundation nevertheless uses a generic `products` supertype with disjoint `phone` and `gpu` subtype tables so later category work does not require another product-identity model.
 
-GPU **ingestion** is implemented (ticket 1.3, §17.1.4): a seed prefill, TechSpot spec scraping and SearchAPI owner reviews populate `products`/`gpu`/`price_history`/`review_documents`. GPU **recommendation logic, user-facing APIs and UI are not implemented**; do not present them as working.
+GPU **ingestion** is implemented (ticket 1.3, §17.1.4): a seed prefill, TechSpot spec scraping and SearchAPI owner reviews populate `products`/`gpu`/`price_history`/`review_documents`. The deterministic scorer maps `gpu` columns through `GpuSpecMapping` (caps are first estimates pending sign-off), but GPU **user-facing APIs and UI are not implemented** and the GPU recommendation path has no end-to-end integration test yet; do not present it as working.
 
 Under the current MVP catalogue design, one `products` row represents a
 **general phone model**. For example, Samsung Galaxy S25 is one product regardless
@@ -1552,7 +1552,7 @@ Fields (V6, plus V16 from ticket 1.3):
 
 Written only by `GpuCatalogSink` (§17.1.4). Mapped read-only as the `Gpu` entity.
 Launch MSRP is not a `gpu` column: it is one `price_history` row per product and source.
-GPU recommendation logic, user-facing APIs, and UI are not yet implemented.
+GPU deterministic scoring is mapped (`GpuSpecMapping`); GPU user-facing APIs and UI are not yet implemented.
 
 ## 14.7 `price_history`
 
@@ -2831,7 +2831,8 @@ SCRUM-34) and persistence (§18.8).
 | Class | Responsibility |
 |---|---|
 | `Factors` | Java mirror of the twelve closed factors in `ai/app/factors.py` |
-| `SpecFactorCatalog` | which `phone` column feeds which factor, its direction, its improvement cap |
+| `CategorySpecMapping` / `CategorySpecRegistry` | one `@Component` per `products.category` (`PhoneSpecMapping`, `GpuSpecMapping`): which subtype column feeds which factor, its direction, its improvement cap, and which factors it cannot measure. Adding a category = adding one mapping |
+| `SpecFactorCatalog` | shared constants only: benchmark/price spec keys and caps |
 | `SpecComparisonService` | two spec sheets to finished, direction-corrected deltas, benchmark uplift and price-vs-budget |
 | `UpgradeScoringService` | normalise, equal-weight every measured factor, aggregate to 0-1 |
 | `TierMapper` | score to one of the four verdicts; also the notification-eligibility read (§27.7) |
@@ -2875,10 +2876,12 @@ Decisions worth not re-litigating:
   `sufficient_data: false` and reported as `NO_MEANINGFUL_CHANGE` - because
   "nothing improved" and "we could not tell" average to the same zero and must not
   look the same to a reader.
-- **Five factors cannot be scored at all**: `camera`, `build_quality`, `thermals`,
-  `connectivity`, `audio`. V6 stores `camera_specs` and `ip_rating` as free text and
-  has no column for the other three. They are listed in
-  `SpecFactorCatalog.UNSCORED_FACTORS` and surfaced in the breakdown as
+- **Each category declares the factors it cannot score.** For phones: `camera`,
+  `build_quality`, `thermals`, `connectivity`, `audio` (V6 stores `camera_specs` and
+  `ip_rating` as free text and has no column for the other three). For GPUs, everything
+  except `performance` (clocks, bus width), `longevity` (VRAM), `thermals` (TDP,
+  lower is better) and `value`. They are listed in the mapping's
+  `SpecRules.unscoredFactors`, coverage is measured against the rest, and they are surfaced in the breakdown as
   `unmeasurable_factors` rather than contributing a silent zero. The owner-evidence
   channel still grades them.
 - **Text specs are reported, never scored.** `chipset`, `camera_specs`, `ip_rating`
@@ -3610,7 +3613,7 @@ handler — the generic `IllegalArgumentException` mapping in
   (`[{spec, deltaPct}]`, biggest change first), read from the persisted
   `input_snapshot.computed.spec_deltas`. Those hold the *raw* observed change
   (`factor_analysis.deterministic.factors.*.specs` holds only spec names), so each
-  numeric spec is direction-corrected with `SpecFactorCatalog.NUMERIC_SPECS`'s
+  numeric spec is direction-corrected with every `CategorySpecMapping`'s
   `higherIsBetter` (plus `benchmark_score`), the rule the verdict scores with:
   positive = better. Text specs and `price` (budget headroom) are omitted.
   Older/malformed shapes yield `[]` rather than failing the list
@@ -3886,7 +3889,7 @@ remaining half is split into three roughly equal bands for `WORTH_WATCHING`,
 `WORTH_CONSIDERING` and `STRONG_UPGRADE_CANDIDATE`. This supersedes the v1 shape,
 which split the scale into four equal quarters.
 
-Per-spec improvement caps live in `SpecFactorCatalog` rather than in properties,
+Per-spec improvement caps live in each `CategorySpecMapping` rather than in properties,
 because each one is a judgement about that specific spec ("a 50% battery increase
 is a full-strength win") and belongs next to the spec it describes.
 
