@@ -188,10 +188,14 @@ public final class ProductMatcher {
      * sort_by=price_low_to_high) and takes the first result with a non-null price.
      */
     public static List<Match> titleMatches(String brand, String model, JsonNode results) {
+        return titleMatches("SMARTPHONE", brand, model, results);
+    }
+    /** Same as {@link #titleMatches(String, String, JsonNode)}, under an explicit category's ruleset. */
+    public static List<Match> titleMatches(String category, String brand, String model, JsonNode results) {
         List<Match> matches = new ArrayList<>();
         for (JsonNode row : results) {
             String title = row.path("title").asText("");
-            if (title.length() <= 1000 && accepts(brand, model, title))
+            if (title.length() <= 1000 && accepts(category, brand, model, title))
                 matches.add(new Match(row.path("product_id").asText(""), row.path("product_token").asText(""),
                         title, extractedPrice(row), currencyOf(row)));
         }

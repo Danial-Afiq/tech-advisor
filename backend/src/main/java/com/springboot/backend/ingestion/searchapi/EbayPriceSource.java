@@ -29,6 +29,12 @@ import tools.jackson.databind.JsonNode;
  *   - bounded, configurable request cost per run via {@link EbayPriceSettings}, independent
  *     of Google Shopping's own budget.
  *
+ * Categories (SMARTPHONE and/or GPU, {@link EbayPriceSettings#categories}) share one combined
+ * cursor rather than one each - same reasoning {@link SearchApiRepository}'s untargeted picker
+ * already applies: one id-ordered rotation across every configured category, so a category
+ * with more rows simply gets proportionally more turns per sweep instead of either category
+ * needing its own independent pacing/quota slice.
+ *
  * Default config (10 products/run, once/day - see scheduleInterval(), independent of the
  * shared scheduler cadence in RunStore.INTERVAL) costs ~300 requests a month against the
  * shared SearchAPI.io account quota - deliberately conservative given that quota is shared
@@ -86,7 +92,7 @@ public class EbayPriceSource implements IngestionSource {
     @Override
     public void ingest(SourceContext context, Consumer<Payload> output) throws Exception {
         var state = repository.state();
-        var batch = repository.nextProducts(state.catalogueCursor, settings.maxProductsPerRun());
+        var batch = repository.nextProducts(state.catalogueCursor, settings.maxProductsPerRun(), settings);
         for (var product : batch.products()) {
             context.check();
             priceOne(context, product, output);
@@ -120,16 +126,20 @@ public class EbayPriceSource implements IngestionSource {
     private void priceOne(SourceContext context, EbayPriceRepository.Product product, Consumer<Payload> output)
             throws Exception {
         JsonNode results = client.ebay(context, product.name());
-        toPrice(product.id(), product.brand(), product.modelName(), context.now(), results).ifPresent(output::accept);
+        toPrice(product.id(), product.category(), product.brand(), product.modelName(), context.now(), results)
+                .ifPresent(output::accept);
     }
 
     /**
      * Pure results-JsonNode -> Payload transform, no network - split out from {@link #priceOne}
      * specifically so it's directly unit-testable against fixture JSON, same split as every
-     * other source in this package (MobileApiSmartphoneSource.toPayload, etc).
+     * other source in this package (MobileApiSmartphoneSource.toPayload, etc). category picks
+     * ProductMatcher's listing vocabulary (SMARTPHONE or GPU - see its titleMatches overload),
+     * same reasoning SearchApiSource already applies to Google Shopping matching.
      */
-    static Optional<Payload> toPrice(long productId, String brand, String modelName, Instant observedAt, JsonNode results) {
-        var matches = ProductMatcher.titleMatches(brand, modelName, results);
+    static Optional<Payload> toPrice(long productId, String category, String brand, String modelName,
+                                      Instant observedAt, JsonNode results) {
+        var matches = ProductMatcher.titleMatches(category, brand, modelName, results);
         // Picks the minimum price among every accepted, priced match - does NOT trust the
         // results are already sorted cheapest-first. SearchApiClient.ebay()'s sort_by hint is
         // not honored on every eBay marketplace (confirmed: SearchAPI.io's own docs state
