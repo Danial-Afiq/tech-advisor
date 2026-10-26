@@ -63,8 +63,8 @@ public class SearchApiClient {
                 + URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8)).collect(java.util.stream.Collectors.joining("&"));
         byte[] bytes;
         try {
-            bytes = context.get(URI.create("https://www.searchapi.io/api/v1/search?" + encoded),
-                    settings.apiKey(), "www.searchapi.io");
+            bytes = context.get(URI.create(settings.baseUrl() + "?" + encoded),
+                    settings.apiKey(), settings.allowedHost());
         } catch (SourceContext.HttpFailure e) {
             if (e.invalidToken) throw new IngestionFailure(SEARCHAPI_INVALID_TOKEN);
             throw new IngestionFailure(switch (e.status) {

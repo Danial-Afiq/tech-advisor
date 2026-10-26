@@ -19,7 +19,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 class SearchApiTests {
     final JsonMapper json = JsonMapper.builder().build();
-    final SearchApiSettings settings = new SearchApiSettings("never-log-this-test-key", "sg", "en", "Singapore", 1);
+    final SearchApiSettings settings = new SearchApiSettings("never-log-this-test-key", "sg", "en", "Singapore", 1, "https://www.searchapi.io/api/v1/search", "www.searchapi.io");
     final Instant now = Instant.parse("2026-09-24T00:00:00Z");
     final SearchApiRepository.Product product = new SearchApiRepository.Product(812, "Apple", "iPhone 16 Pro");
     JsonNode shopping() { return json.readTree("""
@@ -338,7 +338,7 @@ class SearchApiTests {
     }
 
     @Test void missingKeyFailsOnlyWhenEnabled() {
-        var blank = new SearchApiSettings("", "sg", "en", "Singapore", 1);
+        var blank = new SearchApiSettings("", "sg", "en", "Singapore", 1, "https://www.searchapi.io/api/v1/search", "www.searchapi.io");
         assertDoesNotThrow(() -> new SearchApiSource(blank, null, null, new IngestionSettings(false, null, List.of())));
         assertThrows(IllegalArgumentException.class, () -> new SearchApiSource(blank, null, null,
                 new IngestionSettings(false, null, List.of(SearchApiSource.ID))));
