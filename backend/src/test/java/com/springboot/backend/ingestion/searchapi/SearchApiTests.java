@@ -397,4 +397,22 @@ class SearchApiTests {
         assertEquals(1, results.size());
         assertEquals("Apple iPhone 16 Pro 256GB", results.get(0).path("title").asText());
     }
+
+    // The explicit-category overload lets EbayPriceSource apply the GPU ruleset (memory-size
+    // splitting, partner-board tolerance) the 3-arg overload above can't reach.
+    @Test void titleMatchesUnderGpuCategoryAppliesTheGpuRuleset() {
+        var results = json.readTree("""
+                [{"title":"Sapphire Pulse Radeon RX 9070 16GB","price":"$649.00","extracted_price":649.00}]
+                """);
+        var matches = ProductMatcher.titleMatches("GPU", "AMD", "Radeon RX 9070 16GB", results);
+        assertEquals(1, matches.size());
+        assertEquals(0, new java.math.BigDecimal("649.00").compareTo(matches.getFirst().price()));
+    }
+
+    @Test void titleMatchesUnderGpuCategoryStillRejectsAnUnacceptedTitle() {
+        var results = json.readTree("""
+                [{"title":"Sapphire Pulse Radeon RX 9070 XT 16GB","price":"$749.00","extracted_price":749.00}]
+                """);
+        assertTrue(ProductMatcher.titleMatches("GPU", "AMD", "Radeon RX 9070 16GB", results).isEmpty());
+    }
 }

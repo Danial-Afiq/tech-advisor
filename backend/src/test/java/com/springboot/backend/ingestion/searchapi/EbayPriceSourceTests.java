@@ -30,7 +30,7 @@ class EbayPriceSourceTests {
                 [{"title":"Apple iPhone 16 Pro 256GB","price":"$899.00","extracted_price":899.00},
                  {"title":"Apple iPhone 16 Pro 256GB","price":"$999.00","extracted_price":999.00}]
                 """);
-        var payload = EbayPriceSource.toPrice(812, "Apple", "iPhone 16 Pro", now, results).get();
+        var payload = EbayPriceSource.toPrice(812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, results).get();
         assertEquals("searchapi-ebay-prices", payload.sourceId());
         var price = (Payload.Price) payload.body();
         assertEquals("812", price.productReference());
@@ -48,7 +48,7 @@ class EbayPriceSourceTests {
                  {"title":"Apple iPhone 16 Pro 256GB","price":"$849.00","extracted_price":849.00},
                  {"title":"Apple iPhone 16 Pro 256GB","price":"$905.00","extracted_price":905.00}]
                 """);
-        var price = (Payload.Price) EbayPriceSource.toPrice(812, "Apple", "iPhone 16 Pro", now, results).get().body();
+        var price = (Payload.Price) EbayPriceSource.toPrice(812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, results).get().body();
         assertEquals(0, new java.math.BigDecimal("849.00").compareTo(price.amount()));
     }
 
@@ -58,18 +58,30 @@ class EbayPriceSourceTests {
         var results = json.readTree("""
                 [{"title":"Apple iPhone 16 Pro Max 256GB","price":"$999.00","extracted_price":999.00}]
                 """);
-        assertTrue(EbayPriceSource.toPrice(812, "Apple", "iPhone 16 Pro", now, results).isEmpty());
+        assertTrue(EbayPriceSource.toPrice(812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, results).isEmpty());
     }
 
     @Test void toPriceSkipsAMatchedTitleWithNoParseablePrice() {
         var results = json.readTree("""
                 [{"title":"Apple iPhone 16 Pro 256GB","price":"","extracted_price":null}]
                 """);
-        assertTrue(EbayPriceSource.toPrice(812, "Apple", "iPhone 16 Pro", now, results).isEmpty());
+        assertTrue(EbayPriceSource.toPrice(812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, results).isEmpty());
     }
 
     @Test void toPriceHandlesAnEmptyResultsArray() {
-        assertTrue(EbayPriceSource.toPrice(812, "Apple", "iPhone 16 Pro", now, json.readTree("[]")).isEmpty());
+        assertTrue(EbayPriceSource.toPrice(812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, json.readTree("[]")).isEmpty());
+    }
+
+    @Test void toPriceUsesTheGpuRulesetForAGpuCategoryProduct() {
+        // "16GB" here is VRAM, not a phone storage tier - only the GPU ruleset
+        // (ProductMatcher's splitMemory()) treats it as part of the model, letting an AIB
+        // partner board title ("ASUS TUF ... 16GB") still match the reference "RTX 4080 16GB".
+        var results = json.readTree("""
+                [{"title":"ASUS TUF Gaming GeForce RTX 4080 16GB OC Edition","price":"$1099.00","extracted_price":1099.00}]
+                """);
+        var payload = EbayPriceSource.toPrice(915, "GPU", "NVIDIA", "GeForce RTX 4080 16GB", now, results).get();
+        var price = (Payload.Price) payload.body();
+        assertEquals(0, new java.math.BigDecimal("1099.00").compareTo(price.amount()));
     }
 
     @Test void requestLimitAndExecutionBudgetMatchTheConfiguredProductCount() {
@@ -95,6 +107,12 @@ class EbayPriceSourceTests {
         assertThrows(IllegalArgumentException.class, () -> new EbayPriceSettings(51));
     }
 
+    @Test void settingsRejectCategoriesOutsideSmartphoneOrGpu() {
+        assertThrows(IllegalArgumentException.class, () -> new EbayPriceSettings(10, List.of("LAPTOP")));
+        assertThrows(IllegalArgumentException.class, () -> new EbayPriceSettings(10, List.of()));
+        assertEquals(List.of("SMARTPHONE", "GPU"), new EbayPriceSettings(10, List.of("SMARTPHONE", "GPU")).categories());
+    }
+
     private JsonNode priced(String title, String price) {
         return json.readTree("[{\"title\":\"" + title + "\",\"price\":\"" + price + "\",\"extracted_price\":"
                 + price.substring(1) + "}]");
@@ -103,14 +121,15 @@ class EbayPriceSourceTests {
     @Test void ingestPricesEveryProductInTheBatchAndAdvancesTheCursorAfterEach() throws Exception {
         var repository = mock(EbayPriceRepository.class);
         var client = mock(SearchApiClient.class);
-        var a = new EbayPriceRepository.Product(1, "Apple", "iPhone 16");
-        var b = new EbayPriceRepository.Product(2, "Apple", "iPhone 16 Pro");
+        var settings = new EbayPriceSettings(10);
+        var a = new EbayPriceRepository.Product(1, "Apple", "iPhone 16", "SMARTPHONE");
+        var b = new EbayPriceRepository.Product(2, "Apple", "iPhone 16 Pro", "SMARTPHONE");
         var state = new EbayPriceIngestionState();
         when(repository.state()).thenReturn(state);
-        when(repository.nextProducts(0, 10)).thenReturn(new EbayPriceRepository.Batch(List.of(a, b), false));
+        when(repository.nextProducts(0, 10, settings)).thenReturn(new EbayPriceRepository.Batch(List.of(a, b), false));
         when(client.ebay(any(), eq("Apple iPhone 16"))).thenReturn(priced("Apple iPhone 16", "$599.00"));
         when(client.ebay(any(), eq("Apple iPhone 16 Pro"))).thenReturn(priced("Apple iPhone 16 Pro", "$899.00"));
-        var source = new EbayPriceSource(repository, new EbayPriceSettings(10), client);
+        var source = new EbayPriceSource(repository, settings, client);
 
         var output = new ArrayList<Payload>();
         try (var context = new SourceContext(Clock.fixed(now, ZoneOffset.UTC), () -> {})) {
@@ -129,13 +148,14 @@ class EbayPriceSourceTests {
     @Test void ingestResetsTheCursorToZeroWhenTheBatchWrapped() throws Exception {
         var repository = mock(EbayPriceRepository.class);
         var client = mock(SearchApiClient.class);
-        var a = new EbayPriceRepository.Product(5, "Apple", "iPhone 16");
+        var settings = new EbayPriceSettings(10);
+        var a = new EbayPriceRepository.Product(5, "Apple", "iPhone 16", "SMARTPHONE");
         var state = new EbayPriceIngestionState();
         state.catalogueCursor = 99;
         when(repository.state()).thenReturn(state);
-        when(repository.nextProducts(99, 10)).thenReturn(new EbayPriceRepository.Batch(List.of(a), true));
+        when(repository.nextProducts(99, 10, settings)).thenReturn(new EbayPriceRepository.Batch(List.of(a), true));
         when(client.ebay(any(), eq("Apple iPhone 16"))).thenReturn(priced("Apple iPhone 16", "$599.00"));
-        var source = new EbayPriceSource(repository, new EbayPriceSettings(10), client);
+        var source = new EbayPriceSource(repository, settings, client);
 
         try (var context = new SourceContext(Clock.fixed(now, ZoneOffset.UTC), () -> {})) {
             source.ingest(context, p -> {});
@@ -154,13 +174,14 @@ class EbayPriceSourceTests {
         // safe to catch and skip.
         var repository = mock(EbayPriceRepository.class);
         var client = mock(SearchApiClient.class);
-        var failing = new EbayPriceRepository.Product(1, "Apple", "iPhone 16");
-        var neverReached = new EbayPriceRepository.Product(2, "Apple", "iPhone 16 Pro");
+        var settings = new EbayPriceSettings(10);
+        var failing = new EbayPriceRepository.Product(1, "Apple", "iPhone 16", "SMARTPHONE");
+        var neverReached = new EbayPriceRepository.Product(2, "Apple", "iPhone 16 Pro", "SMARTPHONE");
         var state = new EbayPriceIngestionState();
         when(repository.state()).thenReturn(state);
-        when(repository.nextProducts(0, 10)).thenReturn(new EbayPriceRepository.Batch(List.of(failing, neverReached), false));
+        when(repository.nextProducts(0, 10, settings)).thenReturn(new EbayPriceRepository.Batch(List.of(failing, neverReached), false));
         when(client.ebay(any(), eq("Apple iPhone 16"))).thenThrow(new RuntimeException("auth failed"));
-        var source = new EbayPriceSource(repository, new EbayPriceSettings(10), client);
+        var source = new EbayPriceSource(repository, settings, client);
 
         var output = new ArrayList<Payload>();
         try (var context = new SourceContext(Clock.fixed(now, ZoneOffset.UTC), () -> {})) {
