@@ -31,10 +31,11 @@ import tools.jackson.databind.JsonNode;
  *   - bounded, configurable request cost per run via {@link EbayPriceSettings}, independent
  *     of Google Shopping's own budget.
  *
- * Default config (10 products/run, once/day - see scheduleInterval()) costs ~300 requests a
- * month against the shared SearchAPI.io account quota - deliberately conservative given that
- * quota is shared with Google Shopping review ingestion too and has been exhausted mid-month
- * before (Smartphone DB Backfill session). Both numbers are plain config, tune freely.
+ * Default config (10 products/run, once every 2 weeks - see scheduleInterval(), matching the
+ * shared scheduler cadence in RunStore.INTERVAL) costs ~20 requests a month against the shared
+ * SearchAPI.io account quota - deliberately conservative given that quota is shared with
+ * Google Shopping review ingestion too and has been exhausted mid-month before (Smartphone DB
+ * Backfill session). Both numbers are plain config, tune freely.
  *
  * Backfilling the whole catalogue once at the start (rather than waiting for the round-robin
  * sweep to reach every product for the first time over many days) is explicitly out of scope
@@ -69,8 +70,9 @@ public class EbayPriceSource implements IngestionSource {
     @Override public Duration executionBudget() {
         return Duration.ofSeconds(requestLimit() + NETWORK_OVERHEAD_SECONDS);
     }
-    // Deliberately conservative default - see class Javadoc for the request-budget math.
-    @Override public Optional<Duration> scheduleInterval() { return Optional.of(Duration.ofDays(1)); }
+    // Matches the shared scheduler cadence (RunStore.INTERVAL) - see class Javadoc for the
+    // request-budget math at this interval.
+    @Override public Optional<Duration> scheduleInterval() { return Optional.of(Duration.ofDays(14)); }
     // Always true: unlike TechApiBenchmarkSource's one-time backfill-then-incremental shape,
     // this source has no "finished" state to race toward faster - every run prices its own
     // bounded batch and that is intentionally the whole job for that run. Returning false to

@@ -54,5 +54,11 @@ public record SearchApiSettings(
         this(apiKey, gl, hl, location, maxProductsPerRun, List.of("SMARTPHONE"), baseUrl, allowedHost);
     }
 
+    /** Configurable categories, real base URL/allowed-host - the shape before those were configurable. */
+    public SearchApiSettings(String apiKey, String gl, String hl, String location, int maxProductsPerRun,
+                              List<String> categories) {
+        this(apiKey, gl, hl, location, maxProductsPerRun, categories, DEFAULT_BASE_URL, DEFAULT_ALLOWED_HOST);
+    }
+
     @Override public String toString() { return "SearchApiSettings[credentials redacted]"; }
 }

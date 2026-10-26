@@ -62,7 +62,7 @@ class EbayPriceSourceTests {
     @Test void sourceIdAndScheduleAreStable() {
         var source = new EbayPriceSource(null, new EbayPriceSettings(10), null);
         assertEquals("searchapi-ebay-prices", source.sourceId());
-        assertEquals(java.time.Duration.ofDays(1), source.scheduleInterval().orElseThrow());
+        assertEquals(java.time.Duration.ofDays(14), source.scheduleInterval().orElseThrow());
         assertTrue(source.scheduleCycleComplete());
     }
 }

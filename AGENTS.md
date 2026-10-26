@@ -2024,18 +2024,18 @@ Keep real adapters inside this controlled framework.
 
 ## 16.5 Current scheduling decision
 
-Cadence is **every 2 days** (`RunStore.INTERVAL`) — **this is a temporary override, not the target production cadence**, in effect since 2026-09-27. The real intent is 14 days, matching the original ticket and the current live Jira ticket text.
+Cadence is **every 14 days** (`RunStore.INTERVAL`), the real target production cadence, matching the original ticket and the current live Jira ticket text. Reverted back to 14 days on 2026-10-26 (`feat/market-change-detection` branch), ending the temporary 2-day override below.
 
-**History, so this isn't re-litigated:** the interval was first deliberately changed to every 24 hours on 2026-09-16, purely to make the scheduler observable within a short testing window, then reverted back to 14 days on 2026-09-22 once that testing was done. It was changed again to 2 days on 2026-09-27, this time so the newly-enabled `MobileApiSmartphoneSource` (ticket 1.2) can gather real data while the smartphone schema is still expected to change (model-variation handling isn't settled yet). There is no data migration for either change (no production data depends on the anchor's spacing); it is a plain code constant.
+**History, so this isn't re-litigated:** the interval was first deliberately changed to every 24 hours on 2026-09-16, purely to make the scheduler observable within a short testing window, then reverted back to 14 days on 2026-09-22 once that testing was done. It was changed again to 2 days on 2026-09-27, this time so the newly-enabled `MobileApiSmartphoneSource` (ticket 1.2) could gather real data while the smartphone schema was still expected to change (model-variation handling). That data-gathering window is now considered over; the cadence reverted to the real 14-day target on 2026-10-26, and `EbayPriceSource`'s own `scheduleInterval()` override was folded into the same 14-day cadence at the same time (previously an independent 1-day override — see its Javadoc for the updated request-budget math). There is no data migration for any of these changes (no production data depends on the anchor's spacing); it is a plain code constant.
 
-The shared interval still controls when the single coordinator wakes. Sources may now declare a longer `scheduleInterval()` without creating a second scheduler. `CoordinatorState.nextSourceDue` persists those due times across restarts; an overridden source is omitted from intervening shared runs and advances only after its own scheduled execution succeeds. Failed, interrupted, skipped and manual runs do not count as a successful source refresh. Sources without an override retain the two-day shared behaviour. `techapi-soc-benchmarks` uses this mechanism for an independent 14-day refresh.
+The shared interval still controls when the single coordinator wakes. Sources may still declare their own `scheduleInterval()` without creating a second scheduler — `CoordinatorState.nextSourceDue` persists those due times across restarts; an overridden source is omitted from intervening shared runs and advances only after its own scheduled execution succeeds. Failed, interrupted, skipped and manual runs do not count as a successful source refresh. Sources without an override follow the shared 14-day cadence directly. `techapi-soc-benchmarks` and `searchapi-ebay-prices` both currently declare an explicit 14-day override that matches the shared cadence exactly (kept explicit rather than removed, so each source's own interval stays independently pinned if the shared cadence changes again later).
 
 - initial anchor: **17 Sep 2026 13:00 SGT / 05:00 UTC**,
 - schedule state is persisted,
 - manual runs do not shift cadence,
 - restart recovery/catch-up is supported.
 
-Do not change this constant based on old references to "daily"/"14-day" in docs, commit messages, or comments predating 2026-09-27 — those describe earlier states, not current behaviour. **Revert to 14 days once the smartphone schema settles and this stops being an active data-gathering exercise** — do not let this become a second stale "temporary" that nobody reverts, the way the first one nearly did.
+Do not change this constant based on old references to "2-day"/"daily" in docs, commit messages, or comments predating 2026-10-26 — those describe the now-ended temporary state, not current behaviour.
 
 ## 16.6 Current simulated/demo ingestion
 Current runner includes simulated fixtures and persisted demo receipts.
@@ -2321,8 +2321,8 @@ CC BY-SA attribution. `observed_at` uses TechAPI's dataset `updated_at` timestam
 absent or malformed. This is dataset freshness, not a claim about when a
 benchmark measurement was run.
 
-The source declares a 14-day `scheduleInterval()` while the shared coordinator
-continues waking every two days for other sources (§16.5). An incomplete bounded
+The source declares a 14-day `scheduleInterval()`, which now matches the shared
+coordinator's own cadence for other sources (§16.5). An incomplete bounded
 initial or incremental cycle remains due at the next shared wake; only completion
 starts the next 14-day wait. Manual runs never move schedule dates. During the
 initial backfill, the admin ingestion page exposes processed/total progress,

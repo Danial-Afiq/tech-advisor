@@ -15,13 +15,11 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Component
 public class RunStore {
-    // TEMPORARY override, 27 Sep 2026 - NOT the real production cadence. Set to 2 days
-    // specifically so the newly-enabled MobileAPI source can gather real data to inspect
-    // while the smartphone schema is still expected to change (model-variation handling).
-    // This remains the shared wake-up interval (see AGENTS.md 16.5). Sources without an
-    // override run at this cadence; a source may declare a longer interval and is filtered
-    // from intervening shared slots using persisted CoordinatorState.nextSourceDue.
-    public static final Duration INTERVAL = Duration.ofDays(2);
+    // Shared wake-up interval, 2 weeks (see AGENTS.md 16.5). Sources without an override run
+    // at this cadence; a source may declare a longer (or, previously, shorter - see
+    // EbayPriceSource) interval and is filtered from intervening shared slots using persisted
+    // CoordinatorState.nextSourceDue.
+    public static final Duration INTERVAL = Duration.ofDays(14);
     public static final Duration LEASE = Duration.ofSeconds(90);
     private final JdbcTemplate db;
     private final TransactionTemplate tx;
