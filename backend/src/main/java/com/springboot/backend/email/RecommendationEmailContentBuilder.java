@@ -72,9 +72,14 @@ public class RecommendationEmailContentBuilder {
                 return "- No contributing factors were available.";
             }
 
-            List<String> factors = deterministic.entrySet().stream()
+            // v4 scoring stores factor details inside "factors"; legacy rows may be flat.
+            Object nested = deterministic.get("factors");
+            Map<?, ?> perFactor = nested instanceof Map<?, ?> entries ? entries : deterministic;
+            List<String> factors = perFactor.entrySet().stream()
                     .filter(entry -> entry.getValue() instanceof Map<?, ?>)
-                    .sorted(Comparator.comparingInt((Map.Entry<?, ?> entry) -> priority((Map<?, ?>) entry.getValue())).reversed())
+                    .sorted(Comparator.comparingDouble(
+                            (Map.Entry<?, ?> entry) -> significance((Map<?, ?>) entry.getValue()))
+                            .reversed().thenComparing(entry -> entry.getKey().toString()))
                     .limit(3)
                     .map(entry -> formatFactor(entry.getKey().toString(), (Map<?, ?>) entry.getValue()))
                     .toList();
@@ -85,6 +90,14 @@ public class RecommendationEmailContentBuilder {
         } catch (RuntimeException exception) {
             return "- Contributing factors could not be displayed.";
         }
+    }
+
+    private double significance(Map<?, ?> details) {
+        Object contribution = details.get("contribution");
+        if (contribution instanceof Number number && Double.isFinite(number.doubleValue())) {
+            return Math.abs(number.doubleValue());
+        }
+        return priority(details);
     }
 
     private int priority(Map<?, ?> details) {

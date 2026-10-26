@@ -44,7 +44,7 @@ public class RecommendationService {
                 input.triggerEventId(),
                 request.analysis().verdict(),
                 response.evidenceGrade(),
-                buildInputSnapshot(request, response),
+                buildInputSnapshot(request, response, input.deterministicFactors()),
                 buildFactorAnalysis(input, response),
                 response.summary(),
                 response.meta().aiModel(),
@@ -64,7 +64,8 @@ public class RecommendationService {
                 request.retrieval());
     }
 
-    private Map<String, Object> buildInputSnapshot(AssessRequest request, AssessResponse response) {
+    private Map<String, Object> buildInputSnapshot(
+            AssessRequest request, AssessResponse response, Map<String, Object> deterministicFactors) {
         Map<String, Object> snapshot = new LinkedHashMap<>();
         snapshot.put("owned_device", toMap(request.userContext().ownedDevice()));
         snapshot.put("preferences", toMap(request.userContext().preferences()));
@@ -75,6 +76,12 @@ public class RecommendationService {
         // score and the version that produced it, an old row's verdict cannot
         // be re-derived once the thresholds move (AGENTS.md §7.1, §27.5).
         snapshot.put("analysis", toMap(request.analysis()));
+        if (deterministicFactors.containsKey("priorities")) {
+            snapshot.put("scoring_priorities", deterministicFactors.get("priorities"));
+        }
+        if (deterministicFactors.containsKey("scoring_version")) {
+            snapshot.put("scoring_version", deterministicFactors.get("scoring_version"));
+        }
         // Two recommendations sharing a prompt_version must also share these
         // retrieval parameters or reproducibility is lost (AGENTS.md §10).
         snapshot.put("retrieval", response.meta().retrieval());

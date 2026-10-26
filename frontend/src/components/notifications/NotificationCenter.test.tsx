@@ -126,7 +126,9 @@ describe("NotificationCenter", () => {
     await user.click(await panel.findByRole("button", { name: /^Unread: New upgrade recommendations!/ }));
 
     expect(mocks.markNotificationRead).toHaveBeenCalledWith(1);
-    expect(screen.getByTestId("location")).toHaveTextContent("/dashboard?recommendation=42");
+    await waitFor(() => {
+      expect(screen.getByTestId("location")).toHaveTextContent("/dashboard?recommendation=42");
+    });
     expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
     expect(bell()).toHaveAccessibleName("Notifications");
   });
@@ -138,7 +140,10 @@ describe("NotificationCenter", () => {
 
     await user.click(await panel.findByRole("button", { name: /^Unread: New upgrade/ }));
 
-    expect(screen.getByTestId("location")).toHaveTextContent("/dashboard?recommendation=42");
+    expect(mocks.markNotificationRead).toHaveBeenCalledWith(1);
+    await waitFor(() => {
+      expect(screen.getByTestId("location")).toHaveTextContent("/dashboard?recommendation=42");
+    });
   });
 
   it("does not navigate for a recommendation that is no longer available", async () => {

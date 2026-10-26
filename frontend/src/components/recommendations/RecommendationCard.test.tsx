@@ -219,6 +219,54 @@ describe("RecommendationCard", () => {
     ).toBeInTheDocument();
     });
 
+  it("does not guess a currency for an amount without a valid ISO code", () => {
+    render(
+      <RecommendationCard
+        recommendation={recommendation({
+          latestPrice: 99,
+          currency: null,
+          priceConversionStatus: "UNAVAILABLE",
+        })}
+      />
+    );
+
+    expect(
+      screen.getByText("99.00 (currency unavailable)")
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/SGD/)).not.toBeInTheDocument();
+  });
+
+  it("shows stale and unavailable conversion fallbacks", () => {
+    const { rerender } = render(
+      <RecommendationCard
+        recommendation={recommendation({
+          priceConversionStatus: "STALE",
+          exchangeRateDate: "2026-10-19",
+        })}
+      />
+    );
+
+    expect(
+      screen.getByText(/Using stale exchange rates dated/)
+    ).toBeInTheDocument();
+
+    rerender(
+      <RecommendationCard
+        recommendation={recommendation({
+          priceConversionStatus: "UNAVAILABLE",
+          currency: "USD",
+        })}
+      />
+    );
+
+    expect(
+      screen.getByText(
+        "Currency conversion is unavailable; showing the original price."
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText(/USD\s*1,299\.00/)).toBeInTheDocument();
+  });
+
   it("has no star control unless the caller handles it", () => {
     render(<RecommendationCard recommendation={recommendation()} />);
 

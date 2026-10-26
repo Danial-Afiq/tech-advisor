@@ -1,4 +1,5 @@
 import { useEffect, useState, type SubmitEvent } from "react";
+import { useCurrency } from "../components/currency/currency";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   DEFAULT_SORT,
@@ -53,6 +54,7 @@ import {
 export default function DashboardPage() {
   const navigate = useNavigate();
   const session = getSession();
+  const { currency } = useCurrency();
 
   /*
    * Sort lives in the URL independently from the local filters, so changing
@@ -109,7 +111,7 @@ export default function DashboardPage() {
   useEffect(() => {
     let cancelled = false;
 
-    listDashboardRecommendations(sort)
+    listDashboardRecommendations(sort, currency)
       .then((rows) => {
         if (!cancelled) {
           setRecommendations(rows);
@@ -138,7 +140,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [navigate, sort, reloadCount]);
+  }, [navigate, sort, reloadCount, currency]);
 
   if (!session) {
     return null;

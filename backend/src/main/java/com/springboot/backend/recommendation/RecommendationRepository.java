@@ -204,6 +204,8 @@ public class RecommendationRepository {
                                     "created_at",
                                     java.time.OffsetDateTime.class
                             ),
+                            "ORIGINAL",
+                            null,
                             specChanges(resultSet.getString(
                                     "spec_deltas"
                             ))
