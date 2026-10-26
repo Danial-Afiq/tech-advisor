@@ -1,8 +1,7 @@
 package com.springboot.backend.email;
 
 import com.springboot.backend.model.User;
-import com.springboot.backend.recommendation.RecommendationsPersisted;
-import com.springboot.backend.recommendation.RecommendationsPersisted.NotableRecommendation;
+import com.springboot.backend.recommendation.RecommendationSaved;
 import com.springboot.backend.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,7 +12,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -107,7 +105,7 @@ class RecommendationEmailIntegrationTest {
                 "B"
         );
 
-        process(recommendationId, "STRONG_UPGRADE_CANDIDATE");
+        process(recommendationId);
 
         verify(sender).send(
             eq(owner.getEmail()),
@@ -145,7 +143,7 @@ class RecommendationEmailIntegrationTest {
                 "A"
         );
 
-        process(recommendationId, "STRONG_UPGRADE_CANDIDATE");
+        process(recommendationId);
 
         verify(sender, never()).send(
                 anyString(),
@@ -173,7 +171,7 @@ class RecommendationEmailIntegrationTest {
                 "A"
         );
 
-        process(recommendationId, "STRONG_UPGRADE_CANDIDATE");
+        process(recommendationId);
 
         verify(sender, never()).send(
                 anyString(),
@@ -192,7 +190,7 @@ class RecommendationEmailIntegrationTest {
                 "-"
         );
 
-        process(recommendationId, "STRONG_UPGRADE_CANDIDATE");
+        process(recommendationId);
 
         verify(sender, never()).send(
                 anyString(),
@@ -211,7 +209,7 @@ class RecommendationEmailIntegrationTest {
                 "A"
         );
 
-        process(recommendationId, "WORTH_CONSIDERING");
+        process(recommendationId);
 
         verify(sender, never()).send(
                 anyString(),
@@ -230,8 +228,8 @@ class RecommendationEmailIntegrationTest {
                 "A"
         );
 
-        process(recommendationId, "STRONG_UPGRADE_CANDIDATE");
-        process(recommendationId, "STRONG_UPGRADE_CANDIDATE");
+        process(recommendationId);
+        process(recommendationId);
 
         verify(sender, times(1)).send(
                 anyString(),
@@ -254,7 +252,7 @@ class RecommendationEmailIntegrationTest {
                 "A"
         );
 
-        process(recommendationId, "STRONG_UPGRADE_CANDIDATE");
+        process(recommendationId);
 
         verify(sender, times(3)).send(
                 anyString(),
@@ -331,20 +329,8 @@ class RecommendationEmailIntegrationTest {
         );
     }
 
-    private void process(long recommendationId, String verdict) {
-        emailService.onRecommendationsPersisted(
-                new RecommendationsPersisted(
-                        owner.getId(),
-                        null,
-                        List.of(
-                                new NotableRecommendation(
-                                        recommendationId,
-                                        productId,
-                                        verdict
-                                )
-                        )
-                )
-        );
+    private void process(long recommendationId) {
+        emailService.onRecommendationSaved(new RecommendationSaved(recommendationId));
     }
 
     private Map<String, Object> emailState(long recommendationId) {

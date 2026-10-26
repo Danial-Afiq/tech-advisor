@@ -1,7 +1,6 @@
 package com.springboot.backend.email;
 
-import com.springboot.backend.recommendation.RecommendationsPersisted;
-import com.springboot.backend.recommendation.RecommendationsPersisted.NotableRecommendation;
+import com.springboot.backend.recommendation.RecommendationSaved;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -31,17 +30,15 @@ public class RecommendationEmailService {
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-    public void onRecommendationsPersisted(RecommendationsPersisted event) {
-        for (NotableRecommendation notable : event.recommendations()) {
-            try {
-                process(notable.recommendationId());
-            } catch (RuntimeException failure) {
-                LOG.error(
-                        "Unexpected recommendation email failure for recommendation {}; recommendation remains saved",
-                        notable.recommendationId(),
-                        failure
-                );
-            }
+    public void onRecommendationSaved(RecommendationSaved event) {
+        try {
+            process(event.recommendationId());
+        } catch (RuntimeException failure) {
+            LOG.error(
+                    "Unexpected recommendation email failure for recommendation {}; recommendation remains saved",
+                    event.recommendationId(),
+                    failure
+            );
         }
     }
 
