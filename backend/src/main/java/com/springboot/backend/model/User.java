@@ -68,4 +68,19 @@ public class User {
     public void setRole(String role) {
         this.role = role;
     }
+
+    @Column(
+            name = "recommendation_emails_enabled",
+            nullable = false
+    )
+    private boolean recommendationEmailsEnabled = true;
+
+    public boolean isRecommendationEmailsEnabled() {
+        return recommendationEmailsEnabled;
+    }
+
+    public void setRecommendationEmailsEnabled(boolean recommendationEmailsEnabled) {
+
+        this.recommendationEmailsEnabled = recommendationEmailsEnabled;
+    }
 }

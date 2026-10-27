@@ -23,6 +23,10 @@ vi.mock('./pages/AdminCatalogue', () => ({
   default: () => <h1>Admin catalogue route</h1>,
 }))
 
+vi.mock("./pages/SettingsPage", () => ({
+  default: () => <h1>Settings route</h1>,
+}));
+
 function renderAt(path: string) {
   window.history.replaceState({}, '', path)
   return render(<App />)
@@ -44,7 +48,7 @@ describe('authenticated App routes', () => {
     await expectRoute('Login route', '/login')
   })
 
-it("redirects USER visitors from / to /dashboard", async () => {
+  it("redirects USER visitors from / to /dashboard", async () => {
     setSession({
       token: "user-token",
       email: "user@example.com",
@@ -140,4 +144,38 @@ it("redirects USER visitors from / to /dashboard", async () => {
     renderAt('/no-such-page')
     expect(screen.queryByRole('heading')).not.toBeInTheDocument()
   })
+
+  it("allows a USER to access /settings", async () => {
+    setSession({
+      token: "user-token",
+      email: "user@example.com",
+      role: "USER",
+  });
+
+    renderAt("/settings");
+
+    await expectRoute("Settings route", "/settings");
+  });
+
+  it("redirects signed-out access to /settings to /login", async () => {
+    renderAt("/settings");
+
+    await expectRoute("Login route", "/login");
+  });
+
+  it("redirects an ADMIN away from /settings", async () => {
+    setSession({
+      token: "admin-token",
+      email: "admin@example.com",
+      role: "ADMIN",
+    });
+
+    renderAt("/settings");
+
+    await expectRoute(
+      "Admin ingestion route",
+      "/admin/ingestion"
+    );
+  });
+
 })

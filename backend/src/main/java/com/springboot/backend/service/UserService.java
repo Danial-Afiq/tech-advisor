@@ -5,6 +5,7 @@ import java.util.Locale;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.springboot.backend.dto.LoginRequest;
 import com.springboot.backend.dto.LoginResponse;
@@ -49,12 +50,9 @@ public class UserService {
         String email = request.getEmail().trim().toLowerCase(Locale.ROOT);
 
         User user = userRepository.findByEmailIgnoreCase(email)
-                .orElseThrow(() ->
-                        new BadCredentialsException("Invalid email or password"));
+                .orElseThrow(() -> new BadCredentialsException("Invalid email or password"));
 
-        if (!passwordEncoder.matches(
-                request.getPassword(),
-                user.getPasswordHash())) {
+        if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
             throw new BadCredentialsException("Invalid email or password");
         }
 
@@ -70,9 +68,17 @@ public class UserService {
     public UserResponse getProfile(String email) {
 
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() ->
-                        new IllegalArgumentException("User not found"));
+                .orElseThrow(() -> new IllegalArgumentException("User not found"));
 
         return new UserResponse(user);
+    }
+
+    @Transactional
+    public UserResponse updateEmailNotificationPreference(String email, boolean enabled) {
+        User user = userRepository.findByEmailIgnoreCase(email)
+                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+
+        user.setRecommendationEmailsEnabled(enabled);
+        return new UserResponse(userRepository.save(user));
     }
 }

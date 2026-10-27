@@ -24,6 +24,7 @@ public class UserResponse {
         this.email = user.getEmail();
         this.role = user.getRole();
         this.createdAt = user.getCreatedAt();
+        this.recommendationEmailsEnabled = user.isRecommendationEmailsEnabled();
     }
 
     public Long getId() {
@@ -40,5 +41,15 @@ public class UserResponse {
 
     public OffsetDateTime getCreatedAt() {
         return createdAt;
+    }
+
+    @Schema(
+        description = "Whether strong recommendation emails are enabled.",
+        example = "true"
+    )
+    private boolean recommendationEmailsEnabled;
+
+    public boolean isRecommendationEmailsEnabled() {
+        return recommendationEmailsEnabled;
     }
 }

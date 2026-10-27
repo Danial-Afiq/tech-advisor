@@ -109,6 +109,11 @@
 			<version>${springdoc.version}</version>
 		</dependency>
 
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-mail</artifactId>
+		</dependency>
+
 		<!-- JWT creation and validation -->
 		<dependency>
 			<groupId>io.jsonwebtoken</groupId>

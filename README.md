@@ -1206,6 +1206,18 @@ overridable from the environment when you actually need to change one.
 | `JWT_SECRET` | backend | *(required; no default)* | Fly secret |
 | `JWT_EXPIRATION_SECONDS` | backend | `3600` | optional Fly secret/config |
 | `RECOMMENDATION_DISMISSAL_COOLDOWN_DAYS` | backend | `30` | optional Fly secret/config |
+| `RECOMMENDATION_EMAIL_ELIGIBLE_VERDICT` | backend | `STRONG_UPGRADE_CANDIDATE` | optional Fly config |
+| `RECOMMENDATION_EMAIL_MINIMUM_GRADE` | backend | `B` | optional Fly config |
+| `RECOMMENDATION_EMAIL_MAXIMUM_ATTEMPTS` | backend | `3` | optional Fly config |
+| `RECOMMENDATION_EMAIL_FRONTEND_URL` | backend | `http://localhost:5173/dashboard` | set to the deployed frontend dashboard URL on Fly |
+| `RECOMMENDATION_EMAIL_FROM_ADDRESS` | backend | `no-reply@techadvisor.local` | set to the verified sender address in production |
+| `MAIL_HOST` | backend | `localhost` | SMTP provider host on Fly |
+| `MAIL_PORT` | backend | `1025` | SMTP provider port on Fly |
+| `MAIL_USERNAME` | backend | *(blank)* | Fly secret when required by the SMTP provider |
+| `MAIL_PASSWORD` | backend | *(blank)* | Fly secret when required by the SMTP provider |
+| `MAIL_SMTP_AUTH` | backend | `false` | set according to the SMTP provider |
+| `MAIL_STARTTLS_ENABLED` | backend | `false` | set according to the SMTP provider |
+| `MAIL_HEALTH_ENABLED` | backend | `false` | optional Fly config |
 | `ADMIN_EMAIL` | backend | *(required; no default)* | Fly secret |
 | `ADMIN_PASSWORD` | backend | *(required; minimum 12 characters)* | Fly secret |
 

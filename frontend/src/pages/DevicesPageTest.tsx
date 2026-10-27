@@ -27,6 +27,7 @@ import { useSmartphoneCatalogue } from "../components/devices/useSmartphoneCatal
 import {
   DASHBOARD_PATH,
   DEVICES_PATH,
+  SETTINGS_PATH
 } from "../routing/paths";
 
 /**
@@ -168,6 +169,10 @@ export default function DevicesPageTest() {
 
         if (key === "devices") {
           void navigate(DEVICES_PATH);
+        }
+
+        if (key === "settings") {
+          void navigate(SETTINGS_PATH);
         }
       }}
       user={{ name: session.email.split("@")[0], email: session.email }}
