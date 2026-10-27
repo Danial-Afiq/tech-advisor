@@ -3344,6 +3344,18 @@ ADMIN_EMAIL               # required bootstrap administrator email
 ADMIN_PASSWORD            # required; minimum 12 characters
 RECOMMENDATION_AI_ASSESSMENT_ENABLED # optional, commented out; default true (§18.12)
 RECOMMENDATION_DISMISSAL_COOLDOWN_DAYS # optional, commented out; default 30
+RECOMMENDATION_EMAIL_ELIGIBLE_VERDICT # optional; default STRONG_UPGRADE_CANDIDATE
+RECOMMENDATION_EMAIL_MINIMUM_GRADE # optional; default B
+RECOMMENDATION_EMAIL_MAXIMUM_ATTEMPTS # optional; default 3
+RECOMMENDATION_EMAIL_FRONTEND_URL # optional; defaults to the local dashboard URL
+RECOMMENDATION_EMAIL_FROM_ADDRESS # optional; defaults to no-reply@techadvisor.local
+MAIL_HOST
+MAIL_PORT
+MAIL_USERNAME
+MAIL_PASSWORD
+MAIL_SMTP_AUTH
+MAIL_STARTTLS_ENABLED
+MAIL_HEALTH_ENABLED # optional; default false
 NOTIFICATIONS_MAX_PER_USER # optional, commented out; default 10 (§14.14)
 ```
 
@@ -3420,6 +3432,18 @@ CORS_ALLOWED_ORIGINS
 JWT_SECRET
 JWT_EXPIRATION_SECONDS  # optional; defaults to 3600 and must be positive
 RECOMMENDATION_DISMISSAL_COOLDOWN_DAYS # optional; defaults to 30 and must be positive
+RECOMMENDATION_EMAIL_ELIGIBLE_VERDICT
+RECOMMENDATION_EMAIL_MINIMUM_GRADE
+RECOMMENDATION_EMAIL_MAXIMUM_ATTEMPTS
+RECOMMENDATION_EMAIL_FRONTEND_URL
+RECOMMENDATION_EMAIL_FROM_ADDRESS
+MAIL_HOST
+MAIL_PORT
+MAIL_USERNAME
+MAIL_PASSWORD
+MAIL_SMTP_AUTH
+MAIL_STARTTLS_ENABLED
+MAIL_HEALTH_ENABLED
 ADMIN_EMAIL             # required bootstrap administrator email
 ADMIN_PASSWORD          # required; minimum 12 characters
 AI_SERVICE_TOKEN        # Spring's half of the shared secret for POST /assess

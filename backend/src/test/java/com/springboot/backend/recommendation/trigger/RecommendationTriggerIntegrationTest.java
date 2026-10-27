@@ -2,9 +2,12 @@ package com.springboot.backend.recommendation.trigger;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
+import com.springboot.backend.email.RecommendationEmailSender;
 import com.springboot.backend.dto.DeviceRequest;
 import com.springboot.backend.dto.DeviceResponse;
 import com.springboot.backend.marketevent.MarketEvent;
@@ -67,6 +70,7 @@ class RecommendationTriggerIntegrationTest {
     @Autowired @Qualifier(RecommendationTriggerConfiguration.EXECUTOR) private ThreadPoolTaskExecutor executor;
 
     @MockitoBean private AiAssessmentClient aiClient;
+    @MockitoBean private RecommendationEmailSender emailSender;
 
     private Long olderPhone;
     private Long flagship;
@@ -85,6 +89,7 @@ class RecommendationTriggerIntegrationTest {
                 db.queryForObject("SELECT current_database()", String.class).endsWith("_test"),
                 "Integration tests require a dedicated database whose name ends in _test");
         cleanUp();
+        reset(emailSender);
 
         when(aiClient.assess(any())).thenAnswer(call -> success(call.getArgument(0)));
 
@@ -105,6 +110,7 @@ class RecommendationTriggerIntegrationTest {
         awaitIdle();
         db.update("DELETE FROM recommendations");
         db.update("DELETE FROM system_log WHERE component LIKE 'TRIGGER_%'");
+        db.update("DELETE FROM system_log WHERE component = 'RECOMMENDATION_EMAIL'");
         db.update("DELETE FROM market_events");
         db.update("DELETE FROM user_devices");
         db.update("DELETE FROM products");
@@ -259,6 +265,98 @@ class RecommendationTriggerIntegrationTest {
         } finally {
             release.countDown();
         }
+    }
+
+    @Test
+    void aiEnrichmentTriggersEmailWithoutDuplicatingInAppNotification()
+            throws InterruptedException {
+
+        long userId = db.queryForObject(
+                "SELECT user_id FROM user_devices WHERE id = ?",
+                Long.class,
+                upgrader1
+        );
+
+        String email = db.queryForObject(
+                "SELECT email FROM users WHERE id = ?",
+                String.class,
+                userId
+        );
+
+        MarketEvent event = priceDrop(flagship);
+        awaitMarketEventLog(event.id());
+
+        List<Map<String, Object>> versions = db.queryForList(
+                """
+                SELECT
+                    id,
+                    status,
+                    verdict,
+                    confidence,
+                    email_status
+                FROM recommendations
+                WHERE current_device_id = ?
+                  AND candidate_product_id = ?
+                ORDER BY id
+                """,
+                upgrader1,
+                flagship
+        );
+
+        assertEquals(2, versions.size());
+
+        Map<String, Object> deterministic = versions.get(0);
+        assertEquals(
+                TierMapper.STRONG_UPGRADE_CANDIDATE,
+                deterministic.get("verdict")
+        );
+        assertNull(deterministic.get("confidence"));
+        assertEquals(
+                "NOT_ELIGIBLE",
+                deterministic.get("email_status")
+        );
+        assertEquals("SUPERSEDED", deterministic.get("status"));
+
+        Map<String, Object> aiEnriched = versions.get(1);
+        assertEquals(
+                TierMapper.STRONG_UPGRADE_CANDIDATE,
+                aiEnriched.get("verdict")
+        );
+        assertEquals("B", aiEnriched.get("confidence"));
+        assertEquals("SENT", aiEnriched.get("email_status"));
+        assertEquals("ACTIVE", aiEnriched.get("status"));
+
+        verify(emailSender, times(1)).send(
+                eq(email),
+                anyString(),
+                anyString()
+        );
+
+        assertEquals(
+                1,
+                db.queryForObject(
+                        """
+                        SELECT COUNT(*)
+                        FROM notifications
+                        WHERE user_id = ?
+                        """,
+                        Integer.class,
+                        userId
+                )
+        );
+
+        assertEquals(
+                ((Number) aiEnriched.get("id")).longValue(),
+                db.queryForObject(
+                        """
+                        SELECT recommendation_id
+                        FROM notifications
+                        WHERE user_id = ?
+                        """,
+                        Long.class,
+                        userId
+                )
+        );
     }
 
     // --- helpers ------------------------------------------------------------
