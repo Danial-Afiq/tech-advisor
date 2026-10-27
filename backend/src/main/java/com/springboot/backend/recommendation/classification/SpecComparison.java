@@ -19,17 +19,20 @@ import java.util.Map;
  * @param price         price against the user's budget, or null when unpriced
  * @param skippedSpecs  specs a value was missing for, kept so the breakdown can
  *                      say what was not known rather than implying a zero
+ * @param unmeasurableFactors factors no column of this category can measure
  */
 public record SpecComparison(
         List<ScoredSpec> scored,
         Map<String, AssessRequest.SpecDelta> specDeltas,
         Double benchmarkUpliftPct,
         AssessRequest.Price price,
-        List<String> skippedSpecs) {
+        List<String> skippedSpecs,
+        List<String> unmeasurableFactors) {
 
     public SpecComparison {
         scored = List.copyOf(scored);
         specDeltas = Map.copyOf(specDeltas);
         skippedSpecs = List.copyOf(skippedSpecs);
+        unmeasurableFactors = List.copyOf(unmeasurableFactors);
     }
 }

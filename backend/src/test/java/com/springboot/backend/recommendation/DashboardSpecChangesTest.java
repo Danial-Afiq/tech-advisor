@@ -1,6 +1,8 @@
 package com.springboot.backend.recommendation;
 
 import com.springboot.backend.dto.DashboardRecommendationResponse.SpecChange;
+import com.springboot.backend.recommendation.classification.CategorySpecRegistry;
+import com.springboot.backend.recommendation.classification.PhoneSpecMapping;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -10,6 +12,9 @@ import tools.jackson.databind.json.JsonMapper;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class DashboardSpecChangesTest {
+
+    private static final Map<String, Boolean> DIRECTIONS = RecommendationRepository.higherIsBetter(
+            new CategorySpecRegistry(List.of(new PhoneSpecMapping(null))));
 
     private final JsonMapper json = JsonMapper.builder().findAndAddModules().build();
 
@@ -32,7 +37,7 @@ class DashboardSpecChangesTest {
                         new SpecChange("benchmark_score", 30.0),
                         new SpecChange("weight_g", 19.6),
                         new SpecChange("battery_mah", 5.9)),
-                RecommendationRepository.specChanges(json.writeValueAsString(deltas)));
+                RecommendationRepository.specChanges(json.writeValueAsString(deltas), DIRECTIONS));
     }
 
     @Test
@@ -45,14 +50,14 @@ class DashboardSpecChangesTest {
 
         assertEquals(
                 List.of(new SpecChange("storage_gb", 300.0), new SpecChange("ram_gb", 100.0)),
-                RecommendationRepository.specChanges(stored));
+                RecommendationRepository.specChanges(stored, DIRECTIONS));
     }
 
     @Test
     void olderOrMalformedShapesYieldNoChanges() {
-        assertEquals(List.of(), RecommendationRepository.specChanges(null));
-        assertEquals(List.of(), RecommendationRepository.specChanges("{\"ram_gb\":{\"delta_pct\":\"big\"}}"));
-        assertEquals(List.of(), RecommendationRepository.specChanges("[1, \"x\"]"));
-        assertEquals(List.of(), RecommendationRepository.specChanges("not json"));
+        assertEquals(List.of(), RecommendationRepository.specChanges(null, DIRECTIONS));
+        assertEquals(List.of(), RecommendationRepository.specChanges("{\"ram_gb\":{\"delta_pct\":\"big\"}}", DIRECTIONS));
+        assertEquals(List.of(), RecommendationRepository.specChanges("[1, \"x\"]", DIRECTIONS));
+        assertEquals(List.of(), RecommendationRepository.specChanges("not json", DIRECTIONS));
     }
 }

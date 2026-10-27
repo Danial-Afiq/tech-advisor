@@ -70,8 +70,8 @@ public record UpgradeClassification(
         factors.put("sufficient_data", score.sufficientData());
         factors.put("skipped_specs", comparison.skippedSpecs());
         // Named explicitly so a reader can tell "no column measures this" apart
-        // from "this did not change" (see SpecFactorCatalog).
-        factors.put("unmeasurable_factors", SpecFactorCatalog.UNSCORED_FACTORS);
+        // from "this did not change" (see CategorySpecMapping).
+        factors.put("unmeasurable_factors", comparison.unmeasurableFactors());
         return factors;
     }
 

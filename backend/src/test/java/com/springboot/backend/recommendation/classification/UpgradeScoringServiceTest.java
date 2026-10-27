@@ -31,7 +31,7 @@ class UpgradeScoringServiceTest {
 
     private UpgradeScore score(Phone owned, Phone candidate) {
         SpecComparison result =
-                comparison.compare(owned, Map.of(), candidate, List.of(), List.of(), null, null, "SGD");
+                comparison.compare(PhoneSpecMapping.RULES, owned, Map.of(), candidate, List.of(), List.of(), null, null, "SGD");
         return scoring.score(result);
     }
 

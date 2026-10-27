@@ -42,7 +42,8 @@ class PriorityScoringTest {
     }
 
     SpecComparison comparison(Fixture fixture) {
-        return comparisons.compare(fixture.owned().phone(1), Map.of(), fixture.candidate().phone(2),
+        return comparisons.compare(PhoneSpecMapping.RULES,
+                fixture.owned().phone(1), Map.of(), fixture.candidate().phone(2),
                 List.of(), List.of(), fixture.price(), fixture.budget(), "SGD");
     }
 
@@ -161,9 +162,11 @@ class PriorityScoringTest {
         Fixture fixture = fixtures().get(1);
         Phone owned = fixture.owned().phone(1);
         Phone candidate = fixture.candidate().phone(2);
-        var cheap = comparisons.compare(owned, Map.of(), candidate, List.of(), List.of(),
+        var cheap = comparisons.compare(PhoneSpecMapping.RULES,
+                owned, Map.of(), candidate, List.of(), List.of(),
                 new BigDecimal("700"), fixture.budget(), "SGD");
-        var expensive = comparisons.compare(owned, Map.of(), candidate, List.of(), List.of(),
+        var expensive = comparisons.compare(PhoneSpecMapping.RULES,
+                owned, Map.of(), candidate, List.of(), List.of(),
                 new BigDecimal("1100"), fixture.budget(), "SGD");
         var priorities = Map.of("battery", 5, "value", 1);
         assertTrue(scoring.score(cheap, priorities).score() > scoring.score(expensive, priorities).score());
@@ -172,7 +175,8 @@ class PriorityScoringTest {
 
     @Test
     void emptyComparisonRemainsAnInsufficientDataResult() {
-        UpgradeScore score = scoring.score(new SpecComparison(List.of(), Map.of(), null, null, List.of()),
+        UpgradeScore score = scoring.score(
+                new SpecComparison(List.of(), Map.of(), null, null, List.of(), List.of()),
                 Map.of("battery", 5));
         assertFalse(score.sufficientData());
         assertEquals(0.0, score.score());
