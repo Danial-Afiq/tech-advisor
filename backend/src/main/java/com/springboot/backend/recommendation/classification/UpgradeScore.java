@@ -1,5 +1,7 @@
 package com.springboot.backend.recommendation.classification;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -26,28 +28,38 @@ public record UpgradeScore(
         double coverage) {
 
     public UpgradeScore {
-        factorScores = Map.copyOf(factorScores);
+        factorScores = Collections.unmodifiableMap(new LinkedHashMap<>(factorScores));
         decidingFactors = List.copyOf(decidingFactors);
     }
 
     /**
      * One factor's contribution.
      *
-     * @param contribution normalised signed strength in {@code [-1, 1]}
+     * @param priority effective priority after normalization/fallback
+     * @param weight priority divided by the sum of measured-factor priorities
+     * @param improvement normalised signed strength in {@code [-1, 1]}
+     * @param contribution improvement multiplied by weight
      * @param specs       the specs that fed this factor
      */
-    public record FactorScore(double contribution, List<String> specs) {
+    public record FactorScore(int priority, double weight, double improvement, double contribution, List<String> specs) {
         public FactorScore {
             specs = List.copyOf(specs);
         }
 
         /** Positive, negative or flat - the shape §14.12 stores per factor. */
         public String impact() {
-            if (contribution >= 0.5) return "HIGH_POSITIVE";
-            if (contribution > 0.05) return "POSITIVE";
-            if (contribution < -0.5) return "HIGH_NEGATIVE";
-            if (contribution < -0.05) return "NEGATIVE";
+            if (improvement >= 0.5) return "HIGH_POSITIVE";
+            if (improvement > 0.05) return "POSITIVE";
+            if (improvement < -0.5) return "HIGH_NEGATIVE";
+            if (improvement < -0.05) return "NEGATIVE";
             return "NEUTRAL";
         }
+    }
+
+    /** Exact effective priorities used, including any equal-weight fallback. */
+    public Map<String, Integer> prioritiesUsed() {
+        Map<String, Integer> priorities = new LinkedHashMap<>();
+        factorScores.forEach((factor, detail) -> priorities.put(factor, detail.priority()));
+        return Collections.unmodifiableMap(priorities);
     }
 }

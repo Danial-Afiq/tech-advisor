@@ -67,18 +67,22 @@ class TierMapperTest {
         var e = assertThrows(
                 IllegalArgumentException.class,
                 () -> new ScoringSettings(s.scoringVersion(), s.consideringThreshold(), s.watchingThreshold(),
-                        s.strongThreshold(), s.minSpecCoverage(), s.scorePrecision()));
+                        s.strongThreshold(), s.minSpecCoverage(), s.scorePrecision(),
+                        s.priorityMin(), s.priorityMax(), s.defaultPriority(), s.missingPriority()));
         assertTrue(e.getMessage().contains("Tier thresholds"), e.getMessage());
 
         assertThrows(IllegalArgumentException.class,
                 () -> new ScoringSettings("", s.watchingThreshold(), s.consideringThreshold(),
-                        s.strongThreshold(), s.minSpecCoverage(), s.scorePrecision()));
+                        s.strongThreshold(), s.minSpecCoverage(), s.scorePrecision(),
+                        s.priorityMin(), s.priorityMax(), s.defaultPriority(), s.missingPriority()));
         assertThrows(IllegalArgumentException.class,
                 () -> new ScoringSettings(s.scoringVersion(), s.watchingThreshold(), s.consideringThreshold(),
-                        s.strongThreshold(), 1.5, s.scorePrecision()));
+                        s.strongThreshold(), 1.5, s.scorePrecision(),
+                        s.priorityMin(), s.priorityMax(), s.defaultPriority(), s.missingPriority()));
         // A threshold above 1.0 is out of range too, since 1.0 is the top of the scale.
         assertThrows(IllegalArgumentException.class,
                 () -> new ScoringSettings(s.scoringVersion(), s.watchingThreshold(), s.consideringThreshold(),
-                        1.5, s.minSpecCoverage(), s.scorePrecision()));
+                        1.5, s.minSpecCoverage(), s.scorePrecision(),
+                        s.priorityMin(), s.priorityMax(), s.defaultPriority(), s.missingPriority()));
     }
 }

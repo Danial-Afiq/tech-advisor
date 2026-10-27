@@ -18,7 +18,9 @@ import {
   DEVICES_PATH,
   LOGIN_PATH,
   RECOMMENDATIONS_PATH,
+  SETTINGS_PATH,
 } from "./routing/paths";
+import SettingsPage from "./pages/SettingsPage";
 import { CurrencyProvider } from "./components/currency/CurrencyContext";
 
 function App() {
@@ -39,6 +41,7 @@ function App() {
               element={<Navigate to={DASHBOARD_PATH} replace />}
             />
             <Route path={DEVICES_PATH} element={<DevicesPageTest />} />
+            <Route path={SETTINGS_PATH} element={<SettingsPage />} />
           </Route>
 
           <Route element={<RequireRole role="ADMIN" />}>

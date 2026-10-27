@@ -357,6 +357,8 @@ public class RecommendationRepository {
                 rec.promptVersion(),
                 starred);
 
+        events.publishEvent(new RecommendationSaved(newId));
+
         if (!deviceHistory.isEmpty()) {
             db.update(
                     "UPDATE notifications SET recommendation_id=? WHERE recommendation_id IN ("

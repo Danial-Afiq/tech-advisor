@@ -1,6 +1,7 @@
 package com.springboot.backend.recommendation.classification;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -14,7 +15,7 @@ import org.springframework.stereotype.Service;
  * Collapses a spec comparison into one 0-1 upgrade score, where 1.0 is a
  * strong upgrade recommendation and 0.0 is not recommended.
  *
- * <p>Deterministic and free of I/O: the same comparison and the same
+ * <p>Deterministic and free of I/O: the same comparison, priorities and
  * {@link ScoringSettings} always produce the same score, which is what makes
  * {@code scoring_version} meaningful and old recommendations reproducible.
  *
@@ -24,13 +25,13 @@ import org.springframework.stereotype.Service;
  *       against its own improvement cap, so units never mix;</li>
  *   <li>specs sharing a factor average together, so a factor with four
  *       measurable specs does not outvote one with a single spec;</li>
- *   <li>every measured factor carries equal weight, and their plain mean is
- *       the final 0-1 score.</li>
+ *   <li>each measured factor's priority divided by the priority sum is its
+ *       weight; improvement times weight contributes to the final score.</li>
  * </ol>
  *
- * <p>The user's {@code device_preferences.priorities} deliberately play no part
- * here. How they should weight the verdict is still undecided (AGENTS.md
- * §27.5), so for now they only steer retrieval and the model's explanation.
+ * <p>Missing/all-zero priorities use equal weights. Unknown keys are ignored;
+ * invalid values use the configured missing priority and integers are clamped
+ * to the configured scale. Unmeasurable factors never dilute measured ones.
  */
 @Service
 public class UpgradeScoringService {
@@ -45,25 +46,47 @@ public class UpgradeScoringService {
      * @param comparison the finished spec comparison
      */
     public UpgradeScore score(SpecComparison comparison) {
+        return score(comparison, Map.of());
+    }
+
+    public UpgradeScore score(SpecComparison comparison, Map<String, ?> priorities) {
         Map<String, List<ScoredSpec>> byFactor = new LinkedHashMap<>();
         for (ScoredSpec spec : comparison.scored()) {
             byFactor.computeIfAbsent(spec.factor(), key -> new ArrayList<>()).add(spec);
         }
 
+        Map<String, Integer> effective = new LinkedHashMap<>();
+        for (String factor : Factors.ALL) {
+            if (byFactor.containsKey(factor)) {
+                effective.put(factor, priority(priorities == null ? null : priorities.get(factor)));
+            }
+        }
+        // A profile can select only unmeasurable factors. It still needs a
+        // defined score, just like an empty or all-zero profile.
+        if (priorities == null || priorities.keySet().stream().noneMatch(effective::containsKey)
+                || effective.values().stream().allMatch(value -> value == 0)) {
+            effective.replaceAll((factor, value) -> settings.defaultPriority());
+        }
+        double prioritySum = effective.values().stream().mapToDouble(Integer::doubleValue).sum();
+
         Map<String, UpgradeScore.FactorScore> factorScores = new LinkedHashMap<>();
         double total = 0;
 
-        for (Map.Entry<String, List<ScoredSpec>> entry : byFactor.entrySet()) {
-            List<ScoredSpec> specs = entry.getValue();
+        for (Map.Entry<String, Integer> entry : effective.entrySet()) {
+            List<ScoredSpec> specs = byFactor.get(entry.getKey()).stream()
+                    .sorted(Comparator.comparing(ScoredSpec::spec)).toList();
 
-            double contribution = specs.stream()
+            double improvement = specs.stream()
                     .mapToDouble(ScoredSpec::contribution)
                     .average()
                     .orElse(0.0);
+            double weight = entry.getValue() / prioritySum;
+            double contribution = improvement * weight;
 
             factorScores.put(
                     entry.getKey(),
-                    new UpgradeScore.FactorScore(contribution, specs.stream().map(ScoredSpec::spec).toList()));
+                    new UpgradeScore.FactorScore(entry.getValue(), weight, improvement, contribution,
+                            specs.stream().map(ScoredSpec::spec).toList()));
 
             total += contribution;
         }
@@ -79,16 +102,29 @@ public class UpgradeScoringService {
             return new UpgradeScore(0.0, false, factorScores, List.of(), coverage);
         }
 
-        double aggregate = total / factorScores.size();
-
         // Net-negative candidates clamp to zero rather than going below it. A
         // regression and a non-event are both simply not upgrades, and the
         // breakdown still records which factors went backwards. The upper
-        // clamp is defensive only: a mean of per-factor contributions already
+        // clamp is defensive only: a weighted sum of factor improvements already
         // bounded to [-1, 1] cannot exceed 1.0 except by floating-point rounding.
-        double score = round(Math.max(0.0, Math.min(1.0, aggregate)));
+        double score = round(Math.max(0.0, Math.min(1.0, total)));
 
         return new UpgradeScore(score, true, factorScores, decidingFactors(factorScores), coverage);
+    }
+
+    private int priority(Object raw) {
+        if (raw instanceof Number number) {
+            try {
+                // Fractional, NaN and infinite priorities are invalid; do not
+                // silently truncate them or overflow large legacy integers.
+                BigInteger value = new BigDecimal(number.toString()).toBigIntegerExact();
+                return value.max(BigInteger.valueOf(settings.priorityMin()))
+                        .min(BigInteger.valueOf(settings.priorityMax())).intValueExact();
+            } catch (ArithmeticException | NumberFormatException ignored) {
+                // Defined fallback for malformed legacy JSONB values.
+            }
+        }
+        return settings.missingPriority();
     }
 
     /**
@@ -114,7 +150,7 @@ public class UpgradeScoringService {
     /**
      * The factors that actually drove the verdict, strongest influence first.
      *
-     * <p>With equal weights, influence is simply the size of the contribution.
+     * <p>Influence is the size of the weighted contribution.
      * Negative contributors are included: a factor that went backwards is part
      * of why the verdict came out where it did.
      */
@@ -124,7 +160,7 @@ public class UpgradeScoringService {
                 .sorted(Comparator.comparingDouble(
                         (Map.Entry<String, UpgradeScore.FactorScore> entry) ->
                                 Math.abs(entry.getValue().contribution()))
-                        .reversed())
+                        .reversed().thenComparing(Map.Entry::getKey))
                 .limit(3)
                 .map(Map.Entry::getKey)
                 .toList();

@@ -8,7 +8,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * The scoring rules themselves: normalisation, equal factor weighting, regressions,
+ * The scoring rules themselves: normalisation, default factor weighting, regressions,
  * coverage and determinism.
  */
 class UpgradeScoringServiceTest {
@@ -100,9 +100,8 @@ class UpgradeScoringServiceTest {
     }
 
     @Test
-    void everyMeasuredFactorCarriesEqualWeight() {
-        // User priorities do not weight the verdict yet (AGENTS.md §27.5), so a
-        // full-strength win on one factor is worth the same as on any other.
+    void everyMeasuredFactorCarriesEqualWeightWhenNoPrioritiesAreSet() {
+        // Without priorities, a full-strength win on any factor has equal influence.
         Phone owned = phone(1, 4000, 8, 60, 200);
         Phone batteryJump = phone(2, 6000, 8, 60, 200);
         Phone displayJump = phone(2, 4000, 8, 120, 200);
@@ -110,8 +109,8 @@ class UpgradeScoringServiceTest {
         UpgradeScore battery = score(owned, batteryJump);
         UpgradeScore display = score(owned, displayJump);
 
-        assertEquals(1.0, battery.factorScores().get(Factors.BATTERY).contribution());
-        assertEquals(1.0, display.factorScores().get(Factors.DISPLAY).contribution());
+        assertEquals(1.0, battery.factorScores().get(Factors.BATTERY).improvement());
+        assertEquals(1.0, display.factorScores().get(Factors.DISPLAY).improvement());
         assertEquals(battery.score(), display.score());
     }
 
