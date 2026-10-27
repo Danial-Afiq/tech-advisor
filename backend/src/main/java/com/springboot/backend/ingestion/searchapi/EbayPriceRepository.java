@@ -14,7 +14,7 @@ public class EbayPriceRepository {
 
     public EbayPriceRepository(JdbcTemplate db) { this.db = db; }
 
-    public record Product(long id, String brand, String modelName) {
+    public record Product(long id, String brand, String modelName, String category) {
         public String name() { return brand + " " + modelName; }
     }
     public record Batch(List<Product> products, boolean wrapped) {}
@@ -37,21 +37,29 @@ public class EbayPriceRepository {
     }
 
     /**
-     * Up to {@code limit} VERIFIED smartphones with id &gt; cursor, ordered by id. When fewer
-     * than {@code limit} remain (the cursor is near/at the end of the catalogue), wraps around
-     * and fills the rest from the start - {@code wrapped} tells the caller a full sweep just
-     * completed, so it can reset the persisted cursor to 0 instead of to whatever id the wrapped
-     * portion happened to end on (which would skip the very start of the catalogue forever).
+     * Up to {@code limit} VERIFIED products (in any of {@code settings}' configured categories)
+     * with id &gt; cursor, ordered by id. When fewer than {@code limit} remain (the cursor is
+     * near/at the end of the catalogue), wraps around and fills the rest from the start -
+     * {@code wrapped} tells the caller a full sweep just completed, so it can reset the
+     * persisted cursor to 0 instead of to whatever id the wrapped portion happened to end on
+     * (which would skip the very start of the catalogue forever).
+     *
+     * One cursor across every configured category, not one per category: phones and GPUs share
+     * a single id-ordered rotation, the same way SearchApiRepository's untargeted picker already
+     * treats categories as one combined pool rather than separately-paced pools. A category with
+     * far more rows than another is not starved by this - it simply gets proportionally more
+     * turns per sweep, same as any id range would.
      */
-    public Batch nextProducts(long cursor, int limit) {
-        List<Product> forward = queryAfter(cursor, limit);
+    public Batch nextProducts(long cursor, int limit, EbayPriceSettings settings) {
+        String categories = String.join(",", settings.categories());
+        List<Product> forward = queryAfter(cursor, limit, categories);
         if (forward.size() >= limit) return new Batch(forward, false);
         // cursor itself (not just forward's ids) must stay excluded - it was already the last
         // product processed in a previous run; without this, a batch that wraps immediately
         // after the cursor re-includes that exact product a second time in the same run.
         var seen = forward.stream().map(Product::id).collect(java.util.stream.Collectors.toSet());
         seen.add(cursor);
-        List<Product> wrapAround = queryAfter(0, limit).stream()
+        List<Product> wrapAround = queryAfter(0, limit, categories).stream()
                 .filter(p -> !seen.contains(p.id()))
                 .limit(limit - forward.size())
                 .toList();
@@ -60,12 +68,13 @@ public class EbayPriceRepository {
         return new Batch(List.copyOf(combined), true);
     }
 
-    private List<Product> queryAfter(long cursor, int limit) {
+    private List<Product> queryAfter(long cursor, int limit, String categories) {
         if (limit <= 0) return List.of();
         return db.query("""
-                SELECT id, brand, model_name FROM products
-                WHERE status = 'VERIFIED' AND category = 'SMARTPHONE' AND id > ?
+                SELECT id, brand, model_name, category FROM products
+                WHERE status = 'VERIFIED' AND category = ANY(string_to_array(?, ',')) AND id > ?
                 ORDER BY id LIMIT ?
-                """, (rs, row) -> new Product(rs.getLong(1), rs.getString(2), rs.getString(3)), cursor, limit);
+                """, (rs, row) -> new Product(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4)),
+                categories, cursor, limit);
     }
 }
