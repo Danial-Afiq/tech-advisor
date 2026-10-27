@@ -76,7 +76,7 @@ class ReviewPersistenceTests {
         var repository = mock(SearchApiRepository.class);
         var client = mock(SearchApiClient.class);
         var canonical = new SearchApiRepository.Product(product, "Apple", "iPhone 16 Pro");
-        when(repository.products(new SearchApiSettings("fixture", "sg", "en", "Singapore", 1))).thenReturn(List.of(canonical));
+        when(repository.products(new SearchApiSettings("fixture", "sg", "en", "Singapore", 1, "https://www.searchapi.io/api/v1/search", "www.searchapi.io"))).thenReturn(List.of(canonical));
         when(repository.token(any(), any())).thenReturn(Optional.empty());
         var json = JsonMapper.builder().build();
         when(client.shopping(any(), any())).thenReturn(json.readTree("""
@@ -88,7 +88,7 @@ class ReviewPersistenceTests {
                  {"source":"walmart.com","rating":4,"date":"6 months ago",
                   "text":"The camera captures detailed photos in low light."}]
                 """));
-        var source = new SearchApiSource(new SearchApiSettings("fixture", "sg", "en", "Singapore", 1),
+        var source = new SearchApiSource(new SearchApiSettings("fixture", "sg", "en", "Singapore", 1, "https://www.searchapi.io/api/v1/search", "www.searchapi.io"),
                 repository, client, new IngestionSettings(false, null, List.of()));
         try (var context = new SourceContext(Clock.systemUTC(), () -> {})) {
             source.ingest(context, p -> assertEquals(IngestionSink.Result.ACCEPTED, durable.accept("smoke", p, context)));
@@ -157,16 +157,16 @@ class ReviewPersistenceTests {
     }
     @Test void tokenCacheIsLocaleAndCanonicalIdentityScopedAndSelectionIsOrdered() {
         var p = new SearchApiRepository.Product(product, "SearchApiTest", "model");
-        var s = new SearchApiSettings("", "sg", "en", "Singapore", 1);
+        var s = new SearchApiSettings("", "sg", "en", "Singapore", 1, "https://www.searchapi.io/api/v1/search", "www.searchapi.io");
         mappings.cache(p, s, new ProductMatcher.Match("google-id", "cached", "Matched title", null, null), now);
         assertEquals(Optional.of("cached"), mappings.token(p, s));
         assertTrue(mappings.token(new SearchApiRepository.Product(product, "SearchApiTest", "changed"), s).isEmpty());
-        assertTrue(mappings.token(p, new SearchApiSettings("", "us", "en", "USA", 1)).isEmpty());
+        assertTrue(mappings.token(p, new SearchApiSettings("", "us", "en", "USA", 1, "https://www.searchapi.io/api/v1/search", "www.searchapi.io")).isEmpty());
         mappings.invalidate(p, s); assertTrue(mappings.token(p, s).isEmpty());
         // A different locale has no cache()/invalidate() row yet for this product, so the
         // "already attempted" exclusion in products() doesn't hide it here - isolates the
         // status/category filtering this section actually tests from that exclusion.
-        var untried = new SearchApiSettings("", "us", "en", "USA", 2);
+        var untried = new SearchApiSettings("", "us", "en", "USA", 2, "https://www.searchapi.io/api/v1/search", "www.searchapi.io");
         var ids = mappings.products(untried).stream().map(SearchApiRepository.Product::id).toList();
         assertEquals(ids.stream().sorted().toList(), ids);
         db.update("UPDATE products SET status='UNVERIFIED' WHERE id=?", product);
@@ -206,12 +206,12 @@ class ReviewPersistenceTests {
     @Test void markNoMatchExcludesTheProductFromFutureUntargetedRunsButNotOtherLocales() {
         db.update("UPDATE products SET status='VERIFIED', category='SMARTPHONE' WHERE id=?", product);
         var p = new SearchApiRepository.Product(product, "SearchApiTest", "model");
-        var sg = new SearchApiSettings("", "sg", "en", "Singapore", 2);
+        var sg = new SearchApiSettings("", "sg", "en", "Singapore", 2, "https://www.searchapi.io/api/v1/search", "www.searchapi.io");
         assertTrue(eligibleForUntargetedPick(product, sg));
         mappings.markNoMatch(p, sg, now);
         assertFalse(eligibleForUntargetedPick(product, sg));
         // A different locale never attempted this product - not excluded there.
-        var us = new SearchApiSettings("", "us", "en", "USA", 2);
+        var us = new SearchApiSettings("", "us", "en", "USA", 2, "https://www.searchapi.io/api/v1/search", "www.searchapi.io");
         assertTrue(eligibleForUntargetedPick(product, us));
     }
 }

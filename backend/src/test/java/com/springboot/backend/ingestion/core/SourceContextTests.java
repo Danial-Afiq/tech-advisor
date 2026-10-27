@@ -34,7 +34,8 @@ class SourceContextTests {
         when(response.statusCode()).thenReturn(status);
         when(response.body()).thenReturn(new ByteArrayInputStream("secret-key upstream details".getBytes()));
         try (var context = new SourceContext(Clock.systemUTC(), () -> {}, client)) {
-            var settings = new com.springboot.backend.ingestion.searchapi.SearchApiSettings("secret-key", "sg", "en", "Singapore", 1);
+            var settings = new com.springboot.backend.ingestion.searchapi.SearchApiSettings("secret-key", "sg", "en",
+                    "Singapore", 1, "https://www.searchapi.io/api/v1/search", "www.searchapi.io");
             var api = new com.springboot.backend.ingestion.searchapi.SearchApiClient(settings);
             var failure = assertThrows(IngestionFailure.class, () -> api.shopping(context, "Apple iPhone 16 Pro"));
             assertEquals(status == 400 ? IngestionFailure.Code.SEARCHAPI_HTTP_400

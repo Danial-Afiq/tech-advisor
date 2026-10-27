@@ -36,6 +36,28 @@ public class SearchApiClient {
         return fetch(context, Map.of("engine", "google_product_reviews", "product_token", token,
                 "sort_by", sort, "rating", "all"), "review_results");
     }
+    /**
+     * ebay_search, not a Google-based engine - confirmed live it uses its own locale
+     * parameters (ebay_domain/country), not gl/hl/location, so this skips
+     * {@link #googleLocale} entirely rather than sending Google-specific params an eBay
+     * engine would just ignore. condition=new is deliberate: a "new" baseline is what makes
+     * successive observations comparable as a price trend, the same reasoning Google
+     * Shopping's own matching already rejects used/refurbished listings for (ProductMatcher's
+     * REJECT set).
+     *
+     * sort_by=price_shipping_low_to_high, NOT price_low_to_high: confirmed against
+     * SearchAPI.io's own docs that price_low_to_high is explicitly unsupported on ebay.com
+     * (the default marketplace when ebay_domain isn't set, which is the case here) - requesting
+     * it would silently return best_match order instead. price_shipping_low_to_high IS
+     * supported there. Either way, correctness never actually depends on the API honoring this
+     * hint: {@link EbayPriceSource#toPrice} explicitly picks the minimum-priced accepted match
+     * from whatever order the results come back in, rather than trusting the first result is
+     * cheapest - this parameter only narrows what a result page is likely to contain.
+     */
+    public JsonNode ebay(SourceContext context, String query) throws Exception {
+        return fetch(context, Map.of("engine", "ebay_search", "q", query,
+                "condition", "new", "sort_by", "price_shipping_low_to_high"), "organic_results");
+    }
     private JsonNode fetch(SourceContext context, Map<String, String> parameters, String field) throws Exception {
         JsonNode root = fetchRoot(context, parameters);
         JsonNode results = root.path(field);
@@ -45,13 +67,13 @@ public class SearchApiClient {
     }
     private JsonNode fetchRoot(SourceContext context, Map<String, String> parameters) throws Exception {
         var query = new TreeMap<>(parameters);
-        query.put("gl", settings.gl()); query.put("hl", settings.hl()); query.put("location", settings.location());
+        if (!"ebay_search".equals(parameters.get("engine"))) googleLocale(query);
         String encoded = query.entrySet().stream().map(e -> e.getKey() + "="
                 + URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8)).collect(java.util.stream.Collectors.joining("&"));
         byte[] bytes;
         try {
-            bytes = context.get(URI.create("https://www.searchapi.io/api/v1/search?" + encoded),
-                    settings.apiKey(), "www.searchapi.io");
+            bytes = context.get(URI.create(settings.baseUrl() + "?" + encoded),
+                    settings.apiKey(), settings.allowedHost());
         } catch (SourceContext.HttpFailure e) {
             if (e.invalidToken) throw new IngestionFailure(SEARCHAPI_INVALID_TOKEN);
             throw new IngestionFailure(switch (e.status) {
@@ -67,6 +89,9 @@ public class SearchApiClient {
             return root;
         } catch (IngestionFailure e) { throw e; }
         catch (Exception e) { throw new IngestionFailure(SEARCHAPI_MALFORMED_RESPONSE); }
+    }
+    private void googleLocale(TreeMap<String, String> query) {
+        query.put("gl", settings.gl()); query.put("hl", settings.hl()); query.put("location", settings.location());
     }
     private void appendArray(JsonNode parent, String field, tools.jackson.databind.node.ArrayNode output) {
         JsonNode rows = parent.path(field);
