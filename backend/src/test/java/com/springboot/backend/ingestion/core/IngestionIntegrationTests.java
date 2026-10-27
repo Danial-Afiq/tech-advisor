@@ -118,40 +118,37 @@ class IngestionIntegrationTests {
         assertEquals(ANCHOR.plus(RunStore.INTERVAL), store.state().nextDue);
         // Deliberate guard, not drift-prevention-by-accident: forces whoever changes INTERVAL to
         // touch this file too, so they see this comment and RunStore.INTERVAL's own comment
-        // pointing at AGENTS.md 16.5. Now 14 days, the real target cadence (was temporarily
-        // 2 days). Update this alongside AGENTS.md 16.5 when it next changes.
-        assertEquals(Duration.ofDays(14), RunStore.INTERVAL);
+        // pointing at AGENTS.md 16.5. Currently 2 days - a documented TEMPORARY override, not
+        // the real 14-day target. Update this alongside AGENTS.md 16.5 when it next changes.
+        assertEquals(Duration.ofDays(2), RunStore.INTERVAL);
     }
     @Test void independentSourceCadencePersistsAndDoesNotChangeTheGlobalCadence() {
-        // The override must outlast the shared cadence (now also 14 days, §16.5) for this test
-        // to distinguish "ran on the shared wake" from "ran on its own, longer, schedule" -
-        // 28 days (double) keeps that margin regardless of future shared-cadence changes.
         var regular = source("regular-source", Optional.empty(), true);
-        var monthly = source("monthly-source", Optional.of(Duration.ofDays(28)));
+        var fortnightly = source("fortnightly-source", Optional.of(Duration.ofDays(14)));
 
-        var first = store.admitScheduled(List.of(regular, monthly));
-        assertEquals(List.of("regular-source", "monthly-source"), first.sourceIds);
+        var first = store.admitScheduled(List.of(regular, fortnightly));
+        assertEquals(List.of("regular-source", "fortnightly-source"), first.sourceIds);
         assertFalse(first.simulation);
         var claimed = store.claim("owner-1");
         claimed.status = "SUCCESS";
-        store.finish(claimed, "owner-1", Map.of(monthly.sourceId(), Duration.ofDays(28)));
+        store.finish(claimed, "owner-1", Map.of(fortnightly.sourceId(), Duration.ofDays(14)));
 
         var restarted = new RunStore(db, transactions, clock, settings);
-        assertEquals(ANCHOR.plus(Duration.ofDays(28)),
-                restarted.state().nextSourceDue.get("monthly-source"));
+        assertEquals(ANCHOR.plus(Duration.ofDays(14)),
+                restarted.state().nextSourceDue.get("fortnightly-source"));
         assertEquals(ANCHOR.plus(RunStore.INTERVAL), restarted.state().nextDue);
 
         clock.now.set(ANCHOR.plus(RunStore.INTERVAL));
-        var second = restarted.admitScheduled(List.of(regular, monthly));
+        var second = restarted.admitScheduled(List.of(regular, fortnightly));
         assertEquals(List.of("regular-source"), second.sourceIds);
         assertTrue(second.simulation);
         var secondClaim = restarted.claim("owner-2");
         secondClaim.status = "SUCCESS";
         restarted.finish(secondClaim, "owner-2");
 
-        clock.now.set(ANCHOR.plus(Duration.ofDays(28)));
-        var dueAgain = restarted.admitScheduled(List.of(regular, monthly));
-        assertTrue(dueAgain.sourceIds.contains("monthly-source"));
+        clock.now.set(ANCHOR.plus(Duration.ofDays(14)));
+        var dueAgain = restarted.admitScheduled(List.of(regular, fortnightly));
+        assertTrue(dueAgain.sourceIds.contains("fortnightly-source"));
     }
 
     @Test void failedScheduledSourceDoesNotCountAsItsFortnightlyRefresh() {

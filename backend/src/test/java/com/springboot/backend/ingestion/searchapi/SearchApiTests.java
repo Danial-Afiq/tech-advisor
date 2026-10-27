@@ -375,8 +375,10 @@ class SearchApiTests {
     }
 
     // ebay() is a distinct engine from shopping()/reviews() - confirm it builds the right
-    // query (condition=new, sort_by=price_low_to_high, organic_results field) and skips
-    // googleLocale() entirely (no gl/hl/location - an eBay engine would just ignore them).
+    // query (condition=new, sort_by=price_shipping_low_to_high - NOT price_low_to_high, which
+    // SearchAPI.io's own docs say is unsupported on ebay.com, the default domain here -
+    // organic_results field) and skips googleLocale() entirely (no gl/hl/location - an eBay
+    // engine would just ignore them).
     @Test void ebayBuildsTheRightQueryAndSkipsGoogleLocale() throws Exception {
         var context = mock(SourceContext.class);
         when(context.get(any(), anyString(), anyString())).thenReturn("""
@@ -390,7 +392,7 @@ class SearchApiTests {
         String query = uri.getValue().getQuery();
         assertTrue(query.contains("engine=ebay_search"));
         assertTrue(query.contains("condition=new"));
-        assertTrue(query.contains("sort_by=price_low_to_high"));
+        assertTrue(query.contains("sort_by=price_shipping_low_to_high"));
         assertFalse(query.contains("gl=")); assertFalse(query.contains("hl=")); assertFalse(query.contains("location="));
         assertEquals(1, results.size());
         assertEquals("Apple iPhone 16 Pro 256GB", results.get(0).path("title").asText());

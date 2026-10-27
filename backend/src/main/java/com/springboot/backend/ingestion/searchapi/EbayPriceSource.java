@@ -7,8 +7,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.function.Consumer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -31,11 +29,16 @@ import tools.jackson.databind.JsonNode;
  *   - bounded, configurable request cost per run via {@link EbayPriceSettings}, independent
  *     of Google Shopping's own budget.
  *
- * Default config (10 products/run, once every 2 weeks - see scheduleInterval(), matching the
- * shared scheduler cadence in RunStore.INTERVAL) costs ~20 requests a month against the shared
- * SearchAPI.io account quota - deliberately conservative given that quota is shared with
- * Google Shopping review ingestion too and has been exhausted mid-month before (Smartphone DB
- * Backfill session). Both numbers are plain config, tune freely.
+ * Default config (10 products/run, once/day - see scheduleInterval(), independent of the
+ * shared scheduler cadence in RunStore.INTERVAL) costs ~300 requests a month against the
+ * shared SearchAPI.io account quota - deliberately conservative given that quota is shared
+ * with Google Shopping review ingestion too and has been exhausted mid-month before
+ * (Smartphone DB Backfill session). Both numbers are plain config, tune freely. Running daily
+ * rather than on the (far longer) shared cadence matters here specifically: a round-robin
+ * sweep of N products in catalogue order only reaches every product once every
+ * N / maxProductsPerRun runs, so a slow cadence directly means stale prices for most of the
+ * catalogue most of the time - at the full 2-week shared cadence a ~450-device catalogue would
+ * take over 600 days for one complete sweep, useless for market-change detection's purpose.
  *
  * Backfilling the whole catalogue once at the start (rather than waiting for the round-robin
  * sweep to reach every product for the first time over many days) is explicitly out of scope
@@ -46,7 +49,6 @@ import tools.jackson.databind.JsonNode;
 @EnableConfigurationProperties(EbayPriceSettings.class)
 public class EbayPriceSource implements IngestionSource {
     public static final String ID = "searchapi-ebay-prices";
-    private static final Logger LOG = LoggerFactory.getLogger(EbayPriceSource.class);
     private static final int NETWORK_OVERHEAD_SECONDS = 30;
 
     private final EbayPriceRepository repository;
@@ -70,9 +72,10 @@ public class EbayPriceSource implements IngestionSource {
     @Override public Duration executionBudget() {
         return Duration.ofSeconds(requestLimit() + NETWORK_OVERHEAD_SECONDS);
     }
-    // Matches the shared scheduler cadence (RunStore.INTERVAL) - see class Javadoc for the
-    // request-budget math at this interval.
-    @Override public Optional<Duration> scheduleInterval() { return Optional.of(Duration.ofDays(14)); }
+    // Deliberately conservative default, independent of the shared scheduler cadence - see
+    // class Javadoc for the request-budget math and why this needs to run more often than
+    // RunStore.INTERVAL to keep a full catalogue sweep in a reasonable timeframe.
+    @Override public Optional<Duration> scheduleInterval() { return Optional.of(Duration.ofDays(1)); }
     // Always true: unlike TechApiBenchmarkSource's one-time backfill-then-incremental shape,
     // this source has no "finished" state to race toward faster - every run prices its own
     // bounded batch and that is intentionally the whole job for that run. Returning false to
@@ -100,20 +103,23 @@ public class EbayPriceSource implements IngestionSource {
         }
     }
 
+    /**
+     * No catch here, deliberately - unlike SearchApiSource's discovery step (which has a real
+     * "no match for this product" IngestionFailure code it legitimately swallows in untargeted
+     * mode), SearchApiClient.ebay() has no such code: an empty organic_results array already
+     * resolves to an empty, harmless result through the normal return path, no exception
+     * involved. Every exception client.ebay() can actually throw - auth failure, malformed
+     * response, HTTP failure, SourceContext's own RetryLater/TransportFailure/deadline checks -
+     * represents a real problem with the run, not a per-product non-match, and must propagate
+     * to the orchestrator the same way every other source's real failures do (fails the run,
+     * does not advance the schedule interval, applies the normal failure cooldown/retry-later
+     * handling - see IngestionOrchestrator). Swallowing all of those here (as an earlier version
+     * of this method did) would silently convert an auth failure or outage into an apparently
+     * successful, schedule-advancing run that priced nothing.
+     */
     private void priceOne(SourceContext context, EbayPriceRepository.Product product, Consumer<Payload> output)
             throws Exception {
-        JsonNode results;
-        try {
-            results = client.ebay(context, product.name());
-        } catch (Exception e) {
-            // One product's listing failure is not a run failure - a bad/empty eBay result
-            // for one phone is a legitimate real-world outcome (same reasoning
-            // SearchApiSource's untargeted no-match path already applies to Google
-            // Shopping), not something that should abort the rest of this run's batch.
-            LOG.info("eBay price lookup failed for product {} ({}): {}",
-                    product.id(), product.name(), e.getClass().getSimpleName());
-            return;
-        }
+        JsonNode results = client.ebay(context, product.name());
         toPrice(product.id(), product.brand(), product.modelName(), context.now(), results).ifPresent(output::accept);
     }
 
@@ -124,9 +130,14 @@ public class EbayPriceSource implements IngestionSource {
      */
     static Optional<Payload> toPrice(long productId, String brand, String modelName, Instant observedAt, JsonNode results) {
         var matches = ProductMatcher.titleMatches(brand, modelName, results);
-        // Already sorted price_low_to_high by the query itself (SearchApiClient.ebay) - the
-        // first match with a real parsed price is the representative "new, cheapest" figure.
-        var priced = matches.stream().filter(m -> m.price() != null && m.currency() != null).findFirst();
+        // Picks the minimum price among every accepted, priced match - does NOT trust the
+        // results are already sorted cheapest-first. SearchApiClient.ebay()'s sort_by hint is
+        // not honored on every eBay marketplace (confirmed: SearchAPI.io's own docs state
+        // price_low_to_high is unsupported on ebay.com, the default domain here), so taking
+        // merely the first priced result would silently pick an arbitrary, not necessarily
+        // cheapest, listing.
+        var priced = matches.stream().filter(m -> m.price() != null && m.currency() != null)
+                .min(java.util.Comparator.comparing(ProductMatcher.Match::price));
         if (priced.isEmpty()) return Optional.empty();
         var match = priced.get();
         return Optional.of(new Payload(ID, productId + ":ebay:" + observedAt.toEpochMilli(), observedAt,

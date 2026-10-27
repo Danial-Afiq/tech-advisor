@@ -2024,18 +2024,18 @@ Keep real adapters inside this controlled framework.
 
 ## 16.5 Current scheduling decision
 
-Cadence is **every 14 days** (`RunStore.INTERVAL`), the real target production cadence, matching the original ticket and the current live Jira ticket text. Reverted back to 14 days on 2026-10-26 (`feat/market-change-detection` branch), ending the temporary 2-day override below.
+Cadence is **every 2 days** (`RunStore.INTERVAL`) — **this is a temporary override, not the target production cadence**, in effect since 2026-09-27. The real intent is 14 days, matching the original ticket and the current live Jira ticket text.
 
-**History, so this isn't re-litigated:** the interval was first deliberately changed to every 24 hours on 2026-09-16, purely to make the scheduler observable within a short testing window, then reverted back to 14 days on 2026-09-22 once that testing was done. It was changed again to 2 days on 2026-09-27, this time so the newly-enabled `MobileApiSmartphoneSource` (ticket 1.2) could gather real data while the smartphone schema was still expected to change (model-variation handling). That data-gathering window is now considered over; the cadence reverted to the real 14-day target on 2026-10-26, and `EbayPriceSource`'s own `scheduleInterval()` override was folded into the same 14-day cadence at the same time (previously an independent 1-day override — see its Javadoc for the updated request-budget math). There is no data migration for any of these changes (no production data depends on the anchor's spacing); it is a plain code constant.
+**History, so this isn't re-litigated:** the interval was first deliberately changed to every 24 hours on 2026-09-16, purely to make the scheduler observable within a short testing window, then reverted back to 14 days on 2026-09-22 once that testing was done. It was changed again to 2 days on 2026-09-27, this time so the newly-enabled `MobileApiSmartphoneSource` (ticket 1.2) can gather real data while the smartphone schema is still expected to change (model-variation handling isn't settled yet). On 2026-10-26, this was briefly moved to 14 days (folding `EbayPriceSource`'s own cadence into it too), then reverted again the same day: `EbayPriceSource` specifically needs to run far more often than a 14-day shared cadence to keep a full catalogue sweep useful (see its Javadoc for the math — a ~450-device catalogue at 10 products/run would take over 600 days to sweep once at 14 days), so it now declares its own independent `scheduleInterval()` (1 day) instead of relying on the shared value. There is no data migration for any of these changes (no production data depends on the anchor's spacing); it is a plain code constant.
 
-The shared interval still controls when the single coordinator wakes. Sources may still declare their own `scheduleInterval()` without creating a second scheduler — `CoordinatorState.nextSourceDue` persists those due times across restarts; an overridden source is omitted from intervening shared runs and advances only after its own scheduled execution succeeds. Failed, interrupted, skipped and manual runs do not count as a successful source refresh. Sources without an override follow the shared 14-day cadence directly. `techapi-soc-benchmarks` and `searchapi-ebay-prices` both currently declare an explicit 14-day override that matches the shared cadence exactly (kept explicit rather than removed, so each source's own interval stays independently pinned if the shared cadence changes again later).
+The shared interval still controls when the single coordinator wakes. Sources may now declare a longer, or shorter (see `EbayPriceSource`), `scheduleInterval()` without creating a second scheduler. `CoordinatorState.nextSourceDue` persists those due times across restarts; an overridden source is omitted from intervening shared runs and advances only after its own scheduled execution succeeds. Failed, interrupted, skipped and manual runs do not count as a successful source refresh. Sources without an override retain the two-day shared behaviour. `techapi-soc-benchmarks` uses this mechanism for an independent 14-day refresh; `searchapi-ebay-prices` for an independent 1-day refresh.
 
 - initial anchor: **17 Sep 2026 13:00 SGT / 05:00 UTC**,
 - schedule state is persisted,
 - manual runs do not shift cadence,
 - restart recovery/catch-up is supported.
 
-Do not change this constant based on old references to "2-day"/"daily" in docs, commit messages, or comments predating 2026-10-26 — those describe the now-ended temporary state, not current behaviour.
+Do not change this constant based on old references to "daily"/"14-day" in docs, commit messages, or comments predating 2026-09-27 — those describe earlier states, not current behaviour. **Revert to 14 days once the smartphone schema settles and this stops being an active data-gathering exercise** — do not let this become a second stale "temporary" that nobody reverts, the way the first one nearly did.
 
 ## 16.6 Current simulated/demo ingestion
 Current runner includes simulated fixtures and persisted demo receipts.
@@ -2321,8 +2321,8 @@ CC BY-SA attribution. `observed_at` uses TechAPI's dataset `updated_at` timestam
 absent or malformed. This is dataset freshness, not a claim about when a
 benchmark measurement was run.
 
-The source declares a 14-day `scheduleInterval()`, which now matches the shared
-coordinator's own cadence for other sources (§16.5). An incomplete bounded
+The source declares a 14-day `scheduleInterval()` while the shared coordinator
+continues waking every two days for other sources (§16.5). An incomplete bounded
 initial or incremental cycle remains due at the next shared wake; only completion
 starts the next 14-day wait. Manual runs never move schedule dates. During the
 initial backfill, the admin ingestion page exposes processed/total progress,
@@ -2560,10 +2560,15 @@ that's wanted.
 **Shape: plain round-robin, not Google Shopping's targeted/cached-token
 flow.** Every run prices the next `searchapi.ebay.max-products-per-run`
 VERIFIED smartphones in catalogue `id` order (`EbayPriceRepository
-.nextProducts`), 1 real HTTP request per product (`condition=new`,
-`sort_by=price_low_to_high` — the cheapest *new* listing is the
-representative, comparable price point, same reasoning Google Shopping
-matching already rejects used/refurbished for). Progress is a single
+.nextProducts`), 1 real HTTP request per product (`condition=new` -
+`sort_by=price_shipping_low_to_high`, NOT `price_low_to_high`: SearchAPI.io's
+own docs confirm `price_low_to_high` is unsupported on ebay.com, the default
+marketplace used here when `ebay_domain` isn't set - a post-merge review
+caught both this and that the code previously trusted the API's ordering
+instead of verifying it; `EbayPriceSource.toPrice` now explicitly selects the
+*minimum*-priced accepted match from whatever order results arrive in,
+rather than assuming the first one is cheapest, so correctness never
+actually depends on the sort hint being honored). Progress is a single
 persisted cursor (`EbayPriceIngestionState.catalogueCursor`), stored as a
 `system_log` row (component `SEARCHAPI_EBAY_PRICE_STATE`) — the same
 state-persistence pattern `TechApiBenchmarkRepository` already uses for
@@ -2571,21 +2576,41 @@ state-persistence pattern `TechApiBenchmarkRepository` already uses for
 end of the catalogue wraps back to the start within the same run rather than
 stopping, so coverage is a continuous round-robin, never "done."
 
+**Failure handling matches `SearchApiSource`'s established pattern, not a
+blanket catch.** The same post-merge review also caught that an earlier
+version of `priceOne()` caught every `Exception` from `client.ebay()` and
+silently skipped the product - which meant an auth failure, malformed
+response, or rate limit looked identical to "no listing for this phone" and
+was swallowed the same way, letting the run report success (and advance the
+schedule) while quietly pricing nothing. Fixed by removing the catch
+entirely: unlike `SearchApiSource`'s discovery step (which has a real
+`SEARCHAPI_NO_MATCH`/`SEARCHAPI_AMBIGUOUS_MATCH` code it legitimately
+swallows in untargeted mode), `SearchApiClient.ebay()` has no equivalent "no
+match" code - an empty `organic_results` array already resolves cleanly
+through the normal return path, no exception involved - so every exception it
+can actually throw represents a real problem that must propagate to
+`IngestionOrchestrator` the same way every other source's real failures do.
+
 **Scheduling uses the newer per-source mechanism** (`IngestionSource
 .requestLimit()`/`executionBudget()`/`scheduleInterval()`), not
 `SourceContext`'s old shared 10-request default: 1 request per product means
 `requestLimit()` is simply the configured product count, and
-`scheduleInterval()` (default 1 day) runs this source on its own cadence
-independent of the shared scheduler tick. `scheduleCycleComplete()` returns
-`true` always — deliberately, unlike `TechApiBenchmarkSource`'s one-time
-backfill-then-incremental shape: there's no "finished" state to race toward
-faster here, and accelerating would undermine the one thing this design is
-for — never bursting past a modest, predictable request rate against a
-shared, previously-exhausted-mid-month account quota (Smartphone DB Backfill
-session, Oct 2026). Default config (10 products/run × 1/day) is ~300
-requests/month, deliberately conservative and fully config-driven
-(`SEARCHAPI_EBAY_MAX_PRODUCTS_PER_RUN`) — tune freely, the number itself
-isn't load-bearing.
+`scheduleInterval()` (1 day) runs this source on its own cadence
+independent of the shared scheduler tick (§16.5) - deliberately *more*
+frequent than the shared cadence, not less: a round-robin sweep only reaches
+every product once every `catalogue size / maxProductsPerRun` runs, so a slow
+cadence directly means stale prices for most of the catalogue most of the
+time (this was briefly set to match a 14-day shared cadence and reverted the
+same day once the math was checked - see RunStore.INTERVAL's own history).
+`scheduleCycleComplete()` returns `true` always — deliberately, unlike
+`TechApiBenchmarkSource`'s one-time backfill-then-incremental shape: there's
+no "finished" state to race toward faster here, and accelerating would
+undermine the one thing this design is for — never bursting past a modest,
+predictable request rate against a shared, previously-exhausted-mid-month
+account quota (Smartphone DB Backfill session, Oct 2026). Default config (10
+products/run × 1/day) is ~300 requests/month, deliberately conservative and
+fully config-driven (`SEARCHAPI_EBAY_MAX_PRODUCTS_PER_RUN`) — tune freely,
+the number itself isn't load-bearing.
 
 `price_history.phone_variant_id` is left null (model-level observation only)
 — same scope boundary §17.4's Google Shopping capture already keeps; no

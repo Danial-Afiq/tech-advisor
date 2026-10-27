@@ -15,11 +15,19 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Component
 public class RunStore {
-    // Shared wake-up interval, 2 weeks (see AGENTS.md 16.5). Sources without an override run
-    // at this cadence; a source may declare a longer (or, previously, shorter - see
-    // EbayPriceSource) interval and is filtered from intervening shared slots using persisted
-    // CoordinatorState.nextSourceDue.
-    public static final Duration INTERVAL = Duration.ofDays(14);
+    // TEMPORARY override, 27 Sep 2026 - NOT the real production cadence. Set to 2 days
+    // specifically so the newly-enabled MobileAPI source can gather real data to inspect
+    // while the smartphone schema is still expected to change (model-variation handling).
+    // This remains the shared wake-up interval (see AGENTS.md 16.5). Sources without an
+    // override run at this cadence; a source may declare a longer interval and is filtered
+    // from intervening shared slots using persisted CoordinatorState.nextSourceDue.
+    //
+    // Briefly moved to 14 days on 2026-10-26 (the originally-intended target), then reverted
+    // back to 2 days the same day: that cadence also governs sources like EbayPriceSource
+    // needing much more frequent runs than 14 days to keep a full catalogue sweep useful (see
+    // its Javadoc) - EbayPriceSource now declares its own independent scheduleInterval() rather
+    // than relying on this shared value, so this reversion only affects sources that don't.
+    public static final Duration INTERVAL = Duration.ofDays(2);
     public static final Duration LEASE = Duration.ofSeconds(90);
     private final JdbcTemplate db;
     private final TransactionTemplate tx;

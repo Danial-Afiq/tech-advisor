@@ -40,14 +40,23 @@ public class SearchApiClient {
      * ebay_search, not a Google-based engine - confirmed live it uses its own locale
      * parameters (ebay_domain/country), not gl/hl/location, so this skips
      * {@link #googleLocale} entirely rather than sending Google-specific params an eBay
-     * engine would just ignore. condition=new and sort_by=price_low_to_high are deliberate:
-     * a consistent "new, cheapest first" baseline is what makes successive observations
-     * comparable as a price trend, the same reasoning Google Shopping's own matching already
-     * rejects used/refurbished listings for (ProductMatcher's REJECT set).
+     * engine would just ignore. condition=new is deliberate: a "new" baseline is what makes
+     * successive observations comparable as a price trend, the same reasoning Google
+     * Shopping's own matching already rejects used/refurbished listings for (ProductMatcher's
+     * REJECT set).
+     *
+     * sort_by=price_shipping_low_to_high, NOT price_low_to_high: confirmed against
+     * SearchAPI.io's own docs that price_low_to_high is explicitly unsupported on ebay.com
+     * (the default marketplace when ebay_domain isn't set, which is the case here) - requesting
+     * it would silently return best_match order instead. price_shipping_low_to_high IS
+     * supported there. Either way, correctness never actually depends on the API honoring this
+     * hint: {@link EbayPriceSource#toPrice} explicitly picks the minimum-priced accepted match
+     * from whatever order the results come back in, rather than trusting the first result is
+     * cheapest - this parameter only narrows what a result page is likely to contain.
      */
     public JsonNode ebay(SourceContext context, String query) throws Exception {
         return fetch(context, Map.of("engine", "ebay_search", "q", query,
-                "condition", "new", "sort_by", "price_low_to_high"), "organic_results");
+                "condition", "new", "sort_by", "price_shipping_low_to_high"), "organic_results");
     }
     private JsonNode fetch(SourceContext context, Map<String, String> parameters, String field) throws Exception {
         JsonNode root = fetchRoot(context, parameters);

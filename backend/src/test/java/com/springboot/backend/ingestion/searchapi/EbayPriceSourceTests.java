@@ -26,8 +26,6 @@ class EbayPriceSourceTests {
     final Instant now = Instant.parse("2026-09-24T00:00:00Z");
 
     @Test void toPriceEmitsTheCheapestAcceptedNewListing() {
-        // Already sorted price_low_to_high by the real query (condition=new,
-        // sort_by=price_low_to_high) - the first accepted result with a real price wins.
         var results = json.readTree("""
                 [{"title":"Apple iPhone 16 Pro 256GB","price":"$899.00","extracted_price":899.00},
                  {"title":"Apple iPhone 16 Pro 256GB","price":"$999.00","extracted_price":999.00}]
@@ -39,6 +37,19 @@ class EbayPriceSourceTests {
         assertNull(price.variantReference());
         assertEquals(0, new java.math.BigDecimal("899.00").compareTo(price.amount()));
         assertEquals("USD", price.currency());
+    }
+
+    @Test void toPricePicksTheCheapestMatchEvenWhenResultsArriveOutOfPriceOrder() {
+        // SearchAPI.io's own docs confirm price_low_to_high is unsupported on ebay.com (the
+        // default marketplace, used here) - results can come back in best_match order instead,
+        // so toPrice() must never assume the first priced match is the cheapest one.
+        var results = json.readTree("""
+                [{"title":"Apple iPhone 16 Pro 256GB","price":"$999.00","extracted_price":999.00},
+                 {"title":"Apple iPhone 16 Pro 256GB","price":"$849.00","extracted_price":849.00},
+                 {"title":"Apple iPhone 16 Pro 256GB","price":"$905.00","extracted_price":905.00}]
+                """);
+        var price = (Payload.Price) EbayPriceSource.toPrice(812, "Apple", "iPhone 16 Pro", now, results).get().body();
+        assertEquals(0, new java.math.BigDecimal("849.00").compareTo(price.amount()));
     }
 
     @Test void toPriceSkipsResultsThatFailTitleMatching() {
@@ -75,7 +86,7 @@ class EbayPriceSourceTests {
         // already exist.
         assertEquals(30, source.priority());
         assertEquals(java.time.Duration.ZERO, source.cooldown());
-        assertEquals(java.time.Duration.ofDays(14), source.scheduleInterval().orElseThrow());
+        assertEquals(java.time.Duration.ofDays(1), source.scheduleInterval().orElseThrow());
         assertTrue(source.scheduleCycleComplete());
     }
 
@@ -134,27 +145,32 @@ class EbayPriceSourceTests {
         verify(repository, times(2)).save(state); // once at product id 5, once resetting to 0
     }
 
-    @Test void ingestSkipsAProductWhoseListingLookupFailsWithoutAbortingTheRun() throws Exception {
+    @Test void ingestPropagatesARealListingLookupFailureInsteadOfSwallowingIt() throws Exception {
+        // A real failure (auth, malformed response, transport, rate limit - anything
+        // client.ebay() can throw) must abort the run and reach the orchestrator, not be
+        // silently treated as "no listing for this product". SearchApiClient.ebay() has no
+        // "legitimate no match" exception code the way SearchApiSource's discovery step does -
+        // an empty result set already returns cleanly without throwing - so nothing here is
+        // safe to catch and skip.
         var repository = mock(EbayPriceRepository.class);
         var client = mock(SearchApiClient.class);
         var failing = new EbayPriceRepository.Product(1, "Apple", "iPhone 16");
-        var ok = new EbayPriceRepository.Product(2, "Apple", "iPhone 16 Pro");
+        var neverReached = new EbayPriceRepository.Product(2, "Apple", "iPhone 16 Pro");
         var state = new EbayPriceIngestionState();
         when(repository.state()).thenReturn(state);
-        when(repository.nextProducts(0, 10)).thenReturn(new EbayPriceRepository.Batch(List.of(failing, ok), false));
-        when(client.ebay(any(), eq("Apple iPhone 16"))).thenThrow(new RuntimeException("transport failed"));
-        when(client.ebay(any(), eq("Apple iPhone 16 Pro"))).thenReturn(priced("Apple iPhone 16 Pro", "$899.00"));
+        when(repository.nextProducts(0, 10)).thenReturn(new EbayPriceRepository.Batch(List.of(failing, neverReached), false));
+        when(client.ebay(any(), eq("Apple iPhone 16"))).thenThrow(new RuntimeException("auth failed"));
         var source = new EbayPriceSource(repository, new EbayPriceSettings(10), client);
 
         var output = new ArrayList<Payload>();
         try (var context = new SourceContext(Clock.fixed(now, ZoneOffset.UTC), () -> {})) {
-            source.ingest(context, output::add);
+            assertThrows(RuntimeException.class, () -> source.ingest(context, output::add));
         }
 
-        // Only the second product's price was emitted - the first's failure was logged and
-        // skipped, not raised, and the cursor still advanced past it.
-        assertEquals(1, output.size());
-        assertEquals("2", ((Payload.Price) output.getFirst().body()).productReference());
-        assertEquals(2, state.catalogueCursor);
+        assertTrue(output.isEmpty());
+        verify(client, never()).ebay(any(), eq("Apple iPhone 16 Pro"));
+        // Cursor is simply never advanced past the failing product - nothing to roll back,
+        // since save() happens only after a product succeeds.
+        assertEquals(0, state.catalogueCursor);
     }
 }
