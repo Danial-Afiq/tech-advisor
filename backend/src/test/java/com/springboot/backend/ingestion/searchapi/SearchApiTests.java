@@ -19,7 +19,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 class SearchApiTests {
     final JsonMapper json = JsonMapper.builder().build();
-    final SearchApiSettings settings = new SearchApiSettings("never-log-this-test-key", "sg", "en", "Singapore", 1);
+    final SearchApiSettings settings = new SearchApiSettings("never-log-this-test-key", "sg", "en", "Singapore", 1, "https://www.searchapi.io/api/v1/search", "www.searchapi.io");
     final Instant now = Instant.parse("2026-09-24T00:00:00Z");
     final SearchApiRepository.Product product = new SearchApiRepository.Product(812, "Apple", "iPhone 16 Pro");
     JsonNode shopping() { return json.readTree("""
@@ -338,7 +338,7 @@ class SearchApiTests {
     }
 
     @Test void missingKeyFailsOnlyWhenEnabled() {
-        var blank = new SearchApiSettings("", "sg", "en", "Singapore", 1);
+        var blank = new SearchApiSettings("", "sg", "en", "Singapore", 1, "https://www.searchapi.io/api/v1/search", "www.searchapi.io");
         assertDoesNotThrow(() -> new SearchApiSource(blank, null, null, new IngestionSettings(false, null, List.of())));
         assertThrows(IllegalArgumentException.class, () -> new SearchApiSource(blank, null, null,
                 new IngestionSettings(false, null, List.of(SearchApiSource.ID))));
@@ -352,5 +352,49 @@ class SearchApiTests {
         assertEquals(1, accepted.size()); assertEquals("", accepted.getFirst().title());
         assertEquals("walmart.com", accepted.getFirst().sourceDomain());
         assertFalse(accepted.getFirst().text().contains("DATA_START"));
+    }
+
+    // titleMatches() backs EbayPriceSource - unlike validMatches()/choose(), it doesn't
+    // require product_id/product_token (eBay listings have neither), but shares the exact
+    // same title-acceptance and price/currency extraction Google Shopping matching already uses.
+    @Test void titleMatchesAcceptsRowsWithNoProductIdOrToken() {
+        var results = json.readTree("""
+                [{"title":"Apple iPhone 16 Pro 256GB","price":"$899.00","extracted_price":899.00}]
+                """);
+        var matches = ProductMatcher.titleMatches("Apple", "iPhone 16 Pro", results);
+        assertEquals(1, matches.size());
+        assertEquals(0, new java.math.BigDecimal("899.00").compareTo(matches.getFirst().price()));
+        assertEquals("USD", matches.getFirst().currency());
+    }
+
+    @Test void titleMatchesStillRejectsAnUnacceptedTitle() {
+        var results = json.readTree("""
+                [{"title":"Samsung Galaxy S25","price":"$799.00","extracted_price":799.00}]
+                """);
+        assertTrue(ProductMatcher.titleMatches("Apple", "iPhone 16 Pro", results).isEmpty());
+    }
+
+    // ebay() is a distinct engine from shopping()/reviews() - confirm it builds the right
+    // query (condition=new, sort_by=price_shipping_low_to_high - NOT price_low_to_high, which
+    // SearchAPI.io's own docs say is unsupported on ebay.com, the default domain here -
+    // organic_results field) and skips googleLocale() entirely (no gl/hl/location - an eBay
+    // engine would just ignore them).
+    @Test void ebayBuildsTheRightQueryAndSkipsGoogleLocale() throws Exception {
+        var context = mock(SourceContext.class);
+        when(context.get(any(), anyString(), anyString())).thenReturn("""
+                {"organic_results":[{"title":"Apple iPhone 16 Pro 256GB","price":"$899.00","extracted_price":899.00}]}
+                """.getBytes());
+
+        JsonNode results = new SearchApiClient(settings).ebay(context, product.name());
+
+        var uri = ArgumentCaptor.forClass(URI.class);
+        verify(context).get(uri.capture(), eq(settings.apiKey()), eq("www.searchapi.io"));
+        String query = uri.getValue().getQuery();
+        assertTrue(query.contains("engine=ebay_search"));
+        assertTrue(query.contains("condition=new"));
+        assertTrue(query.contains("sort_by=price_shipping_low_to_high"));
+        assertFalse(query.contains("gl=")); assertFalse(query.contains("hl=")); assertFalse(query.contains("location="));
+        assertEquals(1, results.size());
+        assertEquals("Apple iPhone 16 Pro 256GB", results.get(0).path("title").asText());
     }
 }
