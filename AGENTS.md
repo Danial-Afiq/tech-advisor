@@ -2559,16 +2559,17 @@ that's wanted.
 
 **Shape: plain round-robin, not Google Shopping's targeted/cached-token
 flow.** Every run prices the next `searchapi.ebay.max-products-per-run`
-VERIFIED smartphones in catalogue `id` order (`EbayPriceRepository
-.nextProducts`), 1 real HTTP request per product (`condition=new` -
-`sort_by=price_shipping_low_to_high`, NOT `price_low_to_high`: SearchAPI.io's
-own docs confirm `price_low_to_high` is unsupported on ebay.com, the default
-marketplace used here when `ebay_domain` isn't set - a post-merge review
-caught both this and that the code previously trusted the API's ordering
-instead of verifying it; `EbayPriceSource.toPrice` now explicitly selects the
-*minimum*-priced accepted match from whatever order results arrive in,
-rather than assuming the first one is cheapest, so correctness never
-actually depends on the sort hint being honored). Progress is a single
+VERIFIED catalogue rows (smartphones, and GPUs once opted in — see below) in
+`id` order (`EbayPriceRepository.nextProducts`), 1 real HTTP request per
+product (`condition=new` - `sort_by=price_shipping_low_to_high`, NOT
+`price_low_to_high`: SearchAPI.io's own docs confirm `price_low_to_high` is
+unsupported on ebay.com, the default marketplace used here when
+`ebay_domain` isn't set - a post-merge review caught both this and that the
+code previously trusted the API's ordering instead of verifying it;
+`EbayPriceSource.toPrice` now explicitly selects the *minimum*-priced
+accepted match from whatever order results arrive in, rather than assuming
+the first one is cheapest, so correctness never actually depends on the sort
+hint being honored). Progress is a single
 persisted cursor (`EbayPriceIngestionState.catalogueCursor`), stored as a
 `system_log` row (component `SEARCHAPI_EBAY_PRICE_STATE`) — the same
 state-persistence pattern `TechApiBenchmarkRepository` already uses for
@@ -2621,12 +2622,37 @@ reach every product for the first time over many days, is explicitly out of
 scope** — a later, separate pass, by explicit instruction, same reasoning
 ticket 1.8 kept its schema work and backfill as separate steps.
 
-**Not yet live-verified end to end** — SearchAPI.io's account quota was still
-exhausted (confirmed live, "You have used all of the searches for the month")
-at the time this was built, so the one real run this project normally does
-before calling an integration proven has not happened yet. The response
-shape itself was independently confirmed against SearchAPI.io's own
-documentation, not against a live call.
+**Not yet live-verified against the real eBay API** — SearchAPI.io's account
+quota was still exhausted (confirmed live, "You have used all of the
+searches for the month") both when this was built and again when an
+end-to-end demonstration was attempted. Verified instead with a genuine,
+non-mocked-logic run: real Postgres rows, the real repository/matching/
+persistence code path, with only the literal TCP/TLS socket layer stood in
+for (the same `HttpClient`-injection seam `SourceContextTests` already uses —
+this also sidesteps a real blocker, not just the quota: binding port 443 for
+a true local HTTPS stub needs root, which isn't available in this sandbox).
+The response shape itself was also independently confirmed against
+SearchAPI.io's own documentation. **Swap `SEARCHAPI_API_KEY` to the real
+deployment key (9,000 req/month quota, not the exhausted personal key used
+during development) before this runs for real.**
+
+**GPU support (`feat/gpu-ebay-ingestion` branch, stacked on this one):**
+`EbayPriceRepository`'s catalogue query and `EbayPriceSettings` both gained
+the same `categories` configuration `SearchApiSettings`/`SearchApiRepository`
+already use for Google Shopping (§17.3's ticket 1.3) — defaulting to
+`SMARTPHONE` only, so nothing changes until `SEARCHAPI_EBAY_CATEGORIES`
+explicitly opts GPUs in. Phones and GPUs share **one combined round-robin
+cursor**, not one each: a single id-ordered rotation across every configured
+category, the same reasoning `SearchApiRepository`'s untargeted picker
+already applies — a category with more rows simply gets proportionally more
+turns per sweep, never starving the other category or needing its own
+independent pacing/quota slice. `ProductMatcher.titleMatches` gained a
+category-aware overload (mirroring `accepts`/`choose`'s existing
+`(category, ...)` shape) so a GPU listing is judged by the GPU ruleset
+(memory-size splitting, AIB partner-board tolerance) instead of always being
+judged as a phone. **Google Shopping itself needed no new code** — ticket
+1.3 already gave `SearchApiSource` full GPU support before this branch
+existed; this work only closes the gap on the eBay side.
 
 ---
 

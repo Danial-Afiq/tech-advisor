@@ -20,6 +20,9 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @SpringBootTest(properties = "ingestion.reconciliation-enabled=false")
 class EbayPriceRepositoryTests {
+    private static final EbayPriceSettings PHONES_ONLY = new EbayPriceSettings(10);
+    private static final EbayPriceSettings PHONES_AND_GPUS = new EbayPriceSettings(10, List.of("SMARTPHONE", "GPU"));
+
     @Autowired EbayPriceRepository repository;
     @Autowired JdbcTemplate db;
 
@@ -32,9 +35,13 @@ class EbayPriceRepositoryTests {
     }
 
     private long product(String brand, String model) {
+        return product(brand, model, "SMARTPHONE");
+    }
+
+    private long product(String brand, String model, String category) {
         return db.queryForObject(
-                "INSERT INTO products (brand, model_name, category) VALUES (?, ?, 'SMARTPHONE') RETURNING id",
-                Long.class, brand, model);
+                "INSERT INTO products (brand, model_name, category) VALUES (?, ?, ?) RETURNING id",
+                Long.class, brand, model, category);
     }
 
     @Test void stateStartsAtCursorZeroWhenNoRowExistsYet() {
@@ -65,7 +72,7 @@ class EbayPriceRepositoryTests {
         long b = product("Apple", "iPhone 16 Pro");
         product("Samsung", "Galaxy S25"); // not reached - limit 2
 
-        var batch = repository.nextProducts(0, 2);
+        var batch = repository.nextProducts(0, 2, PHONES_ONLY);
         assertFalse(batch.wrapped());
         assertEquals(List.of(a, b), batch.products().stream().map(EbayPriceRepository.Product::id).toList());
     }
@@ -76,24 +83,57 @@ class EbayPriceRepositoryTests {
         long c = product("Samsung", "Galaxy S25");
 
         // Cursor at b: only c remains forward - wraps to pick up a too, filling the batch of 3.
-        var batch = repository.nextProducts(b, 3);
+        var batch = repository.nextProducts(b, 3, PHONES_ONLY);
         assertTrue(batch.wrapped());
         assertEquals(List.of(c, a), batch.products().stream().map(EbayPriceRepository.Product::id).toList());
     }
 
-    @Test void nextProductsExcludesNonVerifiedOrNonSmartphoneProducts() {
+    @Test void nextProductsExcludesNonVerifiedProducts() {
         long verified = product("Apple", "iPhone 16");
-        db.update("INSERT INTO products (brand, model_name, category, status) VALUES ('Nvidia', 'RTX 5090', 'GPU', 'VERIFIED')");
         db.update("INSERT INTO products (brand, model_name, category, status) VALUES ('Pending', 'Phone', 'SMARTPHONE', 'PENDING')");
 
-        var batch = repository.nextProducts(0, 10);
+        var batch = repository.nextProducts(0, 10, PHONES_ONLY);
         assertEquals(List.of(verified), batch.products().stream().map(EbayPriceRepository.Product::id).toList());
+    }
+
+    @Test void nextProductsExcludesCategoriesNotInSettings() {
+        long phone = product("Apple", "iPhone 16", "SMARTPHONE");
+        product("Nvidia", "RTX 5090", "GPU"); // excluded - PHONES_ONLY doesn't list GPU
+
+        var batch = repository.nextProducts(0, 10, PHONES_ONLY);
+        assertEquals(List.of(phone), batch.products().stream().map(EbayPriceRepository.Product::id).toList());
     }
 
     @Test void nextProductsReturnsEverythingWithoutWrappingWhenTheCatalogueIsSmallerThanTheLimit() {
         long a = product("Apple", "iPhone 16");
-        var batch = repository.nextProducts(0, 10);
+        var batch = repository.nextProducts(0, 10, PHONES_ONLY);
         assertTrue(batch.wrapped(), "a short catalogue is still a complete sweep in one run");
         assertEquals(List.of(a), batch.products().stream().map(EbayPriceRepository.Product::id).toList());
+    }
+
+    @Test void nextProductsSweepsPhonesAndGpusAsOneCombinedRotationWhenBothAreConfigured() {
+        // Interleaved on purpose: proves the cursor rotates through one shared id order, not
+        // "all phones, then all GPUs" or two independently-paced pools.
+        long phone1 = product("Apple", "iPhone 16", "SMARTPHONE");
+        long gpu1 = product("Nvidia", "RTX 5090", "GPU");
+        long phone2 = product("Samsung", "Galaxy S25", "SMARTPHONE");
+        long gpu2 = product("AMD", "RX 9070", "GPU");
+
+        var firstBatch = repository.nextProducts(0, 2, PHONES_AND_GPUS);
+        assertFalse(firstBatch.wrapped());
+        assertEquals(List.of(phone1, gpu1),
+                firstBatch.products().stream().map(EbayPriceRepository.Product::id).toList());
+        assertEquals(List.of("SMARTPHONE", "GPU"),
+                firstBatch.products().stream().map(EbayPriceRepository.Product::category).toList());
+
+        var secondBatch = repository.nextProducts(gpu1, 2, PHONES_AND_GPUS);
+        assertFalse(secondBatch.wrapped(), "exactly 2 remain forward of the cursor - a clean fill, not a wrap");
+        assertEquals(List.of(phone2, gpu2),
+                secondBatch.products().stream().map(EbayPriceRepository.Product::id).toList());
+
+        var thirdBatch = repository.nextProducts(gpu2, 2, PHONES_AND_GPUS);
+        assertTrue(thirdBatch.wrapped(), "cursor at the last product - nothing remains forward, wraps to the start");
+        assertEquals(List.of(phone1, gpu1),
+                thirdBatch.products().stream().map(EbayPriceRepository.Product::id).toList());
     }
 }
