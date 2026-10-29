@@ -68,19 +68,28 @@ class GpuSpecValidatorTest {
                 1980, 2470, "12", null, null, 220, null, null, null)));
     }
 
-    @Test void missingRequiredFields() {
-        LocalDate d = LocalDate.of(2024, 1, 17);
+    @Test void aReleaseDateIsRequired() {
         assertEquals(Optional.of("MISSING_RELEASE_DATE"), check(spec("NVIDIA", "GeForce RTX 4070", null, 1980, null, "12", null, null, 220, null, null, null)));
-        assertEquals(Optional.of("MISSING_BASE_CLOCK"), check(spec("NVIDIA", "GeForce RTX 4070", d, null, null, "12", null, null, 220, null, null, null)));
-        assertEquals(Optional.of("MISSING_VRAM"), check(spec("NVIDIA", "GeForce RTX 4070", d, 1980, null, null, null, null, 220, null, null, null)));
-        assertEquals(Optional.of("MISSING_TDP"), check(spec("NVIDIA", "GeForce RTX 4070", d, 1980, null, "12", null, null, null, null, null, null)));
+    }
+
+    @Test void clocksVramAndTdpAreOptional() {
+        LocalDate d = LocalDate.of(2024, 1, 17);
+        assertEquals(Optional.empty(), check(spec("NVIDIA", "GeForce RTX 4070", d, null, null, "12", null, null, 220, null, null, null)));
+        assertEquals(Optional.empty(), check(spec("NVIDIA", "GeForce RTX 4070", d, 1980, null, null, null, null, 220, null, null, null)));
+        assertEquals(Optional.empty(), check(spec("NVIDIA", "GeForce RTX 4070", d, 1980, null, "12", null, null, null, null, null, null)));
+        assertEquals(Optional.empty(), check(spec("NVIDIA", "GeForce RTX 4070", d, null, null, null, null, null, null, null, null, null)));
+    }
+
+    @Test void aBoostClockWithNoBaseClockIsNotComparedToAnything() {
+        assertEquals(Optional.empty(), check(withClocks(null, 1500)));
     }
 
     @Test void baseClockInGhzIsOutOfRange() {
         // 1.98 GHz mistakenly read as an MHz integer rounds to 2.
         assertEquals(Optional.of("BASE_CLOCK_OUT_OF_RANGE"), check(withClocks(2, null)));
+        assertEquals(Optional.of("BASE_CLOCK_OUT_OF_RANGE"), check(withClocks(9, null)));
         assertEquals(Optional.of("BASE_CLOCK_OUT_OF_RANGE"), check(withClocks(4001, null)));
-        assertEquals(Optional.empty(), check(withClocks(100, null)));
+        assertEquals(Optional.empty(), check(withClocks(10, null)));
         assertEquals(Optional.empty(), check(withClocks(4000, null)));
     }
 
@@ -90,14 +99,15 @@ class GpuSpecValidatorTest {
     }
 
     @Test void vramOutOfRange() {
-        assertEquals(Optional.of("VRAM_OUT_OF_RANGE"), check(withVramTdpMsrp("0.25", 220, null)));
+        assertEquals(Optional.of("VRAM_OUT_OF_RANGE"), check(withVramTdpMsrp("0.000001", 220, null)));
         assertEquals(Optional.of("VRAM_OUT_OF_RANGE"), check(withVramTdpMsrp("128", 220, null)));
-        assertEquals(Optional.empty(), check(withVramTdpMsrp("0.5", 220, null)));
+        assertEquals(Optional.empty(), check(withVramTdpMsrp("0.00001", 220, null)));
+        assertEquals(Optional.empty(), check(withVramTdpMsrp("0.25", 220, null)));
         assertEquals(Optional.empty(), check(withVramTdpMsrp("96", 220, null)));
     }
 
     @Test void tdpOutOfRange() {
-        assertEquals(Optional.of("TDP_OUT_OF_RANGE"), check(withVramTdpMsrp("12", 5, null)));
+        assertEquals(Optional.of("TDP_OUT_OF_RANGE"), check(withVramTdpMsrp("12", 0, null)));
         assertEquals(Optional.of("TDP_OUT_OF_RANGE"), check(withVramTdpMsrp("12", 1200, null)));
     }
 
@@ -112,8 +122,9 @@ class GpuSpecValidatorTest {
     }
 
     @Test void releaseDateTooOld() {
-        assertEquals(Optional.of("RELEASE_DATE_TOO_OLD"), check(withDate(LocalDate.of(2009, 12, 31))));
-        assertEquals(Optional.empty(), check(withDate(LocalDate.of(2010, 1, 1))));
+        assertEquals(Optional.of("RELEASE_DATE_TOO_OLD"), check(withDate(LocalDate.of(1979, 12, 31))));
+        assertEquals(Optional.empty(), check(withDate(LocalDate.of(1980, 1, 1))));
+        assertEquals(Optional.empty(), check(withDate(LocalDate.of(2009, 12, 31))));
     }
 
     @Test void memoryBusOutOfRange() {
