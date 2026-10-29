@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 24 October 2026
+> **Last consolidated:** 29 October 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -2173,8 +2173,8 @@ NOT a decision: the JWT is kept in `sessionStorage`, isolated in
   It is not a per-variant quotation. Normal application requests read
   PostgreSQL and do not call either provider. ADMIN catalogue CRUD is the
   manual correction/exception path, not another external data provider.
-- **GPU specifications (ticket 1.3):** a 12-card seed prefill and TechSpot's GPU
-  database, both through `GpuCatalogSink` into `products`/`gpu` plus a launch-MSRP
+- **GPU specifications (ticket 1.3):** a ~980-card seed prefill built from the RightNow
+  GPU Database (TechPowerUp data, Apache-2.0) and TechSpot's GPU database, both through `GpuCatalogSink` into `products`/`gpu` plus a launch-MSRP
   `price_history` row (§17.1.4).
 - **Owner reviews:** SearchAPI Google Product Reviews for smartphones and GPUs (§17.4).
 - **Benchmarks:** TechAPI's released GitHub `main` dataset supplies raw Geekbench
@@ -2367,8 +2367,10 @@ has a general scraping ban. HardwareZone (SPH Media) and Engadget (Static
 Media) were checked against the same evidentiary bar (robots.txt **and**
 actual ToS text, not robots.txt alone) and no AI-training/scraping-
 prohibition clause was found in either, despite a real search effort.
-TechPowerUp (GPU specs, still unimplemented) has a Verge-style block and
-needs the same treatment before any adapter is built against it.
+TechPowerUp (GPU specs) has a Verge-style block and needs the same treatment
+before any adapter is built against it. No adapter scrapes it, but the `gpus.v2`
+seed (§17.1.4) is TechPowerUp data republished by a third party - see the open
+compliance item there.
 
 Neither adapter's exact field/source selection is a final decision — both
 are config-driven per §17.1's "keep source adapters replaceable."
@@ -2385,11 +2387,36 @@ found).
 Two opt-in sources (`INGESTION_ENABLED_SOURCES`), no keys, one shared sink:
 
 - **`gpu-seed`** (`GpuSeedSource`, priority 10): reads
-  `backend/src/main/resources/seed/gpus.v1.json` (12 confirmed starter cards; names
-  spelled as TechSpot spells them, e.g. `GeForce RTX 3060 12GB`, `Arc A770 16GB`;
-  launch prices match TechSpot's "Price at Launch"). It is a prefill, not a source
+  `backend/src/main/resources/seed/gpus.v2.json` (source `seed:gpus.v2`, ~980 consumer
+  desktop NVIDIA/AMD/Intel cards of any release year, 1986 onwards, so users can add older
+  cards they own to their inventory). It is a prefill, not a source
   of truth: cards already in the catalogue are left out, so a re-run never
   overwrites fresher TechSpot values, and a run with nothing missing emits nothing.
+  Missing cards go out as batches of 100 (the `Payload` cap), each with its own
+  external id (`seed:gpus.v2#n`) because the runner skips a repeated id; the source
+  stops starting batches after 40 s so the last commits inside the 60 s budget, and
+  anything left loads on the next run.
+  - **One-time import (chore, Oct 2026).** The file is a static, one-off extract of the
+    RightNow GPU Database (github.com/RightNow-AI/RightNow-GPU-Database, Apache-2.0,
+    commit `dfb3c9a`), which republishes TechPowerUp's GPU database. There is no
+    generator script and it is not meant to be refreshed from upstream; TechPowerUp
+    will not be used again. It holds consumer desktop cards (PCI/AGP/PCIe, any
+    release year) that have a recorded desktop slot; workstation, server, mobile, integrated and
+    non-NVIDIA/AMD/Intel parts are left out. About 230 cards have no TDP and are stored with
+    it null (see `GpuSpecValidator` below). All pass `GpuSpecValidator`. Attribution is in
+    `seed/gpus.v2.NOTICE.md`. It **superseded** the hand-entered 12-card
+    `gpus.v1.json`; those 12 cards keep their v1 names (`GeForce RTX 3060 12GB`,
+    `Radeon RX 580 8GB`, `Arc A770 16GB`, ...) so existing rows still match, and are
+    the only cards with a launch MSRP, since TechPowerUp publishes none.
+  - **Names.** TechPowerUp's "12 GB" is written "12GB" as TechSpot does, but other
+    spellings differ between the two sources (e.g. a suffix one adds and the other
+    omits), so running both can still give one physical card two `products` rows.
+    `GpuNames` only strips vendor prefixes and ignores case.
+  - **OPEN compliance item.** TechPowerUp's own terms block scraping (§17.1.3). This
+    seed does not contact TechPowerUp, but its data originates there and RightNow's
+    Apache-2.0 licence is not evidence that TechPowerUp permits redistribution. The
+    team has not yet cleared this the way it cleared TechSpot; do so before relying
+    on the seed in a deployed environment.
 - **`techspot-gpu-specs`** (`TechSpotGpuSource` + `TechSpotGpuParser`, priority 20):
   TechSpot's GPU database is 4 list pages of ~160 desktop cards. Each run reads one
   list page, then at most 8 detail pages (1 list + 8 detail + 1 spare = the shared
@@ -2405,7 +2432,11 @@ Two opt-in sources (`INGESTION_ENABLED_SOURCES`), no keys, one shared sink:
   only, and takes the brand from the heading's first word.
 - **`GpuCatalogSink`**: one transaction per `Payload.GpuCatalogBatch`. Each card goes
   through `GpuSpecValidator` (ranges in `gpu.validation.*`, excluded name pattern for
-  laptop/mobile/workstation/datacentre parts, release date 2010..today); an invalid
+  laptop/mobile/workstation/datacentre parts, release date 1980..today). Only identity and a
+  release date are required: base clock, VRAM and TDP may be null (a card a user owns is
+  worth having even if its TDP is unpublished) but are range-checked when present. The
+  ranges were widened for pre-2010 cards (base clock >= 10 MHz, VRAM >= 0.00001 GB, TDP >= 1 W,
+  release year >= 1980) and apply to TechSpot cards too; an invalid
   card is dropped and named in the run summary, not an exception. Identity is
   `GpuNames.key` (case-insensitive brand + model, duplicated vendor prefix stripped).
   A same-named product in another category is dropped as `CATEGORY_CONFLICT`. Upserts

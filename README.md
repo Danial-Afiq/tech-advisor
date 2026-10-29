@@ -309,7 +309,8 @@ and refresh independently every 14 days. See the
 [TechAPI benchmark ingestion guide](docs/techapi-benchmark-ingestion.md).
 
 The opt-in `gpu-seed` and `techspot-gpu-specs` sources (ticket 1.3) build the GPU
-catalogue: a 12-card seed prefill, then desktop GPU specs and launch prices from
+catalogue: a ~980-card seed prefill (RightNow GPU Database, see
+`backend/src/main/resources/seed/gpus.v2.NOTICE.md`), then desktop GPU specs and launch prices from
 TechSpot's GPU database, read a few pages per run within the shared request budget.
 See AGENTS.md §17.1.4.
 

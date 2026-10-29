@@ -20,15 +20,15 @@ class GpuValidationSettingsTest {
 
     @Test void defaultsBindToTheDocumentedValues() {
         GpuValidationSettings s = defaults();
-        assertEquals(100, s.baseClockMinMhz());
+        assertEquals(10, s.baseClockMinMhz());
         assertEquals(4000, s.baseClockMaxMhz());
-        assertEquals(0, new BigDecimal("0.5").compareTo(s.vramMinGb()));
+        assertEquals(0, new BigDecimal("0.00001").compareTo(s.vramMinGb()));
         assertEquals(0, new BigDecimal("96").compareTo(s.vramMaxGb()));
-        assertEquals(10, s.tdpMinWatts());
+        assertEquals(1, s.tdpMinWatts());
         assertEquals(1000, s.tdpMaxWatts());
         assertEquals(0, new BigDecimal("50").compareTo(s.msrpMinUsd()));
         assertEquals(0, new BigDecimal("5000").compareTo(s.msrpMaxUsd()));
-        assertEquals(2010, s.minReleaseYear());
+        assertEquals(1980, s.minReleaseYear());
         assertEquals("(?i)\\b(laptop|mobile|max-q|notebook|quadro|tesla|instinct|radeon pro|firepro|rtx a\\d+|ada generation)\\b",
                 s.excludedNamePattern());
     }
@@ -63,7 +63,7 @@ class GpuValidationSettingsTest {
     }
 
     @Test void releaseYearOutsideSaneBoundsThrows() {
-        assertThrows(IllegalArgumentException.class, () -> settings(100, 4000, "0.5", "96", 10, 1000, "50", "5000", 1989, "x"));
+        assertThrows(IllegalArgumentException.class, () -> settings(100, 4000, "0.5", "96", 10, 1000, "50", "5000", 1979, "x"));
         assertThrows(IllegalArgumentException.class, () -> settings(100, 4000, "0.5", "96", 10, 1000, "50", "5000", 2101, "x"));
     }
 

@@ -32,15 +32,17 @@ public class GpuSpecValidator {
         if (GpuNames.model(brand, spec.modelName()) == null) return Optional.of("MISSING_MODEL_NAME");
         if (excluded.matcher(spec.modelName()).find()) return Optional.of("EXCLUDED_MODEL");
         if (spec.releaseDate() == null) return Optional.of("MISSING_RELEASE_DATE");
-        if (spec.baseClockMhz() == null) return Optional.of("MISSING_BASE_CLOCK");
-        if (spec.vramGb() == null) return Optional.of("MISSING_VRAM");
-        if (spec.tdpWatts() == null) return Optional.of("MISSING_TDP");
-        int base = spec.baseClockMhz();
-        if (base < settings.baseClockMinMhz() || base > settings.baseClockMaxMhz())
+        // Clocks, VRAM and TDP are optional: a card a source publishes no TDP for is still a card a
+        // user may own. A value that is present must still be in range.
+        Integer base = spec.baseClockMhz();
+        if (base != null && (base < settings.baseClockMinMhz() || base > settings.baseClockMaxMhz()))
             return Optional.of("BASE_CLOCK_OUT_OF_RANGE");
-        if (spec.boostClockMhz() != null && spec.boostClockMhz() < base) return Optional.of("BOOST_BELOW_BASE");
-        if (outside(spec.vramGb(), settings.vramMinGb(), settings.vramMaxGb())) return Optional.of("VRAM_OUT_OF_RANGE");
-        if (spec.tdpWatts() < settings.tdpMinWatts() || spec.tdpWatts() > settings.tdpMaxWatts())
+        if (base != null && spec.boostClockMhz() != null && spec.boostClockMhz() < base)
+            return Optional.of("BOOST_BELOW_BASE");
+        if (spec.vramGb() != null && outside(spec.vramGb(), settings.vramMinGb(), settings.vramMaxGb()))
+            return Optional.of("VRAM_OUT_OF_RANGE");
+        if (spec.tdpWatts() != null
+                && (spec.tdpWatts() < settings.tdpMinWatts() || spec.tdpWatts() > settings.tdpMaxWatts()))
             return Optional.of("TDP_OUT_OF_RANGE");
         if (spec.launchMsrpUsd() != null && outside(spec.launchMsrpUsd(), settings.msrpMinUsd(), settings.msrpMaxUsd()))
             return Optional.of("MSRP_OUT_OF_RANGE");

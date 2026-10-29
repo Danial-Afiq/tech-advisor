@@ -12,15 +12,15 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  */
 @ConfigurationProperties("gpu.validation")
 public record GpuValidationSettings(
-        @DefaultValue("100") int baseClockMinMhz,
+        @DefaultValue("10") int baseClockMinMhz,
         @DefaultValue("4000") int baseClockMaxMhz,
-        @DefaultValue("0.5") BigDecimal vramMinGb,
+        @DefaultValue("0.00001") BigDecimal vramMinGb,
         @DefaultValue("96") BigDecimal vramMaxGb,
-        @DefaultValue("10") int tdpMinWatts,
+        @DefaultValue("1") int tdpMinWatts,
         @DefaultValue("1000") int tdpMaxWatts,
         @DefaultValue("50") BigDecimal msrpMinUsd,
         @DefaultValue("5000") BigDecimal msrpMaxUsd,
-        @DefaultValue("2010") int minReleaseYear,
+        @DefaultValue("1980") int minReleaseYear,
         @DefaultValue("(?i)\\b(laptop|mobile|max-q|notebook|quadro|tesla|instinct|radeon pro|firepro|rtx a\\d+|ada generation)\\b")
         String excludedNamePattern) {
     public GpuValidationSettings {
@@ -32,8 +32,8 @@ public record GpuValidationSettings(
             throw new IllegalArgumentException("gpu.validation TDP min must be < max");
         if (msrpMinUsd == null || msrpMaxUsd == null || msrpMinUsd.compareTo(msrpMaxUsd) >= 0)
             throw new IllegalArgumentException("gpu.validation MSRP min must be < max");
-        if (minReleaseYear < 1990 || minReleaseYear > 2100)
-            throw new IllegalArgumentException("gpu.validation.min-release-year must be 1990-2100");
+        if (minReleaseYear < 1980 || minReleaseYear > 2100)
+            throw new IllegalArgumentException("gpu.validation.min-release-year must be 1980-2100");
         if (excludedNamePattern == null)
             throw new IllegalArgumentException("gpu.validation.excluded-name-pattern is required");
         try { Pattern.compile(excludedNamePattern); }
