@@ -7,7 +7,8 @@ Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
 RightNow sources its data from the TechPowerUp GPU Database
 (https://www.techpowerup.com/gpu-specs/) via dbgpu.
 
-Changes from the upstream data: filtered to consumer desktop cards released from 2010
-that pass `GpuSpecValidator`, fields renamed to `Payload.GpuSpec`, clocks rounded to
+Changes from the upstream data: filtered to consumer desktop cards of any age (NVIDIA,
+AMD/ATI and Intel only; workstation, server, mobile and integrated parts left out) that
+pass `GpuSpecValidator`, with a spec left null where upstream has none, fields renamed to `Payload.GpuSpec`, clocks rounded to
 whole MHz, "N GB" written as "NGB", four card names kept in their `gpus.v1` spelling,
 and twelve launch prices carried over from `gpus.v1` (TechSpot "Price at Launch").
