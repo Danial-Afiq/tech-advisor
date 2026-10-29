@@ -126,7 +126,7 @@ public class EbayPriceSource implements IngestionSource {
     private void priceOne(SourceContext context, EbayPriceRepository.Product product, Consumer<Payload> output)
             throws Exception {
         JsonNode results = client.ebay(context, product.name());
-        toPrice(product.id(), product.category(), product.brand(), product.modelName(), context.now(), results)
+        toPrice(ID, product.id(), product.category(), product.brand(), product.modelName(), context.now(), results)
                 .ifPresent(output::accept);
     }
 
@@ -136,9 +136,15 @@ public class EbayPriceSource implements IngestionSource {
      * other source in this package (MobileApiSmartphoneSource.toPayload, etc). category picks
      * ProductMatcher's listing vocabulary (SMARTPHONE or GPU - see its titleMatches overload),
      * same reasoning SearchApiSource already applies to Google Shopping matching.
+     *
+     * sourceId is a parameter, not always {@link #ID}, so {@link EbayPriceBackfillSource} can
+     * reuse this exact matching/selection logic while stamping its own distinct source label -
+     * {@code SourceRegistry} requires every registered source to have a unique sourceId, which
+     * becomes the payload's (and so price_history row's) provenance, so a shared adapter id
+     * isn't an option; this parameter is the alternative to duplicating the logic.
      */
-    static Optional<Payload> toPrice(long productId, String category, String brand, String modelName,
-                                      Instant observedAt, JsonNode results) {
+    static Optional<Payload> toPrice(String sourceId, long productId, String category, String brand,
+                                      String modelName, Instant observedAt, JsonNode results) {
         var matches = ProductMatcher.titleMatches(category, brand, modelName, results);
         // Picks the minimum price among every accepted, priced match - does NOT trust the
         // results are already sorted cheapest-first. SearchApiClient.ebay()'s sort_by hint is
@@ -150,7 +156,7 @@ public class EbayPriceSource implements IngestionSource {
                 .min(java.util.Comparator.comparing(ProductMatcher.Match::price));
         if (priced.isEmpty()) return Optional.empty();
         var match = priced.get();
-        return Optional.of(new Payload(ID, productId + ":ebay:" + observedAt.toEpochMilli(), observedAt,
+        return Optional.of(new Payload(sourceId, productId + ":ebay:" + observedAt.toEpochMilli(), observedAt,
                 new Payload.Price(Long.toString(productId), null, match.price(), match.currency())));
     }
 }

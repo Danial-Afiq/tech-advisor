@@ -30,7 +30,7 @@ class EbayPriceSourceTests {
                 [{"title":"Apple iPhone 16 Pro 256GB","price":"$899.00","extracted_price":899.00},
                  {"title":"Apple iPhone 16 Pro 256GB","price":"$999.00","extracted_price":999.00}]
                 """);
-        var payload = EbayPriceSource.toPrice(812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, results).get();
+        var payload = EbayPriceSource.toPrice(EbayPriceSource.ID, 812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, results).get();
         assertEquals("searchapi-ebay-prices", payload.sourceId());
         var price = (Payload.Price) payload.body();
         assertEquals("812", price.productReference());
@@ -48,7 +48,7 @@ class EbayPriceSourceTests {
                  {"title":"Apple iPhone 16 Pro 256GB","price":"$849.00","extracted_price":849.00},
                  {"title":"Apple iPhone 16 Pro 256GB","price":"$905.00","extracted_price":905.00}]
                 """);
-        var price = (Payload.Price) EbayPriceSource.toPrice(812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, results).get().body();
+        var price = (Payload.Price) EbayPriceSource.toPrice(EbayPriceSource.ID, 812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, results).get().body();
         assertEquals(0, new java.math.BigDecimal("849.00").compareTo(price.amount()));
     }
 
@@ -58,18 +58,18 @@ class EbayPriceSourceTests {
         var results = json.readTree("""
                 [{"title":"Apple iPhone 16 Pro Max 256GB","price":"$999.00","extracted_price":999.00}]
                 """);
-        assertTrue(EbayPriceSource.toPrice(812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, results).isEmpty());
+        assertTrue(EbayPriceSource.toPrice(EbayPriceSource.ID, 812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, results).isEmpty());
     }
 
     @Test void toPriceSkipsAMatchedTitleWithNoParseablePrice() {
         var results = json.readTree("""
                 [{"title":"Apple iPhone 16 Pro 256GB","price":"","extracted_price":null}]
                 """);
-        assertTrue(EbayPriceSource.toPrice(812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, results).isEmpty());
+        assertTrue(EbayPriceSource.toPrice(EbayPriceSource.ID, 812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, results).isEmpty());
     }
 
     @Test void toPriceHandlesAnEmptyResultsArray() {
-        assertTrue(EbayPriceSource.toPrice(812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, json.readTree("[]")).isEmpty());
+        assertTrue(EbayPriceSource.toPrice(EbayPriceSource.ID, 812, "SMARTPHONE", "Apple", "iPhone 16 Pro", now, json.readTree("[]")).isEmpty());
     }
 
     @Test void toPriceUsesTheGpuRulesetForAGpuCategoryProduct() {
@@ -79,7 +79,7 @@ class EbayPriceSourceTests {
         var results = json.readTree("""
                 [{"title":"ASUS TUF Gaming GeForce RTX 4080 16GB OC Edition","price":"$1099.00","extracted_price":1099.00}]
                 """);
-        var payload = EbayPriceSource.toPrice(915, "GPU", "NVIDIA", "GeForce RTX 4080 16GB", now, results).get();
+        var payload = EbayPriceSource.toPrice(EbayPriceSource.ID, 915, "GPU", "NVIDIA", "GeForce RTX 4080 16GB", now, results).get();
         var price = (Payload.Price) payload.body();
         assertEquals(0, new java.math.BigDecimal("1099.00").compareTo(price.amount()));
     }

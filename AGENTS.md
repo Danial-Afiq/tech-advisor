@@ -2685,6 +2685,65 @@ judged as a phone. **Google Shopping itself needed no new code** — ticket
 1.3 already gave `SearchApiSource` full GPU support before this branch
 existed; this work only closes the gap on the eBay side.
 
+## 17.4b One-time price backfill — `EbayPriceBackfillSource` (Oct 2026)
+
+A real production catalogue snapshot (Oct 2026) showed `EbayPriceSource`'s round-robin had
+essentially no head start: a persisted cursor at product 12 with zero successful price rows
+(consistent with the pre-§17.4a silent-failure bug swallowing an exhausted-quota error on
+every attempt), and only 5 of 6,700+ products ever mapped by Google Shopping. Waiting for the
+daily round-robin to reach everything organically was judged too slow for a catalogue this
+size (see §17.4a's own math) - ticket 1.8's backfill-separate-from-schema precedent again:
+build the one-time catch-up as its own pass, not folded into the steady-state source.
+
+**A new source, not a parameterized `EbayPriceSource`.** `EbayPriceSource` is designed to run
+forever, re-pricing the same products on a cadence, with an infinite-wraparound cursor and no
+notion of "done". `EbayPriceBackfillSource` (own `sourceId` `searchapi-ebay-prices-backfill`,
+own repository `EbayPriceBackfillRepository`, own `system_log` state component
+`SEARCHAPI_EBAY_BACKFILL_STATE`) is designed to run until finished and then stop permanently -
+a genuinely different completion shape, closer to `TechApiBenchmarkSource`'s one-time backfill
+phase. `SourceRegistry` requires every registered source to have a unique `sourceId`, which
+becomes the price_history row's provenance, so the two sources could never share one cursor or
+one label even if their query logic were identical. `EbayPriceSource.toPrice` gained an
+explicit `sourceId` parameter (previously hardcoded to its own `ID`) so both sources reuse the
+exact same matching/min-price-selection logic without duplicating it.
+
+**Scope: all GPUs, popular-brand smartphones only.** `EbayPriceBackfillSettings
+.smartphoneBrands` (default: `Apple,Samsung,Google,Xiaomi,OnePlus,Redmi,POCO`) is a curated
+brand allowlist, config not code for the same reason `searchapi.categories` is. This default
+is the "Tier 2" cut from the real-data recce this chore was scoped against: every brand real
+users in this app's own `user_devices` table actually own (Apple, Samsung, Google only, 8
+distinct products total - the real signal is that thin), plus the next most recognizable
+mainstream-Android brands, covering 1,213 of 6,695 VERIFIED smartphones in the Oct 2026
+snapshot. No brand filter for GPUs - the whole GPU catalogue (16 before PR #81's ~980-card
+seed, far more after) is backfilled regardless of brand; GPU "popularity" has no real signal
+to scope by and the catalogue is small enough not to need one.
+
+**Resumable, never re-does work, no wraparound.** `nextProducts()` excludes any product either
+`EbayPriceSource` or `EbayPriceBackfillSource` has already priced (`price_history.source IN
+(...)`), so the backfill and the daily round-robin can both be enabled at once without
+duplicating effort, and a backfill interrupted partway through (deploy, transient failure)
+picks up exactly where it left off on the next run. Unlike `EbayPriceRepository`'s cursor,
+reaching the end of the target set does not wrap back to the start - it sets a persisted
+`completed` flag, after which `ingest()` is a safe, zero-request no-op forever, even if
+manually re-triggered, and `scheduleCycleComplete()` reports `true` permanently so the shared
+scheduler stops selecting it too.
+
+**Sized for one large manual trigger, not many small ones.** The admin run-start API returns
+202 Accepted immediately and the run proceeds asynchronously (`IngestionOrchestrator`'s
+background worker) - there is no HTTP-timeout reason to keep batches small the way an
+interactive request would need. `SEARCHAPI_EBAY_BACKFILL_MAX_PRODUCTS_PER_RUN` (default 500,
+range 1-5000) is deliberately a much wider range than `EbayPriceSettings
+.maxProductsPerRun`'s request-math-derived 1-50: `executionBudget()` (request count + 30s
+overhead) is the real ceiling `SourceContext` enforces, and at ~1 request/second pacing a
+batch sized to the real target count can complete the whole backfill in one trigger.
+
+**Not yet run against production.** Built and tested (real-Postgres repository tests, mocked
+`ingest()`-level source tests covering cursoring/completion/failure-propagation/progress) but
+not yet triggered against the real deployment - blocked on the same exhausted-personal-key
+quota issue §17.4a already documents, and on getting a current production snapshot to confirm
+real counts (the 6,695/16/1,213 figures above are from one Oct 2026 snapshot, already stale
+by the time PR #81's GPU reseed landed).
+
 ---
 
 # 18. Current implementation snapshot on `main` — 18 Sep 2026
