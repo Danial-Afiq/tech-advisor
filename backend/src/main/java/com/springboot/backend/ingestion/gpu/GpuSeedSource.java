@@ -16,8 +16,8 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Ticket 1.3 — prefills the GPU catalogue from {@code classpath:seed/gpus.v2.json}, the
- * consumer desktop cards of the RightNow GPU Database (see {@code seed/gpus.v2.NOTICE.md};
- * rebuilt by {@code scripts/build_gpu_seed.py}). No network: the cards go through
+ * consumer desktop cards of the RightNow GPU Database, a one-time extract (see
+ * {@code seed/gpus.v2.NOTICE.md}). No network: the cards go through
  * {@link GpuCatalogSink} like scraped ones, so they get the same validation and upsert.
  *
  * <p>The seed is a prefill, not a source of truth. A card already in the catalogue is left

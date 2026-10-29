@@ -2395,12 +2395,13 @@ Two opt-in sources (`INGESTION_ENABLED_SOURCES`), no keys, one shared sink:
   external id (`seed:gpus.v2#n`) because the runner skips a repeated id; the source
   stops starting batches after 40 s so the last commits inside the 60 s budget, and
   anything left loads on the next run.
-  - **Built, not hand-entered (chore, Oct 2026).** `scripts/build_gpu_seed.py`
-    (stdlib Python) regenerates the file from the RightNow GPU Database
-    (github.com/RightNow-AI/RightNow-GPU-Database, Apache-2.0, pinned to commit
-    `dfb3c9a`), which republishes TechPowerUp's GPU database. It keeps consumer
-    desktop generations (GeForce, Radeon RX/HD/R5/R7/R9, Arc A/B), slot-mounted PCIe
-    cards only, and only cards that pass `GpuSpecValidator`. Attribution is in
+  - **One-time import (chore, Oct 2026).** The file is a static, one-off extract of the
+    RightNow GPU Database (github.com/RightNow-AI/RightNow-GPU-Database, Apache-2.0,
+    commit `dfb3c9a`), which republishes TechPowerUp's GPU database. There is no
+    generator script and it is not meant to be refreshed from upstream; TechPowerUp
+    will not be used again. It holds consumer desktop generations (GeForce, Radeon
+    RX/HD/R5/R7/R9, Arc A/B), slot-mounted PCIe cards only, all passing
+    `GpuSpecValidator`. Attribution is in
     `seed/gpus.v2.NOTICE.md`. It **superseded** the hand-entered 12-card
     `gpus.v1.json`; those 12 cards keep their v1 names (`GeForce RTX 3060 12GB`,
     `Radeon RX 580 8GB`, `Arc A770 16GB`, ...) so existing rows still match, and are

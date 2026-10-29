@@ -11,5 +11,3 @@ Changes from the upstream data: filtered to consumer desktop cards released from
 that pass `GpuSpecValidator`, fields renamed to `Payload.GpuSpec`, clocks rounded to
 whole MHz, "N GB" written as "NGB", four card names kept in their `gpus.v1` spelling,
 and twelve launch prices carried over from `gpus.v1` (TechSpot "Price at Launch").
-
-Regenerate with `python scripts/build_gpu_seed.py`.
