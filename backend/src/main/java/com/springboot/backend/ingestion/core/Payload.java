@@ -19,7 +19,7 @@ public record Payload(String sourceId, String externalId, Instant observedAt, Bo
     /**
      * Ticket 1.3: one source run's GPU spec sheets, persisted in one transaction. Records are
      * deliberately not validated here: one out-of-range card must be dropped and logged by the
-     * sink, not reject the whole batch. source is provenance such as "seed:gpus.v1" or "techspot".
+     * sink, not reject the whole batch. source is provenance such as "seed:gpus.v2" or "techspot".
      */
     public record GpuCatalogBatch(String source, List<GpuSpec> gpus) implements Body {
         public GpuCatalogBatch { gpus = List.copyOf(gpus); }
