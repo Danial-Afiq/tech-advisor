@@ -13,6 +13,16 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Component
 public class SearchApiClient {
+    // Confirmed live: SearchAPI.io's ebay_search engine returns this exact body for a
+    // legitimate "no listings found" outcome, instead of a clean empty organic_results array
+    // the way google_shopping returns for the same situation. Without this, fetchRoot()'s
+    // generic root.has("error") guard below treats it as SEARCHAPI_MALFORMED_RESPONSE - which,
+    // since EbayPriceSource.priceOne() deliberately has no per-product catch (see its Javadoc),
+    // would abort the entire run the first time ANY product simply has no eBay listing - an
+    // ordinary, expected, and common occurrence, not a real failure. Matched by exact text and
+    // only for this one engine, so every other error (auth failure, quota exhaustion, a
+    // genuinely malformed body) still fails loudly exactly as before.
+    private static final String EBAY_NO_RESULTS_ERROR = "Ebay didn't return any results.";
     private final SearchApiSettings settings;
     private final JsonMapper json = JsonMapper.builder().build();
     public SearchApiClient(SearchApiSettings settings) { this.settings = settings; }
@@ -84,11 +94,16 @@ public class SearchApiClient {
         }
         try {
             JsonNode root = json.readTree(bytes);
-            if (root == null || !root.isObject() || root.has("error"))
+            if (root == null || !root.isObject()) throw new IngestionFailure(SEARCHAPI_MALFORMED_RESPONSE);
+            if (root.has("error") && !isEbayNoResultsError(parameters, root))
                 throw new IngestionFailure(SEARCHAPI_MALFORMED_RESPONSE);
             return root;
         } catch (IngestionFailure e) { throw e; }
         catch (Exception e) { throw new IngestionFailure(SEARCHAPI_MALFORMED_RESPONSE); }
+    }
+    private boolean isEbayNoResultsError(Map<String, String> parameters, JsonNode root) {
+        return "ebay_search".equals(parameters.get("engine"))
+                && EBAY_NO_RESULTS_ERROR.equals(root.path("error").asText(""));
     }
     private void googleLocale(TreeMap<String, String> query) {
         query.put("gl", settings.gl()); query.put("hl", settings.hl()); query.put("location", settings.location());
