@@ -2721,6 +2721,30 @@ judged as a phone. **Google Shopping itself needed no new code** — ticket
 1.3 already gave `SearchApiSource` full GPU support before this branch
 existed; this work only closes the gap on the eBay side.
 
+**Confirmed-live production bug (Oct–Nov 2026), fixed:** once run for real
+against the live API (real key, real quota — the gap flagged above), eBay
+ingestion runs started failing in production with `SEARCHAPI_MALFORMED_RESPONSE`
+recurring across multiple days (Oct 27, 29, 31; Nov 2, 4, 6, 8). The design
+assumption two paragraphs up — "an empty `organic_results` array already
+resolves cleanly through the normal return path" — turned out to be false for
+one real, common case: SearchAPI.io's `ebay_search` engine returns
+`{"error": "Ebay didn't return any results."}` for an ordinary "no listings
+found" outcome, not a clean empty array the way `google_shopping` does for the
+same situation. `SearchApiClient.fetchRoot()`'s generic `root.has("error")`
+guard (shared by every engine) treated that exact body as malformed, and
+because `EbayPriceSource.priceOne()` deliberately has no per-product catch
+(previous paragraph), this aborted the entire run the first time *any* product
+in the batch simply had no eBay listing — not a rare edge case, a routine one.
+Fixed in `SearchApiClient`: this one exact, confirmed error message, and only
+on the `ebay_search` engine, now resolves back through the normal empty-result
+path instead of throwing (`SearchApiClient.EBAY_NO_RESULTS_ERROR`) — every
+other error (auth failure, quota exhaustion, a genuinely malformed body, the
+same error text appearing on a different engine) still throws
+`SEARCHAPI_MALFORMED_RESPONSE` exactly as before. Regression coverage:
+`SearchApiTests` (the fix itself, engine-scoping, and that other errors still
+fail loudly) and `EbayPriceSourceTests` (`ingest()` continues past a
+no-listings product to the rest of the batch instead of stopping).
+
 ---
 
 # 18. Current implementation snapshot on `main` — 18 Sep 2026
