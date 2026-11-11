@@ -32,14 +32,16 @@ public record GpuCatalogueResponse(
         @Schema(description = "Latest price_history observation, or null when the product has none.")
         BigDecimal latestPrice,
         @Schema(description = "ISO 4217 currency of latestPrice, or null.")
-        String currency
+        String currency,
+        @Schema(description = "Product image URL, or null when the catalogue has none.")
+        String imageUrl
 ) {
     public GpuCatalogueResponse(Product product, Gpu gpu) {
         this(product.getId(), product.getBrand(), product.getModelName(), product.getReleaseDate(),
                 product.getStatus(), gpu.getBaseClockMhz(), gpu.getBoostClockMhz(), gpu.getVramGb(),
                 gpu.getMemoryType(), gpu.getMemoryBusBits(), gpu.getTdpWatts(), gpu.getArchitecture(),
                 gpu.getSource(), gpu.getSourceUrl(), gpu.getFetchedAt(), product.getCreatedAt(),
-                product.getUpdatedAt(), null, null);
+                product.getUpdatedAt(), null, null, product.getImageUrl());
     }
 
     /** This entry with its latest price, or unchanged when there is none. */
@@ -49,6 +51,6 @@ public record GpuCatalogueResponse(
         }
         return new GpuCatalogueResponse(id, brand, modelName, releaseDate, status, baseClockMhz,
                 boostClockMhz, vramGb, memoryType, memoryBusBits, tdpWatts, architecture, source,
-                sourceUrl, fetchedAt, createdAt, updatedAt, price.getPrice(), price.getCurrency());
+                sourceUrl, fetchedAt, createdAt, updatedAt, price.getPrice(), price.getCurrency(), imageUrl);
     }
 }

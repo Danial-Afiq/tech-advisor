@@ -23,8 +23,9 @@ export type PhoneSpecs = {
 
 export type PhoneSpecKey = keyof PhoneSpecs;
 
-export type PhoneSpecField = {
-  key: PhoneSpecKey;
+/** One displayable/editable spec. Shared by phones and GPUs (`gpuSpecs.ts`). */
+export type SpecField<K extends string = string> = {
+  key: K;
   label: string;
   /** Appended to numeric values, e.g. " GB". */
   unit?: string;
@@ -33,6 +34,8 @@ export type PhoneSpecField = {
   /** Unit the raw value is entered in, when `format` hides it (e.g. "GB"). */
   inputUnit?: string;
 };
+
+export type PhoneSpecField = SpecField<PhoneSpecKey>;
 
 const watts = (v: number) => (v === 0 ? "Not supported" : `${v} W`);
 
@@ -118,8 +121,8 @@ export const TEXT_SPEC_KEYS = new Set<PhoneSpecKey>([
 
 /** Display text for one spec, or `null` when the value is unknown. */
 export function formatSpec(
-  field: PhoneSpecField,
-  value: PhoneSpecs[PhoneSpecKey]
+  field: SpecField,
+  value: string | number | null | undefined
 ): string | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value === "number") {

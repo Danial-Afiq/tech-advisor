@@ -1,5 +1,4 @@
 import { useId, useMemo, useState } from "react";
-import type { SmartphoneCatalogueItem } from "../../api/catalogue";
 import { Button } from "../ui/Button";
 import { Callout } from "../ui/Callout";
 import {
@@ -15,26 +14,30 @@ import { Modal, ModalActions } from "../ui/Modal";
 import { CatalogueSearchInput } from "./CatalogueSearchInput";
 import {
   catalogueSpecs,
+  catalogueType,
   diffSpecs,
   formToSpecs,
   matchCatalogue,
   specsToForm,
   unconfirmedClears,
 } from "./catalogue";
+import type { CatalogueItem } from "./catalogue";
 import { CONDITIONS, DEVICE_TYPES, defaultPrefs } from "./deviceOptions";
 import { PhoneSpecFields } from "./PhoneSpecFields";
-import type { PhoneSpecKey, PhoneSpecs } from "./phoneSpecs";
+import { specSchemaFor } from "./specSchemas";
+import type { DeviceSpecs, SpecKey } from "./specSchemas";
 import type { Condition, Device } from "./types";
-import type { SmartphoneCatalogue } from "./useSmartphoneCatalogue";
+import type { DeviceCatalogue } from "./useSmartphoneCatalogue";
 
 /**
  * Add / edit device details. Pass `device={null}` to add a new one; the saved
  * device then gets default upgrade preferences and `primary = isFirst`.
  *
  * With a `catalogue`, typing a model name suggests matching catalogue
- * devices. Picking one links its `productId` and prefills the specs; any spec
- * the user then changes is saved in `specOverrides`. A name that isn't in the
- * catalogue is plain manual entry.
+ * devices: phones for a Phone, GPUs for a GPU, both for any other type.
+ * Picking one links its `productId`, sets the type and prefills the specs;
+ * any spec the user then changes is saved in `specOverrides`. A name that
+ * isn't in the catalogue is plain manual entry.
  */
 export function DeviceFormModal({
   device,
@@ -45,8 +48,8 @@ export function DeviceFormModal({
 }: {
   device: Device | null;
   isFirst?: boolean;
-  /** Smartphone catalogue for suggestions; omit for manual entry only. */
-  catalogue?: SmartphoneCatalogue;
+  /** Smartphone and GPU catalogue for suggestions; omit for manual entry only. */
+  catalogue?: DeviceCatalogue;
   onClose: () => void;
   /** May return a promise (e.g. an API call); a rejection is shown in the form. */
   onSave: (device: Device, isNew: boolean) => void | Promise<void>;
@@ -69,12 +72,12 @@ export function DeviceFormModal({
   );
   // Prefilled specs the user emptied and confirmed as "keep empty". Ones
   // cleared in an earlier save start out confirmed.
-  const [keptEmpty, setKeptEmpty] = useState<ReadonlySet<PhoneSpecKey>>(
+  const [keptEmpty, setKeptEmpty] = useState<ReadonlySet<SpecKey>>(
     () =>
       new Set(
         Object.entries(device?.specOverrides ?? {})
           .filter(([, value]) => value === null)
-          .map(([key]) => key as PhoneSpecKey)
+          .map(([key]) => key as SpecKey)
       )
   );
   const modelId = useId();
@@ -87,15 +90,22 @@ export function DeviceFormModal({
     catalogue?.items.find((item) => item.id === device?.productId)
   );
 
-  const items = useMemo(() => catalogue?.items ?? [], [catalogue]);
-  const isPhone = type === "Phone";
+  // Phone and GPU types search their own list; other types search both.
+  const items = useMemo(() => {
+    const all = catalogue?.items ?? [];
+    return type === "Phone" || type === "GPU"
+      ? all.filter((item) => catalogueType(item) === type)
+      : all;
+  }, [catalogue, type]);
+  /** The specs this device type has; undefined for types without spec fields. */
+  const schema = specSchemaFor(type);
   const suggestions = useMemo(
     () => (linkedId === null ? matchCatalogue(items, model, brand) : []),
     [items, linkedId, model, brand]
   );
 
   /** What the spec fields are compared against: the catalogue row, else the saved specs. */
-  const baselineSpecs: PhoneSpecs | undefined = useMemo(() => {
+  const baselineSpecs: DeviceSpecs | undefined = useMemo(() => {
     if (linkedId === null) return undefined;
     return linkedItem ? catalogueSpecs(linkedItem) : (device?.specs ?? {});
   }, [linkedId, linkedItem, device]);
@@ -108,40 +118,39 @@ export function DeviceFormModal({
   // entry. The prefilled specs stay so nothing the user reviewed is lost.
   const unlink = () => setLinkedId(null);
 
-  const pick = (item: SmartphoneCatalogueItem) => {
+  const pick = (item: CatalogueItem) => {
     setLinkedId(item.id);
     setLinkedItem(item);
     setBrand(item.brand);
     setModel(item.modelName);
-    setType("Phone");
+    setType(catalogueType(item));
     setSpecValues(specsToForm(catalogueSpecs(item)));
   };
 
   const modelHint = (() => {
     if (!catalogue || linkedId !== null || model.trim().length < 2) return null;
+    if (suggestions.length > 0) return null;
     if (catalogue.status === "loading") return "Loading the product catalogue…";
     if (catalogue.status === "unavailable") {
       return "Catalogue suggestions aren't available right now. Enter the details yourself.";
     }
-    if (suggestions.length === 0) {
-      return "Not in the product catalogue. Enter the details yourself.";
-    }
-    return null;
+    return "Not in the product catalogue. Enter the details yourself.";
   })();
 
   /** The specs to show, and the part of them to save as overrides. */
   const savedSpecs = (): Pick<Device, "specs" | "specOverrides"> => {
-    if (!isPhone) {
-      return device?.type === "Phone"
+    if (!schema) {
+      // Specs saved for a phone or GPU don't apply to this type.
+      return specSchemaFor(device?.type)
         ? { specs: undefined, specOverrides: undefined }
         : { specs: device?.specs, specOverrides: device?.specOverrides };
     }
-    const entered = formToSpecs(specValues);
+    const entered = formToSpecs(specValues, schema);
     if (!baselineSpecs) return { specs: entered, specOverrides: entered };
     // Without the catalogue row to compare against, keep the earlier overrides.
     const specOverrides = {
       ...(linkedItem ? {} : device?.specOverrides),
-      ...diffSpecs(entered, baselineSpecs),
+      ...diffSpecs(entered, baselineSpecs, schema),
     };
     return { specs: { ...baselineSpecs, ...specOverrides }, specOverrides };
   };
@@ -150,9 +159,9 @@ export function DeviceFormModal({
     event.preventDefault();
     setError(null);
     if (
-      isPhone &&
+      schema &&
       baselineForm &&
-      unconfirmedClears(specValues, baselineForm, keptEmpty).length > 0
+      unconfirmedClears(specValues, baselineForm, keptEmpty, schema).length > 0
     ) {
       setError(
         'Some prefilled specifications are now empty. For each one, choose "Keep empty" or put the value back.'
@@ -206,7 +215,8 @@ export function DeviceFormModal({
               value={type}
               onChange={(e) => {
                 setType(e.target.value);
-                if (e.target.value !== "Phone") unlink();
+                // A linked device's type comes from its catalogue product.
+                unlink();
               }}
             />
           </Field>
@@ -255,7 +265,7 @@ export function DeviceFormModal({
                 <span>
                   ✦ Matched to <b>{`${brand} ${model}`.trim()}</b>{" "}
                   in the product catalogue.
-                  {isPhone && " Review the prefilled specifications below."}
+                  {schema && " Review the prefilled specifications below."}
                 </span>
                 <Button size="sm" variant="ghost" onClick={unlink}>
                   Enter manually instead
@@ -288,8 +298,9 @@ export function DeviceFormModal({
           </Field>
         </FormGrid>
 
-        {isPhone && (
+        {schema && (
           <PhoneSpecFields
+            schema={schema}
             values={specValues}
             onChange={(key, value) => {
               setSpecValues((all) => ({ ...all, [key]: value }));

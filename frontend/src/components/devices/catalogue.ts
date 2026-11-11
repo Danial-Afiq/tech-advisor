@@ -1,56 +1,81 @@
-import type { SmartphoneCatalogueItem } from "../../api/catalogue";
-import { normalizePhoneSpecs } from "./deviceApi";
+import type { GpuCatalogueItem, SmartphoneCatalogueItem } from "../../api/catalogue";
+import { normalizePhoneSpecs, normalizeSpecs } from "./deviceApi";
+import { formatSpec } from "./phoneSpecs";
 import {
-  PHONE_SPEC_GROUPS,
-  PHONE_SPEC_KEYS,
-  TEXT_SPEC_KEYS,
-  formatSpec,
-} from "./phoneSpecs";
-import type { PhoneSpecKey, PhoneSpecs } from "./phoneSpecs";
+  ALL_SPEC_KEYS,
+  GPU_SPEC_SCHEMA,
+  PHONE_SPEC_SCHEMA,
+} from "./specSchemas";
+import type { DeviceSpecs, SpecKey, SpecSchema } from "./specSchemas";
 import type { Device } from "./types";
 
 /**
- * Helpers for prefilling the device form from the smartphone catalogue.
- * Matching is client-side: the catalogue list is fetched once per page.
+ * Helpers for prefilling the device form from the smartphone and GPU
+ * catalogues. Matching is client-side: each list is fetched once per page.
  */
 
-export const catalogueName = (item: SmartphoneCatalogueItem) =>
+/** A catalogue product the device form can link to. */
+export type CatalogueItem = SmartphoneCatalogueItem | GpuCatalogueItem;
+
+export const isGpuItem = (item: CatalogueItem): item is GpuCatalogueItem =>
+  "vramGb" in item;
+
+/** The device type a catalogue item belongs to ("Phone" or "GPU"). */
+export const catalogueType = (item: CatalogueItem) => (isGpuItem(item) ? "GPU" : "Phone");
+
+const schemaOf = (item: CatalogueItem) =>
+  isGpuItem(item) ? GPU_SPEC_SCHEMA : PHONE_SPEC_SCHEMA;
+
+export const catalogueName = (item: CatalogueItem) =>
   `${item.brand} ${item.modelName}`.trim();
 
-/** The catalogue item's `phone` columns as UI `PhoneSpecs`. */
-export const catalogueSpecs = (item: SmartphoneCatalogueItem): PhoneSpecs =>
-  normalizePhoneSpecs(item);
+/** The catalogue item's `phone` or `gpu` columns as UI specs. */
+export function catalogueSpecs(item: CatalogueItem): DeviceSpecs {
+  if (!isGpuItem(item)) return normalizePhoneSpecs(item);
+  return normalizeSpecs(
+    {
+      architecture: item.architecture,
+      baseClockMhz: item.baseClockMhz,
+      boostClockMhz: item.boostClockMhz,
+      vram: item.vramGb,
+      memoryType: item.memoryType,
+      busWidth: item.memoryBusBits,
+      tdpWatts: item.tdpWatts,
+    },
+    GPU_SPEC_SCHEMA.keys
+  );
+}
 
 /**
  * A linked device with its catalogue specs and product image filled in (user
  * overrides on top). `GET /api/devices` doesn't return either, so pages add
- * them from the catalogue list.
+ * them from the catalogue lists.
  */
-export function withCatalogue(
-  device: Device,
-  item: SmartphoneCatalogueItem | undefined
-): Device {
+export function withCatalogue(device: Device, item: CatalogueItem | undefined): Device {
   if (!item) return device;
   return {
     ...device,
-    type: "Phone",
+    type: catalogueType(item),
     image: item.imageUrl ?? device.image,
     specs: { ...catalogueSpecs(item), ...device.specOverrides },
   };
 }
 
-/** The fields a suggestion's summary line shows, in order. */
-const SUMMARY_FIELDS = (["chipset", "storageGb", "ramGb"] as PhoneSpecKey[]).map(
-  (key) => PHONE_SPEC_GROUPS.flatMap((g) => g.fields).find((f) => f.key === key)!
-);
+const fieldOf = (schema: SpecSchema, key: SpecKey) =>
+  schema.groups.flatMap((g) => g.fields).find((f) => f.key === key)!;
 
-/** Short spec line for a suggestion, e.g. "Apple A17 Pro · 256 GB · 8 GB RAM". */
-export function catalogueSummary(item: SmartphoneCatalogueItem): string {
+/**
+ * Short spec line for a suggestion, e.g. "Apple A17 Pro · 256 GB · 8 GB RAM"
+ * or "12 GB · GDDR6X · Ada Lovelace".
+ */
+export function catalogueSummary(item: CatalogueItem): string {
+  const schema = schemaOf(item);
   const specs = catalogueSpecs(item);
-  return SUMMARY_FIELDS.map((field) => {
-    const text = formatSpec(field, specs[field.key]);
-    return text && field.key === "ramGb" ? `${text} RAM` : text;
-  })
+  return schema.summary
+    .map((key) => {
+      const text = formatSpec(fieldOf(schema, key), specs[key]);
+      return text && key === "ramGb" ? `${text} RAM` : text;
+    })
     .filter(Boolean)
     .join(" · ");
 }
@@ -58,8 +83,8 @@ export function catalogueSummary(item: SmartphoneCatalogueItem): string {
 const words = (text: string) =>
   text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 
-type IndexedItem = {
-  item: SmartphoneCatalogueItem;
+type IndexedItem<T> = {
+  item: T;
   /** Words of "brand model", lowercased. */
   name: string[];
   brand: string;
@@ -68,9 +93,9 @@ type IndexedItem = {
 
 // Lowercased names, built once per catalogue list instead of on every
 // keystroke. Keyed by the array, which stays the same while the list is.
-const indexes = new WeakMap<SmartphoneCatalogueItem[], IndexedItem[]>();
+const indexes = new WeakMap<CatalogueItem[], IndexedItem<CatalogueItem>[]>();
 
-function indexed(items: SmartphoneCatalogueItem[]): IndexedItem[] {
+function indexed<T extends CatalogueItem>(items: T[]): IndexedItem<T>[] {
   let index = indexes.get(items);
   if (!index) {
     index = items.map((item) => ({
@@ -81,7 +106,7 @@ function indexed(items: SmartphoneCatalogueItem[]): IndexedItem[] {
     }));
     indexes.set(items, index);
   }
-  return index;
+  return index as IndexedItem<T>[];
 }
 
 /**
@@ -89,12 +114,12 @@ function indexed(items: SmartphoneCatalogueItem[]): IndexedItem[] {
  * must start a word of "brand model", so "s2" finds "Galaxy S24" but "15"
  * does not find "Galaxy A15". A matching `brand` input ranks items first.
  */
-export function matchCatalogue(
-  items: SmartphoneCatalogueItem[],
+export function matchCatalogue<T extends CatalogueItem>(
+  items: T[],
   query: string,
   brand = "",
   limit = 8
-): SmartphoneCatalogueItem[] {
+): T[] {
   const tokens = words(query);
   if (tokens.length === 0) return [];
   const brandKey = brand.trim().toLowerCase();
@@ -113,12 +138,16 @@ export function matchCatalogue(
     .map((m) => m.item);
 }
 
-/** Editable spec values as the form holds them (inputs work in strings). */
-export type SpecFormValues = Record<PhoneSpecKey, string>;
+/**
+ * Editable spec values as the form holds them (inputs work in strings). It
+ * holds every phone and GPU key, so switching device type never leaves an
+ * input without a value.
+ */
+export type SpecFormValues = Record<SpecKey, string>;
 
-export function specsToForm(specs?: PhoneSpecs): SpecFormValues {
+export function specsToForm(specs?: DeviceSpecs): SpecFormValues {
   return Object.fromEntries(
-    PHONE_SPEC_KEYS.map((key) => {
+    ALL_SPEC_KEYS.map((key) => {
       const value = specs?.[key];
       return [key, value === null || value === undefined ? "" : String(value)];
     })
@@ -129,33 +158,37 @@ export function specsToForm(specs?: PhoneSpecs): SpecFormValues {
 export const isCleared = (
   values: SpecFormValues,
   baseline: SpecFormValues,
-  key: PhoneSpecKey
+  key: SpecKey
 ) => baseline[key].trim() !== "" && values[key].trim() === "";
 
 /** Emptied prefilled fields the user hasn't yet confirmed as empty on purpose. */
 export const unconfirmedClears = (
   values: SpecFormValues,
   baseline: SpecFormValues,
-  keptEmpty: ReadonlySet<PhoneSpecKey>
-): PhoneSpecKey[] =>
-  PHONE_SPEC_KEYS.filter(
+  keptEmpty: ReadonlySet<SpecKey>,
+  schema: SpecSchema = PHONE_SPEC_SCHEMA
+): SpecKey[] =>
+  schema.keys.filter(
     (key) => isCleared(values, baseline, key) && !keptEmpty.has(key)
   );
 
-/** Filled-in values only; blank or unparseable numbers are left out. */
-export function formToSpecs(values: SpecFormValues): PhoneSpecs {
+/** Filled-in values of `schema` only; blank or unparseable numbers are left out. */
+export function formToSpecs(
+  values: SpecFormValues,
+  schema: SpecSchema = PHONE_SPEC_SCHEMA
+): DeviceSpecs {
   const specs: Record<string, string | number> = {};
-  for (const key of PHONE_SPEC_KEYS) {
+  for (const key of schema.keys) {
     const text = values[key].trim();
     if (!text) continue;
-    if (TEXT_SPEC_KEYS.has(key)) {
+    if (schema.text.has(key)) {
       specs[key] = text;
     } else {
       const n = Number(text);
       if (!Number.isNaN(n)) specs[key] = n;
     }
   }
-  return specs as PhoneSpecs;
+  return specs as DeviceSpecs;
 }
 
 /**
@@ -164,10 +197,14 @@ export function formToSpecs(values: SpecFormValues): PhoneSpecs {
  * A baseline value missing from `specs` was cleared by the user and comes
  * back as `null`, so it stays blank instead of falling back to the catalogue.
  */
-export function diffSpecs(specs: PhoneSpecs, baseline: PhoneSpecs): PhoneSpecs {
+export function diffSpecs(
+  specs: DeviceSpecs,
+  baseline: DeviceSpecs,
+  schema: SpecSchema = PHONE_SPEC_SCHEMA
+): DeviceSpecs {
   return Object.fromEntries(
-    PHONE_SPEC_KEYS.map((key) => [key, specs[key] ?? null] as const).filter(
-      ([key, value]) => (baseline[key] ?? null) !== value
-    )
-  ) as PhoneSpecs;
+    schema.keys
+      .map((key) => [key, specs[key] ?? null] as const)
+      .filter(([key, value]) => (baseline[key] ?? null) !== value)
+  ) as DeviceSpecs;
 }

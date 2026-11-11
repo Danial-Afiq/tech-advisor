@@ -123,13 +123,18 @@ export type GpuCatalogueItem = {
   fetchedAt: string | null;
   latestPrice: number | string | null;
   currency: string | null;
+  /** `products.image_url`; null until a source supplies GPU images. */
+  imageUrl?: string | null;
 };
 
 /** Body of the GPU create/replace routes; blank specs are sent as null. */
 export type GpuCatalogueRequest = Omit<
   GpuCatalogueItem,
-  "id" | "latestPrice" | "currency" | "source" | "sourceUrl" | "fetchedAt"
+  "id" | "latestPrice" | "currency" | "source" | "sourceUrl" | "fetchedAt" | "imageUrl"
 >;
+
+/** `GET /api/catalogue/gpus` — any signed-in user; read-only, for the device form. */
+export const listCatalogueGpus = () => apiFetch<GpuCatalogueItem[]>("/api/catalogue/gpus");
 
 /** `GET /api/admin/catalogue/gpus` — ADMIN only, ordered by brand and model. */
 export const listGpus = () => apiFetch<GpuCatalogueItem[]>("/api/admin/catalogue/gpus");
