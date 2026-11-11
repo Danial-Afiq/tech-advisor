@@ -1,21 +1,49 @@
 package com.springboot.backend.recommendation;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeSet;
 import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Wire compatibility with ai/app/schemas.py. Every model on that side is
  * declared extra="forbid", so a field name this side gets wrong is a 422 from
- * a live service rather than a quietly ignored key - these assertions are the
- * cheap way to catch that drift.
+ * a live service rather than a quietly ignored key.
+ *
+ * Field names are checked against contracts/ai-service-schema.json, not a
+ * hand-typed set - that file is generated from the real Pydantic models
+ * (ai/scripts/export_schema.py) and ai/tests/test_schema_contract.py already
+ * fails if it drifts from the real schema. Checking against the same file
+ * here means a real shape change fails on both sides, not just a human
+ * remembering to update this file's assertions by hand.
  */
-@SuppressWarnings("unchecked")
 class AssessContractTests {
     private final JsonMapper json = JsonMapper.builder().findAndAddModules().build();
+    private final JsonNode schemas = loadSchemas();
+
+    private static JsonNode loadSchemas() {
+        // Repo-root contracts/, same ../ pattern application.properties already
+        // uses for ../.env - Maven's test working directory is the module root.
+        Path path = Path.of("../contracts/ai-service-schema.json");
+        try {
+            return JsonMapper.builder().build().readTree(Files.readString(path));
+        } catch (IOException e) {
+            throw new UncheckedIOThatIsntSupposedToHappenInTests(path, e);
+        }
+    }
+
+    private static final class UncheckedIOThatIsntSupposedToHappenInTests extends RuntimeException {
+        UncheckedIOThatIsntSupposedToHappenInTests(Path path, IOException cause) {
+            super("Could not read " + path.toAbsolutePath() + " - run ai/scripts/export_schema.py first", cause);
+        }
+    }
 
     private AssessRequest request() {
         return new AssessRequest(
@@ -39,40 +67,79 @@ class AssessContractTests {
         return json.convertValue(value, Map.class);
     }
 
+    private JsonNode resolveRef(JsonNode node) {
+        if (node.has("$ref")) {
+            String name = node.path("$ref").asText();
+            return schemas.get(name.substring(name.lastIndexOf('/') + 1));
+        }
+        return node;
+    }
+
+    /**
+     * Recursively asserts {@code value} (a Jackson-serialized Map/List/primitive) has exactly
+     * the field names {@code schemaNode} declares, at every nesting level. Nullable fields
+     * (Pydantic {@code anyOf: [X, null]}) are only checked when the actual value isn't null -
+     * there is nothing more to verify about a field that's legitimately absent-as-null.
+     */
+    private void assertMatchesSchema(JsonNode schemaNode, Object value, String path) {
+        JsonNode schema = resolveRef(schemaNode);
+        if (schema.has("anyOf")) {
+            if (value == null) return; // satisfies the null branch, nothing further to check
+            for (JsonNode option : schema.get("anyOf")) {
+                JsonNode resolved = resolveRef(option);
+                boolean objectOption = "object".equals(resolved.path("type").asText(""));
+                if (objectOption == (value instanceof Map)) {
+                    assertMatchesSchema(option, value, path);
+                    return;
+                }
+            }
+            return; // a primitive anyOf branch matched by elimination - no structure left to check
+        }
+        if (!"object".equals(schema.path("type").asText(""))) return; // primitive leaf, nothing to check
+        if (schema.has("properties")) {
+            assertInstanceOf(Map.class, value, path + " must serialize as an object");
+            @SuppressWarnings("unchecked") var map = (Map<String, Object>) value;
+            var expected = new TreeSet<>(schema.get("properties").propertyNames());
+            assertEquals(expected, new TreeSet<>(map.keySet()), "field names at " + path);
+            for (String field : expected) {
+                assertMatchesSchema(schema.get("properties").get(field), map.get(field), path + "." + field);
+            }
+        } else if (schema.has("additionalProperties") && schema.get("additionalProperties").isObject()) {
+            // An open map keyed by something other than fixed field names (spec_deltas,
+            // priorities) - no field-name check at this level, but still recurse into values.
+            assertInstanceOf(Map.class, value, path + " must serialize as an object");
+            @SuppressWarnings("unchecked") var map = (Map<String, Object>) value;
+            map.forEach((key, v) -> assertMatchesSchema(schema.get("additionalProperties"), v, path + "[" + key + "]"));
+        }
+    }
+
     @Test
-    void requestSerializesToTheSnakeCaseNamesPydanticDeclares() {
-        Map<String, Object> body = asMap(request());
-        assertEquals(
-                java.util.Set.of("request_id", "user_context", "candidate", "computed", "analysis", "retrieval"),
-                body.keySet());
+    void requestSerializesToTheFieldNamesTheRealContractDeclares() {
+        assertMatchesSchema(schemas.get("AssessRequest"), asMap(request()), "AssessRequest");
+    }
 
-        Map<String, Object> userContext = (Map<String, Object>) body.get("user_context");
-        assertEquals(java.util.Set.of("owned_device", "preferences"), userContext.keySet());
+    @Test
+    void responseSerializesToTheFieldNamesTheRealContractDeclares() {
+        // Round-trips a realistic deserialize-then-reserialize, same as
+        // responseDeserializesFromTheServicesSuccessBody's fixture - exercises field names in
+        // both directions rather than only ever checking the request side, which the old
+        // hand-typed version of this test never did for AssessResponse at all.
+        String body =
+                """
+                {"request_id":"req-1","evidence_grade":"C",
+                 "evidence_findings":[{"factor":"battery","stance":"NEGATIVE",
+                   "supporting_refs":["P1"],"supporting_chunk_ids":[4412],"note":"Reduced endurance"}],
+                 "irrelevant_refs":["P2"],"irrelevant_chunk_ids":[4430],
+                 "summary":"Plain-language explanation.",
+                 "meta":{"ai_model":"claude-opus-5","prompt_version":"v1",
+                   "retrieved_chunk_ids":[4412,4430],"retry_count":0,
+                   "retrieval":{"k":12,"chunk_char_cap":800,"vector_store":"local","embedding_dim":512},
+                   "degraded":false,"degraded_reason":null},
+                 "system_log":{"component":"recommendation_ai"}}
+                """;
+        AssessResponse response = json.readValue(body, AssessResponse.class);
 
-        Map<String, Object> device = (Map<String, Object>) userContext.get("owned_device");
-        assertEquals(
-                java.util.Set.of("name", "device_age_months", "condition", "satisfaction_score", "use_cases"),
-                device.keySet());
-
-        Map<String, Object> preferences = (Map<String, Object>) userContext.get("preferences");
-        assertEquals(
-                java.util.Set.of(
-                        "budget", "currency", "upgrade_urgency", "brand_flexibility", "priorities", "pain_points",
-                        "notes"),
-                preferences.keySet());
-
-        Map<String, Object> candidate = (Map<String, Object>) body.get("candidate");
-        assertEquals(java.util.Set.of("product_id", "name", "release_date", "age_days"), candidate.keySet());
-        assertEquals("2025-02-07", candidate.get("release_date"), "pydantic expects a plain date, not a datetime");
-
-        Map<String, Object> computed = (Map<String, Object>) body.get("computed");
-        assertEquals(
-                java.util.Set.of("spec_deltas", "benchmark_uplift_pct", "price", "trigger_event"), computed.keySet());
-
-        Map<String, Object> analysis = (Map<String, Object>) body.get("analysis");
-        assertEquals(
-                java.util.Set.of("verdict", "upgrade_score", "deciding_factors"),
-                analysis.keySet());
+        assertMatchesSchema(schemas.get("AssessResponse"), asMap(response), "AssessResponse");
     }
 
     @Test

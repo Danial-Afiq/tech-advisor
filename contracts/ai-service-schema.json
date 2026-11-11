@@ -1,0 +1,751 @@
+{
+  "Analysis": {
+    "additionalProperties": false,
+    "description": "Channel A's finished judgement (AGENTS.md \u00a77.1), computed in Java.\n\n`upgrade_score` is the single 0-1 aggregate the verdict tier was derived\nfrom, where 1.0 is a strong upgrade recommendation and 0.0 is not\nrecommended. It is context for the grader, not something to recompute or\noverrule: the model grades owner evidence and may disagree with the\nverdict, which is the point of keeping the two channels separate (\u00a77.2).",
+    "properties": {
+      "deciding_factors": {
+        "default": [],
+        "items": {
+          "enum": [
+            "battery",
+            "camera",
+            "performance",
+            "display",
+            "build_quality",
+            "thermals",
+            "software_support",
+            "connectivity",
+            "audio",
+            "value",
+            "longevity",
+            "portability"
+          ],
+          "type": "string"
+        },
+        "title": "Deciding Factors",
+        "type": "array"
+      },
+      "upgrade_score": {
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "title": "Upgrade Score",
+        "type": "number"
+      },
+      "verdict": {
+        "enum": [
+          "NO_MEANINGFUL_CHANGE",
+          "WORTH_WATCHING",
+          "WORTH_CONSIDERING",
+          "STRONG_UPGRADE_CANDIDATE"
+        ],
+        "title": "Verdict",
+        "type": "string"
+      }
+    },
+    "required": [
+      "verdict",
+      "upgrade_score"
+    ],
+    "title": "Analysis",
+    "type": "object"
+  },
+  "AssessRequest": {
+    "additionalProperties": false,
+    "properties": {
+      "analysis": {
+        "$ref": "#/components/schemas/Analysis"
+      },
+      "candidate": {
+        "$ref": "#/components/schemas/Candidate"
+      },
+      "computed": {
+        "$ref": "#/components/schemas/Computed",
+        "default": {
+          "spec_deltas": {}
+        }
+      },
+      "request_id": {
+        "description": "Non-blank text.",
+        "title": "Request Id",
+        "type": "string"
+      },
+      "retrieval": {
+        "$ref": "#/components/schemas/RetrievalOptions",
+        "default": {}
+      },
+      "user_context": {
+        "$ref": "#/components/schemas/UserContext"
+      }
+    },
+    "required": [
+      "request_id",
+      "user_context",
+      "candidate",
+      "analysis"
+    ],
+    "title": "AssessRequest",
+    "type": "object"
+  },
+  "AssessResponse": {
+    "additionalProperties": false,
+    "properties": {
+      "evidence_findings": {
+        "default": [],
+        "items": {
+          "$ref": "#/components/schemas/EvidenceFinding"
+        },
+        "title": "Evidence Findings",
+        "type": "array"
+      },
+      "evidence_grade": {
+        "enum": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E",
+          "F",
+          "-"
+        ],
+        "title": "Evidence Grade",
+        "type": "string"
+      },
+      "irrelevant_chunk_ids": {
+        "default": [],
+        "items": {
+          "exclusiveMinimum": 0.0,
+          "type": "integer"
+        },
+        "title": "Irrelevant Chunk Ids",
+        "type": "array"
+      },
+      "irrelevant_refs": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "title": "Irrelevant Refs",
+        "type": "array"
+      },
+      "meta": {
+        "$ref": "#/components/schemas/ResponseMeta"
+      },
+      "request_id": {
+        "description": "Non-blank text.",
+        "title": "Request Id",
+        "type": "string"
+      },
+      "summary": {
+        "anyOf": [
+          {
+            "description": "Non-blank text.",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Summary"
+      },
+      "system_log": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "System Log"
+      }
+    },
+    "required": [
+      "request_id",
+      "evidence_grade",
+      "meta"
+    ],
+    "title": "AssessResponse",
+    "type": "object"
+  },
+  "Candidate": {
+    "additionalProperties": false,
+    "properties": {
+      "age_days": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Age Days"
+      },
+      "name": {
+        "title": "Name",
+        "type": "string"
+      },
+      "product_id": {
+        "title": "Product Id",
+        "type": "integer"
+      },
+      "release_date": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Release Date"
+      }
+    },
+    "required": [
+      "product_id",
+      "name",
+      "release_date",
+      "age_days"
+    ],
+    "title": "Candidate",
+    "type": "object"
+  },
+  "Computed": {
+    "additionalProperties": false,
+    "description": "Finished figures. `benchmark_uplift_pct` already has\n`benchmark_results.higher_is_better` applied on the Java side.",
+    "properties": {
+      "benchmark_uplift_pct": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Benchmark Uplift Pct"
+      },
+      "price": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/Price"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "spec_deltas": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/SpecDelta"
+        },
+        "default": {},
+        "title": "Spec Deltas",
+        "type": "object"
+      },
+      "trigger_event": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/TriggerEvent"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "title": "Computed",
+    "type": "object"
+  },
+  "EvidenceFinding": {
+    "additionalProperties": false,
+    "properties": {
+      "factor": {
+        "enum": [
+          "battery",
+          "camera",
+          "performance",
+          "display",
+          "build_quality",
+          "thermals",
+          "software_support",
+          "connectivity",
+          "audio",
+          "value",
+          "longevity",
+          "portability"
+        ],
+        "title": "Factor",
+        "type": "string"
+      },
+      "note": {
+        "description": "Non-blank text.",
+        "title": "Note",
+        "type": "string"
+      },
+      "stance": {
+        "enum": [
+          "POSITIVE",
+          "NEGATIVE",
+          "MIXED"
+        ],
+        "title": "Stance",
+        "type": "string"
+      },
+      "supporting_chunk_ids": {
+        "items": {
+          "exclusiveMinimum": 0.0,
+          "type": "integer"
+        },
+        "title": "Supporting Chunk Ids",
+        "type": "array"
+      },
+      "supporting_refs": {
+        "items": {
+          "type": "string"
+        },
+        "minItems": 1,
+        "title": "Supporting Refs",
+        "type": "array"
+      }
+    },
+    "required": [
+      "factor",
+      "stance",
+      "supporting_refs",
+      "note",
+      "supporting_chunk_ids"
+    ],
+    "title": "EvidenceFinding",
+    "type": "object"
+  },
+  "OwnedDevice": {
+    "additionalProperties": false,
+    "properties": {
+      "condition": {
+        "enum": [
+          "EXCELLENT",
+          "GOOD",
+          "FAIR",
+          "POOR"
+        ],
+        "title": "Condition",
+        "type": "string"
+      },
+      "device_age_months": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Device Age Months"
+      },
+      "name": {
+        "title": "Name",
+        "type": "string"
+      },
+      "satisfaction_score": {
+        "maximum": 100.0,
+        "minimum": 0.0,
+        "title": "Satisfaction Score",
+        "type": "integer"
+      },
+      "use_cases": {
+        "default": [],
+        "items": {
+          "type": "string"
+        },
+        "title": "Use Cases",
+        "type": "array"
+      }
+    },
+    "required": [
+      "name",
+      "device_age_months",
+      "condition",
+      "satisfaction_score"
+    ],
+    "title": "OwnedDevice",
+    "type": "object"
+  },
+  "Preferences": {
+    "additionalProperties": false,
+    "properties": {
+      "brand_flexibility": {
+        "enum": [
+          "EXTREMELY_FLEXIBLE",
+          "FLEXIBLE",
+          "SOMEWHAT_FLEXIBLE",
+          "NOT_FLEXIBLE"
+        ],
+        "title": "Brand Flexibility",
+        "type": "string"
+      },
+      "budget": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Budget"
+      },
+      "currency": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Currency"
+      },
+      "notes": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Notes"
+      },
+      "pain_points": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Pain Points"
+      },
+      "priorities": {
+        "additionalProperties": {
+          "type": "integer"
+        },
+        "default": {},
+        "propertyNames": {
+          "enum": [
+            "battery",
+            "camera",
+            "performance",
+            "display",
+            "build_quality",
+            "thermals",
+            "software_support",
+            "connectivity",
+            "audio",
+            "value",
+            "longevity",
+            "portability"
+          ]
+        },
+        "title": "Priorities",
+        "type": "object"
+      },
+      "upgrade_urgency": {
+        "enum": [
+          "NOT_URGENT",
+          "SOMEWHAT_URGENT",
+          "URGENT",
+          "CRITICAL"
+        ],
+        "title": "Upgrade Urgency",
+        "type": "string"
+      }
+    },
+    "required": [
+      "upgrade_urgency",
+      "brand_flexibility"
+    ],
+    "title": "Preferences",
+    "type": "object"
+  },
+  "Price": {
+    "additionalProperties": false,
+    "properties": {
+      "change_pct": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Change Pct"
+      },
+      "currency": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Currency"
+      },
+      "current": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Current"
+      },
+      "vs_budget": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Vs Budget"
+      }
+    },
+    "title": "Price",
+    "type": "object"
+  },
+  "ResponseMeta": {
+    "additionalProperties": false,
+    "properties": {
+      "ai_model": {
+        "description": "Non-blank text.",
+        "title": "Ai Model",
+        "type": "string"
+      },
+      "degraded": {
+        "default": false,
+        "title": "Degraded",
+        "type": "boolean"
+      },
+      "degraded_reason": {
+        "anyOf": [
+          {
+            "enum": [
+              "RETRIEVAL_FAILED",
+              "NO_PASSAGES_RETRIEVED",
+              "INSUFFICIENT_RELEVANT_PASSAGES",
+              "LLM_CALL_FAILED",
+              "VALIDATION_FAILED"
+            ],
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Degraded Reason"
+      },
+      "prompt_version": {
+        "description": "Non-blank text.",
+        "title": "Prompt Version",
+        "type": "string"
+      },
+      "retrieval": {
+        "$ref": "#/components/schemas/RetrievalMeta"
+      },
+      "retrieved_chunk_ids": {
+        "items": {
+          "exclusiveMinimum": 0.0,
+          "type": "integer"
+        },
+        "title": "Retrieved Chunk Ids",
+        "type": "array"
+      },
+      "retry_count": {
+        "maximum": 1.0,
+        "minimum": 0.0,
+        "title": "Retry Count",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "ai_model",
+      "prompt_version",
+      "retrieved_chunk_ids",
+      "retry_count",
+      "retrieval"
+    ],
+    "title": "ResponseMeta",
+    "type": "object"
+  },
+  "RetrievalMeta": {
+    "additionalProperties": false,
+    "properties": {
+      "chunk_char_cap": {
+        "exclusiveMinimum": 0.0,
+        "title": "Chunk Char Cap",
+        "type": "integer"
+      },
+      "embedding_dim": {
+        "exclusiveMinimum": 0.0,
+        "title": "Embedding Dim",
+        "type": "integer"
+      },
+      "k": {
+        "exclusiveMinimum": 0.0,
+        "title": "K",
+        "type": "integer"
+      },
+      "vector_store": {
+        "enum": [
+          "local",
+          "pgvector"
+        ],
+        "title": "Vector Store",
+        "type": "string"
+      }
+    },
+    "required": [
+      "k",
+      "chunk_char_cap",
+      "vector_store",
+      "embedding_dim"
+    ],
+    "title": "RetrievalMeta",
+    "type": "object"
+  },
+  "RetrievalOptions": {
+    "additionalProperties": false,
+    "properties": {
+      "k": {
+        "anyOf": [
+          {
+            "exclusiveMinimum": 0.0,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "K"
+      }
+    },
+    "title": "RetrievalOptions",
+    "type": "object"
+  },
+  "SpecDelta": {
+    "additionalProperties": false,
+    "properties": {
+      "candidate": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Candidate"
+      },
+      "current": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Current"
+      },
+      "delta_pct": {
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Delta Pct"
+      }
+    },
+    "title": "SpecDelta",
+    "type": "object"
+  },
+  "TriggerEvent": {
+    "additionalProperties": false,
+    "properties": {
+      "event_type": {
+        "title": "Event Type",
+        "type": "string"
+      },
+      "new_value": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "New Value"
+      },
+      "old_value": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Old Value"
+      },
+      "title": {
+        "title": "Title",
+        "type": "string"
+      }
+    },
+    "required": [
+      "event_type",
+      "title"
+    ],
+    "title": "TriggerEvent",
+    "type": "object"
+  },
+  "UserContext": {
+    "additionalProperties": false,
+    "properties": {
+      "owned_device": {
+        "$ref": "#/components/schemas/OwnedDevice"
+      },
+      "preferences": {
+        "$ref": "#/components/schemas/Preferences"
+      }
+    },
+    "required": [
+      "owned_device",
+      "preferences"
+    ],
+    "title": "UserContext",
+    "type": "object"
+  }
+}
