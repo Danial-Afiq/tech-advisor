@@ -1,4 +1,4 @@
-import type { PhoneSpecs } from "./phoneSpecs";
+import type { DeviceSpecs } from "./specSchemas";
 
 export type Condition = "Excellent" | "Good" | "Fair" | "Poor";
 
@@ -41,11 +41,11 @@ export type Device = {
   /** 0–100 (`user_devices.satisfaction_score`). */
   satisfaction?: number;
   upgradePreferences: UpgradePreferences;
-  /** Phones only: catalogue specs with the user's overrides applied. */
-  specs?: PhoneSpecs;
+  /** Phones and GPUs only: catalogue specs with the user's overrides applied. */
+  specs?: DeviceSpecs;
   /**
    * `user_devices.spec_overrides`: the specs that differ from the linked
    * catalogue row, or every known spec when the device isn't linked.
    */
-  specOverrides?: PhoneSpecs;
+  specOverrides?: DeviceSpecs;
 };

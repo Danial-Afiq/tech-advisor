@@ -170,6 +170,31 @@ class GpuCatalogueIntegrationTest {
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    void signedInUsersCanReadGpusButNotChangeThem() throws Exception {
+        String userToken = token("USER");
+        Product product = products.save(new Product(
+                "Test Brand", "Readable GPU " + UUID.randomUUID(), Product.CATEGORY_GPU, "VERIFIED"));
+        Gpu gpu = new Gpu(product.getId());
+        gpu.setVramGb(new java.math.BigDecimal("8"));
+        gpus.save(gpu);
+
+        mvc.perform(MockMvcRequestBuilders.get("/api/catalogue/gpus"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(MockMvcRequestBuilders.get("/api/catalogue/gpus")
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == %s)].vramGb", product.getId()).value(8));
+        mvc.perform(MockMvcRequestBuilders.get("/api/catalogue/gpus/{id}", product.getId())
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.modelName").value(product.getModelName()))
+                .andExpect(jsonPath("$.imageUrl").value(nullValue()));
+        mvc.perform(MockMvcRequestBuilders.delete(ADMIN_GPUS + "/{id}", product.getId())
+                        .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isForbidden());
+    }
+
     private String token(String role) {
         User user = users.save(new User(
                 "gpu-catalogue-" + role.toLowerCase() + "-" + UUID.randomUUID() + "@example.test",

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Placeholder for a GPU with no product image. Replace via products.image_url. -->
+  <path d="M10 28v44" stroke="#8fa0b8" stroke-width="3"/>
+  <path d="M10 30h6M10 46h6M10 62h6" stroke="#8fa0b8" stroke-width="2"/>
+  <rect x="16" y="26" width="72" height="40" rx="6" fill="#16243b" stroke="#9fb1c9" stroke-width="2.5"/>
+  <circle cx="36" cy="46" r="12" stroke="#b9a6ff" stroke-width="2.5"/>
+  <circle cx="68" cy="46" r="12" stroke="#b9a6ff" stroke-width="2.5"/>
+  <path d="M36 34v24M24 46h24M68 34v24M56 46h24" stroke="#b9a6ff" stroke-width="1.5" opacity=".55"/>
+  <circle cx="36" cy="46" r="3" fill="#b9a6ff" stroke="none"/>
+  <circle cx="68" cy="46" r="3" fill="#b9a6ff" stroke="none"/>
+  <path d="M26 66v6h40v-6" stroke="#9fb1c9" stroke-width="2.5"/>
+  <path d="M32 72v-3M38 72v-3M44 72v-3M50 72v-3M56 72v-3M62 72v-3" stroke="#9fb1c9" stroke-width="1.5"/>
+</svg>

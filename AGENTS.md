@@ -2173,10 +2173,24 @@ columns with no source (core count, fill rates, bandwidth, memory speed,
 save stamps `gpu.source = 'admin'` and leaves `source_url`/`fetched_at` alone; as
 with smartphones and MobileAPI, the next GPU seed/TechSpot refresh of that card
 overwrites any value it publishes. Responses carry the same read-only
-`latestPrice`/`currency` as smartphones. There are no USER read routes for GPUs
-and no GPU price/benchmark history route yet. No migration was needed.
-`GpuCatalogueIntegrationTest` covers CRUD, null handling, duplicates, category and
-authorisation; `OpenApiDocumentationTests` covers the routes.
+`latestPrice`/`currency` as smartphones, plus `imageUrl` (`products.image_url`; no
+GPU source fills it yet). Signed-in USER and ADMIN accounts can read GPUs through
+`GET /api/catalogue/gpus` and `GET /api/catalogue/gpus/{id}` (`GpuCatalogueController`,
+SCRUM-137), which the device form searches; mutations stay ADMIN-only. There is no
+GPU price/benchmark history route yet. No migration was needed.
+`GpuCatalogueIntegrationTest` covers CRUD, null handling, duplicates, category,
+authorisation and the USER read routes; `OpenApiDocumentationTests` covers the routes.
+
+**GPUs in the device inventory (SCRUM-137).** "GPU" is a device type on the device
+form. It searches the GPU catalogue as the Phone type searches smartphones (other
+types search both); picking a GPU links its `productId` and prefills its specs, and
+only the specs the user changes are saved in `spec_overrides`, keyed by the
+`GpuSpecMapping` spec names the scorer reads (`vram`, `bus_width`, `boost_clock_mhz`,
+`base_clock_mhz`, `tdp_watts`, `memory_type`, `architecture`). A GPU not in the
+catalogue is saved as a custom name with its entered specs as overrides; as with
+phones, the backend stores no device type, so an unlinked device is shown as a GPU
+only when its overrides hold GPU specs. GPU cards show the catalogue specs and,
+until GPU images exist, a bundled placeholder drawing (`assets/placeholders/gpu.svg`).
 The page's "Show visualisation of all tables" button opens a side panel of cards, one per table, from `GET /api/admin/database/tables`
 (ADMIN-only, `AdminDatabaseController`/`DatabaseSchemaService`): table names,
 columns, types, primary keys, foreign-key targets and exact row counts read from

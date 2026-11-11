@@ -2,11 +2,12 @@ import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 import { DeviceCard } from "./DeviceCard";
 import { PhoneCard } from "./PhoneCard";
+import { specSchemaFor } from "./specSchemas";
 import type { Device } from "./types";
 
 /**
  * Responsive grid of device cards (3 → 2 → 1 columns) — `PhoneCard` for
- * phones, `DeviceCard` for everything else — or an empty state
+ * phones and GPUs, `DeviceCard` for everything else — or an empty state
  * with an "Add device" button when there are none. Omit a handler to hide
  * that button on every card.
  */
@@ -43,7 +44,7 @@ export function DeviceGrid({
   return (
     <div className="grid grid-cols-3 gap-[14px] max-[1100px]:grid-cols-2 max-[620px]:grid-cols-1">
       {devices.map((device) => {
-        const Card = device.type === "Phone" ? PhoneCard : DeviceCard;
+        const Card = specSchemaFor(device.type) ? PhoneCard : DeviceCard;
         return (
           <Card
             key={device.id}

@@ -93,18 +93,26 @@ Reach for these first. All are named exports.
 
 ### `components/devices/` — device domain
 
-`DeviceGrid` (picks `PhoneCard` for phones, `DeviceCard` otherwise),
+`DeviceGrid` (picks `PhoneCard` for phones and GPUs, `DeviceCard` otherwise),
 `DeviceCard` (`children` slot for extra panels; nudges "set a budget" when the
 device has none, because the backend never evaluates it without one),
 `PhoneCard` (`DeviceCard` + `PhoneSpecsDropdown`), `DeviceThumb` (product
-image, else the type emoji; also used for suggested products on dashboard cards),
+image, else the type's placeholder image (GPUs: `assets/placeholders/gpu.svg`),
+else the type emoji; also used for suggested products on dashboard cards),
 `ConditionBadge`, `UpgradeProfileSummary`, `DeviceFormModal`,
 `UpgradePreferencesModal`, `BudgetSlider`, `PriorityPicker`,
 `CatalogueSearchInput` (ARIA combobox of
 catalogue suggestions; typing stays free text), `PhoneSpecFields` (editable
-phone specs, tagging fields changed from the catalogue as "Edited").
-`useSmartphoneCatalogue(enabled)` loads the catalogue once, and
-`catalogue.ts` holds the matching, spec-form and `withCatalogue` helpers. Shared types are in `types.ts`, and option
+phone or GPU specs, tagging fields changed from the catalogue as "Edited").
+Which specs a device type has lives in one `SpecSchema` per type
+(`PHONE_SPEC_SCHEMA`, `GPU_SPEC_SCHEMA` in `specSchemas.ts`; `specSchemaFor(type)`
+is undefined for types without spec fields). `PhoneSpecFields` and
+`PhoneSpecsDropdown` take a `schema` (default phone). GPU spec keys follow the
+backend `GpuSpecMapping` names (`vram`, `busWidth`, …) so overrides reach the
+scorer. `useDeviceCatalogue(enabled)` loads the smartphone and GPU catalogues
+once each (`useSmartphoneCatalogue` loads phones only), and `catalogue.ts`
+holds the matching, spec-form and `withCatalogue` helpers for either kind of
+`CatalogueItem`. Shared types are in `types.ts`, and option
 lists and formatters (`money`, `formatDate`, `ageLabel`) are in
 `deviceOptions.ts`.
 

@@ -5,14 +5,16 @@ import { Field, FieldHint, FormGrid, Input } from "../ui/Form";
 import { Tag } from "../ui/Tag";
 import { isCleared } from "./catalogue";
 import type { SpecFormValues } from "./catalogue";
-import { PHONE_SPEC_GROUPS, TEXT_SPEC_KEYS } from "./phoneSpecs";
-import type { PhoneSpecField, PhoneSpecKey } from "./phoneSpecs";
+import type { SpecField } from "./phoneSpecs";
+import { PHONE_SPEC_SCHEMA } from "./specSchemas";
+import type { SpecKey, SpecSchema } from "./specSchemas";
 
-const inputUnit = (field: PhoneSpecField) =>
+const inputUnit = (field: SpecField) =>
   field.inputUnit ?? field.unit?.trim();
 
 /**
- * Editable phone specifications, grouped like `PhoneSpecsDropdown`. With a
+ * Editable phone or GPU specifications (`schema`, default phone), grouped
+ * like `PhoneSpecsDropdown`. With a
  * `baseline` (the linked catalogue values) a field the user has changed is
  * tagged "Edited"; without one every field is plain manual entry.
  *
@@ -21,6 +23,7 @@ const inputUnit = (field: PhoneSpecField) =>
  * `keptEmpty` have been confirmed and show a short note instead.
  */
 export function PhoneSpecFields({
+  schema = PHONE_SPEC_SCHEMA,
   values,
   onChange,
   baseline,
@@ -28,13 +31,14 @@ export function PhoneSpecFields({
   keptEmpty,
   onKeepEmpty,
 }: {
+  schema?: SpecSchema;
   values: SpecFormValues;
-  onChange: (key: PhoneSpecKey, value: string) => void;
+  onChange: (key: SpecKey, value: string) => void;
   baseline?: SpecFormValues;
   /** False when `baseline` is the device's saved specs, not the catalogue. */
   baselineIsCatalogue?: boolean;
-  keptEmpty?: ReadonlySet<PhoneSpecKey>;
-  onKeepEmpty?: (key: PhoneSpecKey) => void;
+  keptEmpty?: ReadonlySet<SpecKey>;
+  onKeepEmpty?: (key: SpecKey) => void;
 }) {
   const idPrefix = useId();
   const source = baselineIsCatalogue ? "The catalogue lists" : "It was";
@@ -55,7 +59,7 @@ export function PhoneSpecFields({
         </FieldHint>
       </div>
 
-      {PHONE_SPEC_GROUPS.map((group) => (
+      {schema.groups.map((group) => (
         <div key={group.title}>
           <div className="mb-2">
             <Eyebrow>{group.title}</Eyebrow>
@@ -63,7 +67,7 @@ export function PhoneSpecFields({
           <FormGrid>
             {group.fields.map((field) => {
               const unit = inputUnit(field);
-              const text = TEXT_SPEC_KEYS.has(field.key);
+              const text = schema.text.has(field.key);
               const edited =
                 baseline !== undefined &&
                 baseline[field.key].trim() !== values[field.key].trim();
