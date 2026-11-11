@@ -115,7 +115,7 @@ describe("DevicesPageTest", () => {
     await screen.findByText("No devices yet");
     await user.click(screen.getByRole("button", { name: "Add device" }));
 
-    await user.selectOptions(screen.getByLabelText("Device type"), "Laptop");
+    await user.selectOptions(screen.getByLabelText("Device type"), "Other");
     await user.type(screen.getByLabelText("Brand"), "Dell");
     await user.type(screen.getByLabelText("Model / configuration"), "XPS 13");
     fireEvent.change(screen.getByLabelText(/Current satisfaction/), { target: { value: "85" } });
@@ -589,7 +589,7 @@ describe("DevicesPageTest GPUs", () => {
     await screen.findByRole("heading", { name: /NVIDIA GeForce RTX 4070/ });
     await user.click(screen.getByRole("button", { name: /Add device/ }));
     const types = within(screen.getByLabelText("Device type")).getAllByRole("option");
-    expect(types.map((o) => o.textContent)).toEqual(["Phone", "Laptop", "GPU", "Other"]);
+    expect(types.map((o) => o.textContent)).toEqual(["Phone", "GPU", "Other"]);
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     await user.click(screen.getByRole("button", { name: "Upgrade preferences" }));

@@ -2141,7 +2141,7 @@ until GPU images exist, a bundled placeholder drawing (`assets/placeholders/gpu.
 A GPU's upgrade preferences offer only the factors `GpuSpecMapping` treats as
 applicable (value, performance, longevity, thermals; `prioritiesFor` in
 `deviceOptions.ts`), and saving drops any other saved priority. The device form
-offers the types Phone, Laptop, GPU and Other; a device saved with an older type
+offers the types Phone, GPU and Other (Laptop was removed); a device saved with an older type
 keeps it as an option.
 The page's "Show visualisation of all tables" button opens a side panel of cards, one per table, from `GET /api/admin/database/tables`
 (ADMIN-only, `AdminDatabaseController`/`DatabaseSchemaService`): table names,

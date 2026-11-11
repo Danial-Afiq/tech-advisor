@@ -57,7 +57,7 @@ export function DeviceFormModal({
   const isNew = device === null;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [type, setType] = useState(device?.type ?? "Laptop");
+  const [type, setType] = useState(device?.type ?? "Phone");
   const [condition, setCondition] = useState<Condition>(
     device?.condition ?? "Good"
   );

@@ -17,7 +17,7 @@ export const DEVICE_ICONS: Record<string, string> = {
  * Types offered on the device form. `DEVICE_ICONS` keeps the older types so
  * devices saved with them (or linked to such a product) still show an icon.
  */
-export const DEVICE_TYPES = ["Phone", "Laptop", "GPU", "Other"];
+export const DEVICE_TYPES = ["Phone", "GPU", "Other"];
 export const CONDITIONS: Condition[] = ["Excellent", "Good", "Fair", "Poor"];
 /** Labels mapped to the existing Java/Python factor vocabulary. */
 export const PRIORITY_FACTORS: Record<string, string> = {
