@@ -211,7 +211,8 @@ export function DeviceFormModal({
         <FormGrid>
           <Field label="Device type">
             <Select
-              options={DEVICE_TYPES}
+              // An older device keeps its saved type as an option.
+              options={DEVICE_TYPES.includes(type) ? DEVICE_TYPES : [...DEVICE_TYPES, type]}
               value={type}
               onChange={(e) => {
                 setType(e.target.value);

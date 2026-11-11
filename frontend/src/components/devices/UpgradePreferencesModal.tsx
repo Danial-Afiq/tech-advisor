@@ -10,6 +10,7 @@ import {
   SUGGESTED_BUDGET,
   URGENCIES,
   defaultPrefs,
+  prioritiesFor,
 } from "./deviceOptions";
 import type { Device, UpgradePreferences } from "./types";
 
@@ -48,6 +49,7 @@ export function UpgradePreferencesModal({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const priorityOptions = prioritiesFor(device.type);
   const save = async () => {
     if (!prefs.urgency || !prefs.brandFlex) {
       setError("Choose upgrade urgency and brand flexibility before saving.");
@@ -56,7 +58,11 @@ export function UpgradePreferencesModal({
     setSaving(true);
     setError(null);
     try {
-      await onSave(prefs);
+      // Drop saved priorities that don't apply to this device type.
+      await onSave({
+        ...prefs,
+        priorities: prefs.priorities.filter((p) => priorityOptions.includes(p)),
+      });
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not save the upgrade profile."
@@ -94,6 +100,7 @@ export function UpgradePreferencesModal({
 
       <Section title="What matters most for the replacement?">
         <PriorityPicker
+          options={priorityOptions}
           selected={prefs.priorities}
           onChange={(v) => set("priorities", v)}
         />
