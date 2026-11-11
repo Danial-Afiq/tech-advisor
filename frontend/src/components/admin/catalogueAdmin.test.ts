@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { SmartphoneCatalogueItem } from "../../api/catalogue";
+import type { GpuCatalogueItem, SmartphoneCatalogueItem } from "../../api/catalogue";
 import {
   EMPTY_FILTERS,
+  GPU_KIND,
   applyFilters,
   boundsForRange,
   catalogueItemPrice,
   filterChoices,
   formToRequest,
+  gpuFormToRequest,
   itemToForm,
   missingSpecCount,
   osFamily,
@@ -198,5 +200,38 @@ describe("catalogue price ranges", () => {
     expect(priceRangeValue(EMPTY_FILTERS)).toBe("");
     expect(priceRangeValue({ ...EMPTY_FILTERS, minPrice: "500", maxPrice: "1000" })).toBe("500-1000");
     expect(priceRangeValue({ ...EMPTY_FILTERS, minPrice: "650", maxPrice: "1000" })).toBe("custom");
+  });
+});
+
+describe("GPU catalogue kind", () => {
+  const card = (patch: Partial<GpuCatalogueItem>): GpuCatalogueItem => ({
+    id: 1, brand: "NVIDIA", modelName: "GeForce RTX 4070", releaseDate: "2023-04-13", status: "VERIFIED",
+    baseClockMhz: 1920, boostClockMhz: 2475, vramGb: "12", memoryType: "GDDR6X", memoryBusBits: 192,
+    tdpWatts: 200, architecture: "Ada Lovelace", source: "techspot-gpu-specs", sourceUrl: null,
+    fetchedAt: null, latestPrice: null, currency: null, ...patch,
+  });
+  const rtx = card({});
+  const radeon = card({ id: 2, brand: "AMD", modelName: "Radeon RX 7800 XT", vramGb: "16", memoryType: "GDDR6", architecture: "RDNA 3", tdpWatts: null });
+
+  it("filters by architecture, searches GPU fields and counts missing GPU specs", () => {
+    expect(applyFilters([rtx, radeon], { ...EMPTY_FILTERS, osFamily: "RDNA 3" }, GPU_KIND)).toEqual([radeon]);
+    expect(applyFilters([rtx, radeon], { ...EMPTY_FILTERS, query: "gddr6x" }, GPU_KIND)).toEqual([rtx]);
+    expect(applyFilters([rtx, radeon], { ...EMPTY_FILTERS, specs: "missing" }, GPU_KIND)).toEqual([radeon]);
+    expect(missingSpecCount(radeon, GPU_KIND)).toBe(1);
+    expect(filterChoices([rtx, radeon], GPU_KIND).osFamilies).toEqual(["Ada Lovelace", "RDNA 3"]);
+  });
+
+  it("sorts by VRAM and TDP with unknown values last", () => {
+    expect(sortItems([rtx, radeon], "vram-desc", GPU_KIND).map((g) => g.id)).toEqual([2, 1]);
+    expect(sortItems([radeon, rtx], "tdp-asc", GPU_KIND).map((g) => g.id)).toEqual([1, 2]);
+  });
+
+  it("round-trips the form and sends blank specs as null", () => {
+    const values = GPU_KIND.toForm(radeon);
+    expect(values.specs.vramGb).toBe("16");
+    expect(values.specs.tdpWatts).toBe("");
+    expect(gpuFormToRequest({ ...values, specs: { ...values.specs, memoryType: "  " } })).toMatchObject({
+      brand: "AMD", vramGb: 16, tdpWatts: null, memoryType: null, architecture: "RDNA 3",
+    });
   });
 });

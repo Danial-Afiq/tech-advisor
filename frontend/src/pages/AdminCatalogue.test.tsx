@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminCatalogue from "./AdminCatalogue";
 import { ApiError } from "../api/client";
-import type { SmartphoneCatalogueItem } from "../api/catalogue";
+import type { GpuCatalogueItem, SmartphoneCatalogueItem } from "../api/catalogue";
 
 const mocks = vi.hoisted(() => ({
   listSmartphones: vi.fn(),
@@ -14,6 +14,10 @@ const mocks = vi.hoisted(() => ({
   listSmartphonePrices: vi.fn(),
   listSmartphoneBenchmarks: vi.fn(),
   listDatabaseTables: vi.fn(),
+  listGpus: vi.fn(),
+  createGpu: vi.fn(),
+  updateGpu: vi.fn(),
+  deleteGpu: vi.fn(),
 }));
 
 vi.mock("../api/session", () => ({
@@ -27,6 +31,10 @@ vi.mock("../api/catalogue", () => ({
   deleteSmartphone: mocks.deleteSmartphone,
   listSmartphonePrices: mocks.listSmartphonePrices,
   listSmartphoneBenchmarks: mocks.listSmartphoneBenchmarks,
+  listGpus: mocks.listGpus,
+  createGpu: mocks.createGpu,
+  updateGpu: mocks.updateGpu,
+  deleteGpu: mocks.deleteGpu,
 }));
 vi.mock("../api/database", () => ({ listDatabaseTables: mocks.listDatabaseTables }));
 
@@ -61,9 +69,30 @@ const catalogue = Array.from({ length: 30 }, (_, i) => {
   return phone(i + 1, `Brand ${n}`, `Model ${n}`);
 });
 
-const renderPage = () =>
+const gpu = (id: number, brand: string, modelName: string, patch: Partial<GpuCatalogueItem> = {}): GpuCatalogueItem => ({
+  id,
+  brand,
+  modelName,
+  releaseDate: "2024-01-15",
+  status: "VERIFIED",
+  baseClockMhz: 1500,
+  boostClockMhz: 2500,
+  vramGb: "12",
+  memoryType: "GDDR6",
+  memoryBusBits: 192,
+  tdpWatts: 200,
+  architecture: "Ada Lovelace",
+  source: "techspot-gpu-specs",
+  sourceUrl: null,
+  fetchedAt: "2026-10-30T00:00:00Z",
+  latestPrice: null,
+  currency: null,
+  ...patch,
+});
+
+const renderPage = (entry = "/admin/catalogue") =>
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[entry]}>
       <AdminCatalogue />
     </MemoryRouter>
   );
@@ -256,5 +285,98 @@ describe("AdminCatalogue", () => {
 
     await user.click(screen.getByRole("button", { name: "Hide visualisation of all tables" }));
     expect(screen.queryByRole("complementary", { name: "Database tables" })).not.toBeInTheDocument();
+  });
+});
+
+describe("AdminCatalogue GPUs", () => {
+  const gpus = [
+    gpu(1, "NVIDIA", "GeForce RTX 4070", { vramGb: "12" }),
+    gpu(2, "AMD", "Radeon RX 7800 XT", { vramGb: "16", architecture: "RDNA 3", memoryBusBits: null }),
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.listSmartphones.mockResolvedValue(catalogue);
+    mocks.listGpus.mockResolvedValue(gpus);
+  });
+
+  it("switches to GPUs and lists them with GPU columns", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Showing 1–25 of 30");
+
+    await user.click(screen.getByRole("button", { name: "GPUs" }));
+
+    expect(await screen.findByText("Showing 1–2 of 2")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "GPU catalogue" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "VRAM" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Battery" })).not.toBeInTheDocument();
+    // Default sort is brand A-Z; the AMD card is missing its memory bus.
+    expect(rowNames()).toEqual(["Radeon RX 7800 XT1 spec missing", "GeForce RTX 4070"]);
+    expect(mocks.listGpus).toHaveBeenCalledOnce();
+  });
+
+  it("filters GPUs by architecture and sorts by VRAM", async () => {
+    const user = userEvent.setup();
+    renderPage("/admin/catalogue?type=gpus");
+    await screen.findByText("Showing 1–2 of 2");
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sort by" }), "vram-desc");
+    expect(rowNames()[0]).toContain("Radeon RX 7800 XT");
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Architecture" }), "Ada Lovelace");
+    expect(rowNames()).toEqual(["GeForce RTX 4070"]);
+  });
+
+  it("adds a GPU, sending blank specs as null", async () => {
+    const user = userEvent.setup();
+    mocks.createGpu.mockResolvedValue(gpu(3, "Intel", "Arc B580"));
+    renderPage("/admin/catalogue?type=gpus");
+    await screen.findByText("Showing 1–2 of 2");
+
+    await user.click(screen.getByRole("button", { name: "+ Add GPU" }));
+    const dialog = screen.getByRole("dialog", { name: "Add GPU" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Brand" }), "Intel");
+    await user.type(within(dialog).getByRole("textbox", { name: "Model" }), "Arc B580");
+    await user.type(within(dialog).getByRole("spinbutton", { name: "VRAM (GB)" }), "12");
+    await user.click(within(dialog).getByRole("button", { name: "Add GPU" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mocks.createGpu).toHaveBeenCalledWith(
+      expect.objectContaining({ brand: "Intel", modelName: "Arc B580", vramGb: 12, tdpWatts: null, memoryType: null })
+    );
+    expect(screen.getByText("Showing 1–3 of 3")).toBeInTheDocument();
+  });
+
+  it("edits a GPU and shows where its values came from", async () => {
+    const user = userEvent.setup();
+    mocks.updateGpu.mockResolvedValue(gpu(1, "NVIDIA", "GeForce RTX 4070", { tdpWatts: 220 }));
+    renderPage("/admin/catalogue?type=gpus");
+    await screen.findByText("Showing 1–2 of 2");
+
+    await user.click(screen.getByRole("button", { name: "Edit NVIDIA GeForce RTX 4070" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit NVIDIA GeForce RTX 4070" });
+    expect(within(dialog).getByText(/techspot-gpu-specs, 2026-10-30/)).toBeInTheDocument();
+    // GPUs have no price/benchmark history route.
+    expect(within(dialog).queryByText(/Price history/i)).not.toBeInTheDocument();
+    const tdp = within(dialog).getByRole("spinbutton", { name: "TDP (W)" });
+    await user.clear(tdp);
+    await user.type(tdp, "220");
+    await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(mocks.updateGpu).toHaveBeenCalledWith(1, expect.objectContaining({ tdpWatts: 220 })));
+  });
+
+  it("deletes a GPU after confirmation", async () => {
+    const user = userEvent.setup();
+    mocks.deleteGpu.mockResolvedValue(undefined);
+    renderPage("/admin/catalogue?type=gpus");
+    await screen.findByText("Showing 1–2 of 2");
+
+    await user.click(screen.getByRole("button", { name: "Delete AMD Radeon RX 7800 XT" }));
+    await user.click(screen.getByRole("button", { name: "Delete entry" }));
+
+    await waitFor(() => expect(screen.getByText("Showing 1–1 of 1")).toBeInTheDocument());
+    expect(mocks.deleteGpu).toHaveBeenCalledWith(2);
   });
 });

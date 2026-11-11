@@ -1,11 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  createSmartphone,
-  deleteSmartphone,
-  listSmartphones,
-  updateSmartphone,
-} from "../api/catalogue";
-import type { SmartphoneCatalogueItem } from "../api/catalogue";
+import { useSearchParams } from "react-router-dom";
 import { getSession } from "../api/session";
 import { CatalogueEntryModal } from "../components/admin/CatalogueEntryModal";
 import { DatabaseTablesPanel } from "../components/admin/DatabaseTablesPanel";
@@ -15,8 +9,9 @@ import {
   CATALOGUE_STATUSES,
   DEFAULT_SORT,
   EMPTY_FILTERS,
+  GPU_KIND,
+  PHONE_KIND,
   PAGE_SIZES,
-  SORT_OPTIONS,
   ANY_PRICE_RANGE,
   CUSTOM_PRICE_RANGE,
   PRICE_RANGES,
@@ -24,7 +19,6 @@ import {
   boundsForRange,
   catalogueItemPrice,
   filterChoices,
-  formToRequest,
   missingSpecCount,
   pageCount,
   pageOf,
@@ -34,6 +28,8 @@ import {
 import type {
   CatalogueFilters,
   CatalogueFormValues,
+  CatalogueItemBase,
+  CatalogueKind,
   PriceAvailability,
   SpecCompleteness,
 } from "../components/admin/catalogueAdmin";
@@ -49,7 +45,7 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { ToastStack } from "../components/ui/ToastStack";
 import { useToasts } from "../components/ui/useToasts";
 
-type Editing = { item?: SmartphoneCatalogueItem } | null;
+type Editing = { item?: CatalogueItemBase } | null;
 
 const cell = "border-b border-white/[0.06] px-2 py-[10px] align-middle";
 const head = "border-b border-white/[0.09] px-2 py-3 text-left font-semibold";
@@ -57,25 +53,47 @@ const head = "border-b border-white/[0.09] px-2 py-3 text-left font-semibold";
 const value = (v: number | string | null, unit = "") =>
   v === null || v === "" ? <span className="text-[#5d6e86]">—</span> : `${v}${unit}`;
 
+/** `?type=gpus` shows GPUs; anything else shows smartphones. */
 export default function AdminCatalogue() {
+  const [params, setParams] = useSearchParams();
+  const kind: CatalogueKind<CatalogueItemBase> =
+    params.get("type") === GPU_KIND.key ? GPU_KIND : PHONE_KIND;
+  // Keyed by kind, so switching starts with fresh filters, sort and paging.
+  return (
+    <CatalogueManager
+      key={kind.key}
+      kind={kind}
+      onKindChange={(next) => setParams(next === PHONE_KIND.key ? {} : { type: next })}
+    />
+  );
+}
+
+function CatalogueManager({
+  kind,
+  onKindChange,
+}: {
+  kind: CatalogueKind<CatalogueItemBase>;
+  onKindChange: (key: CatalogueKind<CatalogueItemBase>["key"]) => void;
+}) {
   const account = getSession();
   const { toasts, pushToast } = useToasts();
 
-  const [items, setItems] = useState<SmartphoneCatalogueItem[] | null>(null);
+  const [items, setItems] = useState<CatalogueItemBase[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filters, setFilters] = useState<CatalogueFilters>(EMPTY_FILTERS);
   const [sort, setSort] = useState(DEFAULT_SORT);
   const [pageSize, setPageSize] = useState<number>(PAGE_SIZES[1]);
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<Editing>(null);
-  const [deleting, setDeleting] = useState<SmartphoneCatalogueItem | null>(null);
+  const [deleting, setDeleting] = useState<CatalogueItemBase | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deletePending, setDeletePending] = useState(false);
   const [showTables, setShowTables] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    listSmartphones()
+    kind
+      .list()
       .then((result) => {
         if (!cancelled) setItems(result);
       })
@@ -85,12 +103,12 @@ export default function AdminCatalogue() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [kind]);
 
-  const choices = useMemo(() => filterChoices(items ?? []), [items]);
+  const choices = useMemo(() => filterChoices(items ?? [], kind), [items, kind]);
   const visible = useMemo(
-    () => sortItems(applyFilters(items ?? [], filters), sort),
-    [items, filters, sort]
+    () => sortItems(applyFilters(items ?? [], filters, kind), sort, kind),
+    [items, filters, sort, kind]
   );
   const totalPages = pageCount(visible.length, pageSize);
   const { page: currentPage, rows } = pageOf(visible, page, pageSize);
@@ -105,11 +123,9 @@ export default function AdminCatalogue() {
   };
 
   const handleSave = async (values: CatalogueFormValues) => {
-    const body = formToRequest(values);
+    const body = kind.toRequest(values);
     const existing = editing?.item;
-    const saved = existing
-      ? await updateSmartphone(existing.id, body)
-      : await createSmartphone(body);
+    const saved = existing ? await kind.update(existing.id, body) : await kind.create(body);
     setItems((current) =>
       existing
         ? (current ?? []).map((i) => (i.id === saved.id ? saved : i))
@@ -127,7 +143,7 @@ export default function AdminCatalogue() {
     setDeletePending(true);
     setDeleteError(null);
     try {
-      await deleteSmartphone(deleting.id);
+      await kind.remove(deleting.id);
       setItems((current) => (current ?? []).filter((i) => i.id !== deleting.id));
       pushToast("Entry deleted", `${deleting.brand} ${deleting.modelName} was removed.`, "🗑");
       setDeleting(null);
@@ -141,7 +157,7 @@ export default function AdminCatalogue() {
   return (
     <AdminShell
       active="catalogue"
-      title="Smartphone catalogue"
+      title={kind.title}
       email={account?.email ?? "administrator"}
     >
       <div
@@ -150,7 +166,7 @@ export default function AdminCatalogue() {
         <div className="min-w-0">
           <PageHeader
             eyebrow="Tech Advisor · Admin"
-            title="Smartphone catalogue"
+            title={kind.title}
             description="Search, sort and filter every catalogue entry, then add, edit or delete it."
             action={
               <div className="flex flex-wrap gap-2">
@@ -163,11 +179,25 @@ export default function AdminCatalogue() {
                   {showTables ? "Hide visualisation of all tables" : "Show visualisation of all tables"}
                 </Button>
                 <Button variant="primary" onClick={() => setEditing({})}>
-                  + Add smartphone
+                  + Add {kind.noun}
                 </Button>
               </div>
             }
           />
+
+          <div className="mb-3 flex gap-2" role="group" aria-label="Catalogue type">
+            {[PHONE_KIND, GPU_KIND].map((option) => (
+              <Button
+                key={option.key}
+                size="sm"
+                variant={option.key === kind.key ? "primary" : "secondary"}
+                aria-pressed={option.key === kind.key}
+                onClick={() => onKindChange(option.key)}
+              >
+                {option.key === "gpus" ? "GPUs" : "Smartphones"}
+              </Button>
+            ))}
+          </div>
 
           <Card>
             <div className="card-body gap-0 p-[18px]">
@@ -175,7 +205,7 @@ export default function AdminCatalogue() {
                 <Field label="Search">
                   <Input
                     type="search"
-                    placeholder="Brand, model, chipset, OS or ID"
+                    placeholder={kind.searchPlaceholder}
                     value={filters.query}
                     onChange={(e) => updateFilters({ query: e.target.value })}
                   />
@@ -194,10 +224,10 @@ export default function AdminCatalogue() {
                     onChange={(e) => updateFilters({ status: e.target.value })}
                   />
                 </Field>
-                <Field label="Operating system">
+                <Field label={kind.familyLabel}>
                   <Select
                     value={filters.osFamily}
-                    options={[{ value: ALL, label: "Any OS" }, ...choices.osFamilies]}
+                    options={[{ value: ALL, label: kind.anyFamily }, ...choices.osFamilies]}
                     onChange={(e) => updateFilters({ osFamily: e.target.value })}
                   />
                 </Field>
@@ -264,7 +294,7 @@ export default function AdminCatalogue() {
                   <Field label="Sort by">
                     <Select
                       value={sort}
-                      options={SORT_OPTIONS}
+                      options={kind.sortOptions}
                       onChange={(e) => {
                         setSort(e.target.value);
                         setPage(1);
@@ -300,7 +330,7 @@ export default function AdminCatalogue() {
                   title={items.length === 0 ? "The catalogue is empty" : "No entries match"}
                   description={
                     items.length === 0
-                      ? "Add a smartphone, or run MobileAPI ingestion to populate it."
+                      ? kind.emptyHint
                       : "Try a different search or clear the filters."
                   }
                 />
@@ -322,17 +352,17 @@ export default function AdminCatalogue() {
                           <th className={head}>Release</th>
                           <th className={head}>Status</th>
                           <th className={head}>Price</th>
-                          <th className={head}>Chipset</th>
-                          <th className={head}>RAM</th>
-                          <th className={head}>Storage</th>
-                          <th className={head}>Battery</th>
-                          <th className={head}>OS</th>
+                          {kind.columns.map((column) => (
+                            <th key={column.label} className={head}>
+                              {column.label}
+                            </th>
+                          ))}
                           <th className={`${head} text-right`}>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
                         {rows.map((item) => {
-                          const missing = missingSpecCount(item);
+                          const missing = missingSpecCount(item, kind);
                           return (
                             <tr key={item.id} className="hover:bg-white/[0.02]">
                               <td className={`${cell} text-[#8fa0b8]`}>{item.id}</td>
@@ -356,11 +386,11 @@ export default function AdminCatalogue() {
                               <td className={`${cell} whitespace-nowrap`}>
                                 {value(catalogueItemPrice(item))}
                               </td>
-                              <td className={cell}>{value(item.chipset)}</td>
-                              <td className={cell}>{value(item.ramGb, " GB")}</td>
-                              <td className={cell}>{value(item.storageGb, " GB")}</td>
-                              <td className={cell}>{value(item.batteryMah, " mAh")}</td>
-                              <td className={cell}>{value(item.os)}</td>
+                              {kind.columns.map((column) => (
+                                <td key={column.label} className={cell}>
+                                  {value(column.value(item), column.unit)}
+                                </td>
+                              ))}
                               <td className={`${cell} text-right`}>
                                 <span className="inline-flex gap-1">
                                   <Button
@@ -405,6 +435,7 @@ export default function AdminCatalogue() {
 
       {editing && (
         <CatalogueEntryModal
+          kind={kind}
           item={editing.item}
           onClose={() => setEditing(null)}
           onSave={handleSave}

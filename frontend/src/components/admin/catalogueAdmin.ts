@@ -1,4 +1,16 @@
+import {
+  createGpu,
+  createSmartphone,
+  deleteGpu,
+  deleteSmartphone,
+  listGpus,
+  listSmartphones,
+  updateGpu,
+  updateSmartphone,
+} from "../../api/catalogue";
 import type {
+  GpuCatalogueItem,
+  GpuCatalogueRequest,
   SmartphoneCatalogueItem,
   SmartphoneCatalogueRequest,
 } from "../../api/catalogue";
@@ -9,9 +21,16 @@ import { formatRecommendationPrice } from "../recommendations/recommendationPres
 
 /**
  * Search, filter, sort and paging for the admin catalogue table. All of it is
- * client-side: `GET /api/catalogue/smartphones` returns the whole catalogue,
- * which is a few hundred rows.
+ * client-side: the list routes return the whole catalogue of one kind, which
+ * is at most about a thousand rows. A `CatalogueKind` (`PHONE_KIND`,
+ * `GPU_KIND`) supplies what differs between smartphones and GPUs.
  */
+
+/** The `products` fields every catalogue kind shares. */
+export type CatalogueItemBase = Pick<
+  SmartphoneCatalogueItem,
+  "id" | "brand" | "modelName" | "releaseDate" | "status" | "latestPrice" | "currency"
+>;
 
 export const CATALOGUE_STATUSES = ["VERIFIED", "UNVERIFIED"] as const;
 export const PAGE_SIZES = [10, 25, 50, 100] as const;
@@ -24,6 +43,7 @@ export type CatalogueFilters = {
   query: string;
   brand: string;
   status: string;
+  /** The kind's family filter: OS family for smartphones, architecture for GPUs. */
   osFamily: string;
   specs: SpecCompleteness;
   price: PriceAvailability;
@@ -81,10 +101,11 @@ const bound = (text: string) => {
   return Number.isNaN(n) ? null : n;
 };
 
-type SortOption = {
+// Method syntax keeps a kind's options assignable to the base item type.
+type SortOption<T extends CatalogueItemBase = SmartphoneCatalogueItem> = {
   value: string;
   label: string;
-  compare: (a: SmartphoneCatalogueItem, b: SmartphoneCatalogueItem) => number;
+  compare(a: T, b: T): number;
 };
 
 const text = (a: string | null, b: string | null) =>
@@ -103,12 +124,13 @@ const nullsLast = (
   return descending ? -diff : diff;
 };
 
-const byName = (a: SmartphoneCatalogueItem, b: SmartphoneCatalogueItem) =>
+const byName = (a: CatalogueItemBase, b: CatalogueItemBase) =>
   text(a.brand, b.brand) || text(a.modelName, b.modelName);
 
 const releaseTime = (date: string | null) => (date ? Date.parse(date) : null);
 
-export const SORT_OPTIONS: SortOption[] = [
+/** Shared sorts, then the kind's own spec sorts, then "Recently added". */
+const catalogueSorts = <T extends CatalogueItemBase>(specific: SortOption<T>[]): SortOption<T>[] => [
   { value: "brand-asc", label: "Brand A–Z", compare: byName },
   { value: "brand-desc", label: "Brand Z–A", compare: (a, b) => byName(b, a) },
   {
@@ -138,6 +160,11 @@ export const SORT_OPTIONS: SortOption[] = [
     label: "Highest price",
     compare: (a, b) => nullsLast(a.latestPrice, b.latestPrice, true) || byName(a, b),
   },
+  ...specific,
+  { value: "id-desc", label: "Recently added", compare: (a, b) => b.id - a.id },
+];
+
+export const SORT_OPTIONS = catalogueSorts<SmartphoneCatalogueItem>([
   {
     value: "ram-desc",
     label: "Most RAM",
@@ -153,8 +180,25 @@ export const SORT_OPTIONS: SortOption[] = [
     label: "Biggest battery",
     compare: (a, b) => nullsLast(a.batteryMah, b.batteryMah, true) || byName(a, b),
   },
-  { value: "id-desc", label: "Recently added", compare: (a, b) => b.id - a.id },
-];
+]);
+
+export const GPU_SORT_OPTIONS = catalogueSorts<GpuCatalogueItem>([
+  {
+    value: "vram-desc",
+    label: "Most VRAM",
+    compare: (a, b) => nullsLast(a.vramGb, b.vramGb, true) || byName(a, b),
+  },
+  {
+    value: "boost-desc",
+    label: "Fastest boost clock",
+    compare: (a, b) => nullsLast(a.boostClockMhz, b.boostClockMhz, true) || byName(a, b),
+  },
+  {
+    value: "tdp-asc",
+    label: "Lowest TDP",
+    compare: (a, b) => nullsLast(a.tdpWatts, b.tdpWatts, false) || byName(a, b),
+  },
+]);
 
 export const DEFAULT_SORT = SORT_OPTIONS[0].value;
 
@@ -164,41 +208,47 @@ export function osFamily(os: string | null): string {
   return first || "Unknown";
 }
 
-/** Number of `phone` columns that are empty for this entry. */
-export const missingSpecCount = (item: SmartphoneCatalogueItem) =>
-  PHONE_SPEC_KEYS.filter((key) => {
-    const value = item[key];
-    return value === null || value === undefined || value === "";
-  }).length;
+const isBlank = (value: unknown) => value === null || value === undefined || value === "";
 
-const searchText = (item: SmartphoneCatalogueItem) =>
-  [item.id, item.brand, item.modelName, item.chipset, item.os, item.ipRating, item.status]
+/** Number of the kind's spec columns that are empty for this entry. */
+export const missingSpecCount = <T extends CatalogueItemBase>(
+  item: T,
+  kind: CatalogueKind<T> = PHONE_KIND as unknown as CatalogueKind<T>
+) => kind.specKeys.filter((key) => isBlank((item as Record<string, unknown>)[key])).length;
+
+const searchText = <T extends CatalogueItemBase>(item: T, kind: CatalogueKind<T>) =>
+  [item.id, item.brand, item.modelName, item.status, ...kind.searchFields(item)]
     .filter((v) => v !== null && v !== undefined)
     .join(" ")
     .toLowerCase();
 
 /** Distinct, sorted filter choices taken from the loaded catalogue. */
-export function filterChoices(items: SmartphoneCatalogueItem[]) {
+export function filterChoices<T extends CatalogueItemBase>(
+  items: T[],
+  kind: CatalogueKind<T> = PHONE_KIND as unknown as CatalogueKind<T>
+) {
   const sorted = (values: Iterable<string>) =>
     [...new Set(values)].sort((a, b) => text(a, b));
   return {
     brands: sorted(items.map((i) => i.brand)),
-    osFamilies: sorted(items.map((i) => osFamily(i.os))),
+    /** The kind's family choices: OS families, or GPU architectures. */
+    osFamilies: sorted(items.map((i) => kind.familyOf(i))),
   };
 }
 
 /** Entries matching every filter; each search word must appear somewhere. */
-export function applyFilters(
-  items: SmartphoneCatalogueItem[],
-  filters: CatalogueFilters
-): SmartphoneCatalogueItem[] {
+export function applyFilters<T extends CatalogueItemBase>(
+  items: T[],
+  filters: CatalogueFilters,
+  kind: CatalogueKind<T> = PHONE_KIND as unknown as CatalogueKind<T>
+): T[] {
   const words = filters.query.toLowerCase().split(/\s+/).filter(Boolean);
   return items.filter((item) => {
     if (filters.brand && item.brand !== filters.brand) return false;
     if (filters.status && item.status !== filters.status) return false;
-    if (filters.osFamily && osFamily(item.os) !== filters.osFamily) return false;
-    if (filters.specs === "complete" && missingSpecCount(item) > 0) return false;
-    if (filters.specs === "missing" && missingSpecCount(item) === 0) return false;
+    if (filters.osFamily && kind.familyOf(item) !== filters.osFamily) return false;
+    if (filters.specs === "complete" && missingSpecCount(item, kind) > 0) return false;
+    if (filters.specs === "missing" && missingSpecCount(item, kind) === 0) return false;
     if (filters.price === "priced" && item.latestPrice === null) return false;
     if (filters.price === "unpriced" && item.latestPrice !== null) return false;
     const min = bound(filters.minPrice);
@@ -212,18 +262,22 @@ export function applyFilters(
       if (max !== null && price > max) return false;
     }
     if (words.length === 0) return true;
-    const haystack = searchText(item);
+    const haystack = searchText(item, kind);
     return words.every((word) => haystack.includes(word));
   });
 }
 
-export function sortItems(items: SmartphoneCatalogueItem[], sort: string) {
-  const option = SORT_OPTIONS.find((o) => o.value === sort) ?? SORT_OPTIONS[0];
-  return [...items].sort(option.compare);
+export function sortItems<T extends CatalogueItemBase>(
+  items: T[],
+  sort: string,
+  kind: CatalogueKind<T> = PHONE_KIND as unknown as CatalogueKind<T>
+) {
+  const option = kind.sortOptions.find((o) => o.value === sort) ?? kind.sortOptions[0];
+  return [...items].sort((a, b) => option.compare(a, b));
 }
 
 /** "SGD 849.00", or null when the entry has no price history. */
-export const catalogueItemPrice = (item: SmartphoneCatalogueItem) =>
+export const catalogueItemPrice = (item: CatalogueItemBase) =>
   item.latestPrice === null
     ? null
     : formatRecommendationPrice(Number(item.latestPrice), item.currency);
@@ -255,13 +309,28 @@ export function pageButtons(current: number, total: number): (number | "…")[] 
   );
 }
 
-/** What the add/edit form holds; inputs work in strings. */
+/** GPU spec fields the admin form edits, in display order (the mapped `gpu` columns). */
+export const GPU_SPEC_FIELDS = [
+  { key: "baseClockMhz", label: "Base clock", unit: "MHz", numeric: true },
+  { key: "boostClockMhz", label: "Boost clock", unit: "MHz", numeric: true },
+  { key: "vramGb", label: "VRAM", unit: "GB", numeric: true },
+  { key: "memoryType", label: "Memory type", unit: "", numeric: false },
+  { key: "memoryBusBits", label: "Memory bus", unit: "bit", numeric: true },
+  { key: "tdpWatts", label: "TDP", unit: "W", numeric: true },
+  { key: "architecture", label: "Architecture", unit: "", numeric: false },
+] as const;
+
+export type GpuSpecKey = (typeof GPU_SPEC_FIELDS)[number]["key"];
+export type GpuSpecFormValues = Record<GpuSpecKey, string>;
+
+/** What the add/edit form holds; inputs work in strings. `specs` is keyed by the kind's spec fields. */
 export type CatalogueFormValues = {
   brand: string;
   modelName: string;
   releaseDate: string;
   status: string;
-  specs: SpecFormValues;
+  /** `SpecFormValues` for smartphones, `GpuSpecFormValues` for GPUs. */
+  specs: Record<string, string>;
 };
 
 export function itemToForm(item?: SmartphoneCatalogueItem): CatalogueFormValues {
@@ -276,7 +345,7 @@ export function itemToForm(item?: SmartphoneCatalogueItem): CatalogueFormValues 
 
 /** The request body; blank specs are sent as null so a PUT clears them. */
 export function formToRequest(values: CatalogueFormValues): SmartphoneCatalogueRequest {
-  const filled = formToSpecs(values.specs);
+  const filled = formToSpecs(values.specs as SpecFormValues);
   const specs = Object.fromEntries(
     PHONE_SPEC_KEYS.map((key) => [key, filled[key] ?? null])
   ) as Pick<SmartphoneCatalogueRequest, (typeof PHONE_SPEC_KEYS)[number]>;
@@ -288,3 +357,118 @@ export function formToRequest(values: CatalogueFormValues): SmartphoneCatalogueR
     ...specs,
   };
 }
+
+function gpuItemToForm(item?: GpuCatalogueItem): CatalogueFormValues {
+  return {
+    brand: item?.brand ?? "",
+    modelName: item?.modelName ?? "",
+    releaseDate: item?.releaseDate ?? "",
+    status: item?.status ?? "VERIFIED",
+    specs: Object.fromEntries(
+      GPU_SPEC_FIELDS.map(({ key }) => [key, item?.[key] == null ? "" : String(item[key])])
+    ) as GpuSpecFormValues,
+  };
+}
+
+/** The GPU request body; blank specs are sent as null so a PUT clears them. */
+export function gpuFormToRequest(values: CatalogueFormValues): GpuCatalogueRequest {
+  const specs = values.specs as GpuSpecFormValues;
+  const field = (key: GpuSpecKey, numeric: boolean) => {
+    const raw = (specs[key] ?? "").trim();
+    if (!raw) return null;
+    return numeric ? Number(raw) : raw;
+  };
+  return {
+    brand: values.brand.trim(),
+    modelName: values.modelName.trim(),
+    releaseDate: values.releaseDate || null,
+    status: values.status,
+    ...Object.fromEntries(GPU_SPEC_FIELDS.map(({ key, numeric }) => [key, field(key, numeric)])),
+  } as GpuCatalogueRequest;
+}
+
+/** A spec column of the catalogue table. */
+type CatalogueColumn<T> = { label: string; unit?: string; value(item: T): string | number | null };
+
+/** Everything the admin catalogue page needs to know about one kind of product. */
+export type CatalogueKind<T extends CatalogueItemBase> = {
+  key: "smartphones" | "gpus";
+  /** "smartphone" / "GPU", for labels such as "Add GPU". */
+  noun: string;
+  title: string;
+  searchPlaceholder: string;
+  familyLabel: string;
+  anyFamily: string;
+  emptyHint: string;
+  /** Read-only price and benchmark history exists only for smartphones. */
+  hasHistory: boolean;
+  /** Columns counted by the "Specifications" filter and the "n specs missing" note. */
+  specKeys: readonly string[];
+  sortOptions: SortOption<T>[];
+  columns: CatalogueColumn<T>[];
+  familyOf(item: T): string;
+  searchFields(item: T): (string | number | null)[];
+  // API calls are wrapped so the module is only touched when a call is made.
+  list(): Promise<T[]>;
+  create(body: unknown): Promise<T>;
+  update(id: number, body: unknown): Promise<T>;
+  remove(id: number): Promise<void>;
+  toForm(item?: T): CatalogueFormValues;
+  toRequest(values: CatalogueFormValues): unknown;
+};
+
+export const PHONE_KIND: CatalogueKind<SmartphoneCatalogueItem> = {
+  key: "smartphones",
+  noun: "smartphone",
+  title: "Smartphone catalogue",
+  searchPlaceholder: "Brand, model, chipset, OS or ID",
+  familyLabel: "Operating system",
+  anyFamily: "Any OS",
+  emptyHint: "Add a smartphone, or run MobileAPI ingestion to populate it.",
+  hasHistory: true,
+  specKeys: PHONE_SPEC_KEYS,
+  sortOptions: SORT_OPTIONS,
+  columns: [
+    { label: "Chipset", value: (i) => i.chipset },
+    { label: "RAM", unit: " GB", value: (i) => i.ramGb },
+    { label: "Storage", unit: " GB", value: (i) => i.storageGb },
+    { label: "Battery", unit: " mAh", value: (i) => i.batteryMah },
+    { label: "OS", value: (i) => i.os },
+  ],
+  familyOf: (i) => osFamily(i.os),
+  searchFields: (i) => [i.chipset, i.os, i.ipRating],
+  list: () => listSmartphones(),
+  create: (body) => createSmartphone(body as SmartphoneCatalogueRequest),
+  update: (id, body) => updateSmartphone(id, body as SmartphoneCatalogueRequest),
+  remove: (id) => deleteSmartphone(id),
+  toForm: (item) => itemToForm(item),
+  toRequest: (values) => formToRequest(values),
+};
+
+export const GPU_KIND: CatalogueKind<GpuCatalogueItem> = {
+  key: "gpus",
+  noun: "GPU",
+  title: "GPU catalogue",
+  searchPlaceholder: "Brand, model, architecture, memory or ID",
+  familyLabel: "Architecture",
+  anyFamily: "Any architecture",
+  emptyHint: "Add a GPU, or run the GPU seed or TechSpot ingestion to populate it.",
+  hasHistory: false,
+  specKeys: GPU_SPEC_FIELDS.map((f) => f.key),
+  sortOptions: GPU_SORT_OPTIONS,
+  columns: [
+    { label: "Architecture", value: (i) => i.architecture },
+    { label: "VRAM", unit: " GB", value: (i) => (i.vramGb === null ? null : Number(i.vramGb)) },
+    { label: "Memory", value: (i) => i.memoryType },
+    { label: "Boost clock", unit: " MHz", value: (i) => i.boostClockMhz },
+    { label: "TDP", unit: " W", value: (i) => i.tdpWatts },
+  ],
+  familyOf: (i) => i.architecture?.trim() || "Unknown",
+  searchFields: (i) => [i.architecture, i.memoryType],
+  list: () => listGpus(),
+  create: (body) => createGpu(body as GpuCatalogueRequest),
+  update: (id, body) => updateGpu(id, body as GpuCatalogueRequest),
+  remove: (id) => deleteGpu(id),
+  toForm: (item) => gpuItemToForm(item),
+  toRequest: (values) => gpuFormToRequest(values),
+};

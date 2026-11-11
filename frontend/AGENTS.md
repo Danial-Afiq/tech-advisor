@@ -127,7 +127,8 @@ them. Never show placeholder numbers as if they were real.
   ADMIN `createSmartphone` / `updateSmartphone` / `deleteSmartphone`
   (`/api/admin/catalogue/smartphones[/{id}]`), plus the read-only
   `listSmartphonePrices` / `listSmartphoneBenchmarks` (`.../{id}/prices`,
-  `.../{id}/benchmarks`).
+  `.../{id}/benchmarks`). For GPUs it has the ADMIN-only `listGpus` /
+  `createGpu` / `updateGpu` / `deleteGpu` (`/api/admin/catalogue/gpus[/{id}]`).
 - `database.ts` has `listDatabaseTables` (`GET /api/admin/database/tables`).
 - `session.ts` stores the JWT.
 
@@ -481,6 +482,16 @@ sticky sidebar and top bar stick to.
   `DatabaseTablesPanel`, one card per table from `GET /api/admin/database/tables`.
   Catalogue GET routes are available to authenticated USER and ADMIN accounts,
   while mutations remain ADMIN-only.
+- The same page manages GPUs (SCRUM-136): a Smartphones/GPUs switch sets
+  `?type=gpus` and remounts the page, so filters, sort and paging reset. What
+  differs per kind lives in one `CatalogueKind` (`PHONE_KIND`, `GPU_KIND` in
+  `catalogueAdmin.ts`): table columns, kind-specific sorts, search fields,
+  which specs count as missing, the family filter (OS family for phones,
+  architecture for GPUs; the filter field is still named `osFamily`), the API
+  calls and the form mapping. `CatalogueEntryModal` takes the kind and shows
+  `PhoneSpecFields` or `GpuSpecFields` (blank saved as null, with the read-only
+  source and fetch date when editing). Price/benchmark history stays
+  smartphone-only (`hasHistory`). GPU routes are ADMIN-only.
 - Both admin pages use `AdminShell`, which supplies the same responsive sidebar
   treatment as user pages, navigation between manual ingestion and catalogue,
   and the profile-card sign-out control.
