@@ -2107,6 +2107,23 @@ The Edit modal also shows read-only history from two ADMIN-only routes,
 the observation is SKU-level) and `.../{id}/benchmarks`, newest first and capped
 at 50 rows (`AdminCatalogueHistoryController`/`CatalogueHistoryService`); 404 for
 a non-smartphone id. Manual price/benchmark corrections are not implemented yet.
+
+**GPU catalogue (SCRUM-136).** ADMIN-only `GET/POST /api/admin/catalogue/gpus` and
+`GET/PUT/DELETE /api/admin/catalogue/gpus/{id}` (`AdminGpuCatalogueController`/
+`GpuCatalogueService`, the twin of the smartphone service) list, read, create,
+replace and delete GPUs, writing the `products` row (`category = 'GPU'`) and its
+`gpu` row in one transaction, rejecting a case-insensitive duplicate brand + model
+with 409 and returning 404 for a non-GPU id. Editable specs are the columns `Gpu`
+maps (base/boost clock, VRAM, memory type, bus width, TDP, architecture); the V6
+columns with no source (core count, fill rates, bandwidth, memory speed,
+`clock_speeds`, `tgp`) are not exposed. Blank specs are stored as null. An admin
+save stamps `gpu.source = 'admin'` and leaves `source_url`/`fetched_at` alone; as
+with smartphones and MobileAPI, the next GPU seed/TechSpot refresh of that card
+overwrites any value it publishes. Responses carry the same read-only
+`latestPrice`/`currency` as smartphones. There are no USER read routes for GPUs
+and no GPU price/benchmark history route yet. No migration was needed.
+`GpuCatalogueIntegrationTest` covers CRUD, null handling, duplicates, category and
+authorisation; `OpenApiDocumentationTests` covers the routes.
 The page's "Show visualisation of all tables" button opens a side panel of cards, one per table, from `GET /api/admin/database/tables`
 (ADMIN-only, `AdminDatabaseController`/`DatabaseSchemaService`): table names,
 columns, types, primary keys, foreign-key targets and exact row counts read from
@@ -2797,8 +2814,9 @@ Known files include:
 - `App.test.tsx`
 - `IngestionAdmin.tsx`
 - `IngestionAdmin.test.tsx`
-- `pages/AdminCatalogue.tsx` (`/admin/catalogue`): ADMIN catalogue search,
-  filter, sort, paging and CRUD, plus the all-tables visualisation panel (§16.7).
+- `pages/AdminCatalogue.tsx` (`/admin/catalogue`, `?type=gpus` for GPUs): ADMIN
+  catalogue search, filter, sort, paging and CRUD for smartphones and GPUs, plus
+  the all-tables visualisation panel (§16.7).
 - `pages/DashboardPage.tsx` (`/dashboard`): the authenticated USER's single
   recommendation overview/browsing page, using reusable cards, server-side sort
   and device/verdict/evidence-grade filters (§23.4, §26.4).

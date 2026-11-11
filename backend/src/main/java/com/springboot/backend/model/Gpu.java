@@ -16,7 +16,9 @@ import java.time.OffsetDateTime;
  * and TDP columns from V13, and the remaining V6 columns (core count, memory
  * speed, bandwidth, fill rates) have no source yet.
  *
- * <p>Ingestion writes this table; nothing else does.
+ * <p>Ingestion writes this table, and admins correct it through the GPU
+ * catalogue API ({@code GpuCatalogueService}). As with smartphones, the next
+ * ingestion refresh of a card overwrites any value it publishes.
  */
 @Entity
 @Table(name = "gpu")
@@ -59,6 +61,10 @@ public class Gpu {
 
     protected Gpu() {}
 
+    public Gpu(Long productId) {
+        this.productId = productId;
+    }
+
     public Long getProductId() { return productId; }
     public Integer getBaseClockMhz() { return baseClockMhz; }
     public Integer getBoostClockMhz() { return boostClockMhz; }
@@ -70,4 +76,13 @@ public class Gpu {
     public String getSource() { return source; }
     public String getSourceUrl() { return sourceUrl; }
     public OffsetDateTime getFetchedAt() { return fetchedAt; }
+
+    public void setBaseClockMhz(Integer baseClockMhz) { this.baseClockMhz = baseClockMhz; }
+    public void setBoostClockMhz(Integer boostClockMhz) { this.boostClockMhz = boostClockMhz; }
+    public void setVramGb(BigDecimal vramGb) { this.vramGb = vramGb; }
+    public void setMemoryType(String memoryType) { this.memoryType = memoryType; }
+    public void setMemoryBusBits(Integer memoryBusBits) { this.memoryBusBits = memoryBusBits; }
+    public void setTdpWatts(Integer tdpWatts) { this.tdpWatts = tdpWatts; }
+    public void setArchitecture(String architecture) { this.architecture = architecture; }
+    public void setSource(String source) { this.source = source; }
 }
