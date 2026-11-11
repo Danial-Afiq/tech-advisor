@@ -49,13 +49,26 @@ class CandidatePruningServiceTest {
     void queriesPricedProductsForTheOwnedDevicesCategory() {
         givenDeviceWithProduct("SMARTPHONE", OWNED_PRODUCT_ID);
         givenBudget(new BigDecimal("1000.00"), "SGD");
-        when(productRepository.findPricedCandidates(anyString(), anyLong(), anyLong()))
+        when(productRepository.findPricedCandidates(anyString(), anyLong(), anyLong(), eq(false)))
                 .thenReturn(List.of());
 
         service.getViableCandidates(DEVICE_ID);
 
         verify(productRepository).findPricedCandidates(
-                "SMARTPHONE", OWNED_PRODUCT_ID, USER_ID);
+                "SMARTPHONE", OWNED_PRODUCT_ID, USER_ID, false);
+        verifyNoInteractions(currencyConversionService);
+    }
+
+    @Test
+    void requestsTheOwnedBrandOnlyForANotFlexibleDevice() {
+        givenDeviceWithProduct("SMARTPHONE", OWNED_PRODUCT_ID);
+        givenBudget(new BigDecimal("1000.00"), "SGD").setBrandFlexibility("NOT_FLEXIBLE");
+        when(productRepository.findPricedCandidates("SMARTPHONE", OWNED_PRODUCT_ID, USER_ID, true))
+                .thenReturn(List.of());
+
+        assertTrue(service.getViableCandidates(DEVICE_ID).isEmpty());
+
+        verify(productRepository).findPricedCandidates("SMARTPHONE", OWNED_PRODUCT_ID, USER_ID, true);
         verifyNoInteractions(currencyConversionService);
     }
 
@@ -65,7 +78,7 @@ class CandidatePruningServiceTest {
         givenBudget(new BigDecimal("200.00"), "SGD");
         CandidateProduct overBudget = candidate(1L, "185.00", "USD");
         CandidateProduct affordable = candidate(2L, "149.99", "USD");
-        when(productRepository.findPricedCandidates("SMARTPHONE", OWNED_PRODUCT_ID, USER_ID))
+        when(productRepository.findPricedCandidates("SMARTPHONE", OWNED_PRODUCT_ID, USER_ID, false))
                 .thenReturn(List.of(overBudget, affordable));
         when(currencyConversionService.convertAllForComparison(anyList(), eq("SGD")))
                 .thenReturn(List.of(
@@ -85,7 +98,7 @@ class CandidatePruningServiceTest {
         givenDeviceWithProduct("SMARTPHONE", OWNED_PRODUCT_ID);
         givenBudget(new BigDecimal("200.00"), "SGD");
         CandidateProduct candidate = candidate(1L, "99.00", "USD");
-        when(productRepository.findPricedCandidates("SMARTPHONE", OWNED_PRODUCT_ID, USER_ID))
+        when(productRepository.findPricedCandidates("SMARTPHONE", OWNED_PRODUCT_ID, USER_ID, false))
                 .thenReturn(List.of(candidate));
         when(currencyConversionService.convertAllForComparison(anyList(), eq("SGD")))
                 .thenReturn(List.of(conversion(
@@ -159,9 +172,11 @@ class CandidatePruningServiceTest {
         when(userDeviceRepository.findByIdAndIsCurrentTrue(DEVICE_ID)).thenReturn(Optional.of(device));
     }
 
-    private void givenBudget(BigDecimal budget, String currency) {
+    private DevicePreference givenBudget(BigDecimal budget, String currency) {
+        DevicePreference preference = new DevicePreference(DEVICE_ID, budget, currency);
         when(devicePreferenceRepository.findById(DEVICE_ID))
-                .thenReturn(Optional.of(new DevicePreference(DEVICE_ID, budget, currency)));
+                .thenReturn(Optional.of(preference));
+        return preference;
     }
 
     private static CandidateProduct candidate(Long id, String price, String currency) {

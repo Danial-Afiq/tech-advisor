@@ -1,8 +1,12 @@
 package com.springboot.backend.recommendation;
 
 import com.springboot.backend.repository.CandidateProduct;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -37,6 +41,7 @@ class CandidateFilterIntegrationTest {
 
     @Autowired private CandidatePruningService service;
     @Autowired private JdbcTemplate db;
+    @Autowired private EntityManager entityManager;
 
     private Long ownedProductId;
     private Long userDeviceId;
@@ -70,6 +75,80 @@ class CandidateFilterIntegrationTest {
                 INSERT INTO device_preferences (user_device_id, budget, currency)
                 VALUES (?, 1000.00, 'SGD')
                 """, userDeviceId);
+    }
+
+    @Test
+    void notFlexibleOnlyIncludesTheOwnedBrandIgnoringCaseAndSurroundingWhitespace() {
+        db.update("UPDATE products SET brand = ' Samsung ' WHERE id = ?", ownedProductId);
+        brandFlexibility(userDeviceId, "NOT_FLEXIBLE");
+        Long sameBrand = product("Samsung", "Galaxy S25", "SMARTPHONE", "VERIFIED");
+        Long normalizedBrand = product(" sAmSuNg ", "Galaxy S24", "SMARTPHONE", "VERIFIED");
+        Long otherBrand = product("Google", "Pixel 10", "SMARTPHONE", "VERIFIED");
+        Long differentBrand = product("Samsung Electronics", "Other phone", "SMARTPHONE", "VERIFIED");
+        for (Long id : List.of(sameBrand, normalizedBrand, otherBrand, differentBrand)) {
+            price(id, "900.00", LATER);
+        }
+
+        assertEquals(List.of(sameBrand, normalizedBrand), productIds(service.getViableCandidates(userDeviceId)));
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"EXTREMELY_FLEXIBLE", "FLEXIBLE", "SOMEWHAT_FLEXIBLE"})
+    void flexibleAndLegacyUnsetPreferencesAllowAllBrands(String flexibility) {
+        brandFlexibility(userDeviceId, flexibility);
+        Long samsung = product("Samsung", "Galaxy S25", "SMARTPHONE", "VERIFIED");
+        Long google = product("Google", "Pixel 10", "SMARTPHONE", "VERIFIED");
+        Long apple = product("Apple", "iPhone 17", "SMARTPHONE", "VERIFIED");
+        for (Long id : List.of(samsung, google, apple)) {
+            price(id, "900.00", LATER);
+        }
+
+        assertEquals(List.of(samsung, google, apple), productIds(service.getViableCandidates(userDeviceId)));
+    }
+
+    @Test
+    void noEligibleSameBrandCandidateReturnsEmptyWithoutFallingBackToOtherBrands() {
+        brandFlexibility(userDeviceId, "NOT_FLEXIBLE");
+        Long otherBrand = product("Google", "Pixel 10", "SMARTPHONE", "VERIFIED");
+        price(otherBrand, "900.00", LATER);
+        Long expensive = product("Samsung", "Galaxy S25 Ultra", "SMARTPHONE", "VERIFIED");
+        price(expensive, "1100.00", LATER);
+        Long unverified = product("Samsung", "Unverified phone", "SMARTPHONE", "UNVERIFIED");
+        price(unverified, "900.00", LATER);
+        Long tablet = product("Samsung", "Galaxy Tab", "TABLET", "VERIFIED");
+        price(tablet, "900.00", LATER);
+        product("Samsung", "Unpriced phone", "SMARTPHONE", "VERIFIED");
+
+        assertTrue(service.getViableCandidates(userDeviceId).isEmpty());
+    }
+
+    @Test
+    void eachDeviceUsesItsOwnBrandAndSavedPreferenceOnEveryRun() {
+        Long secondOwned = product("Apple", "iPhone 13", "SMARTPHONE", "VERIFIED");
+        Long secondDevice = db.queryForObject("""
+                INSERT INTO user_devices (user_id, product_id, custom_name)
+                VALUES (?, ?, 'Second phone') RETURNING id
+                """, Long.class, userId, secondOwned);
+        db.update("""
+                INSERT INTO device_preferences (user_device_id, budget, currency, brand_flexibility)
+                VALUES (?, 1000.00, 'SGD', 'NOT_FLEXIBLE')
+                """, secondDevice);
+        brandFlexibility(userDeviceId, "NOT_FLEXIBLE");
+        Long samsung = product("Samsung", "Galaxy S25", "SMARTPHONE", "VERIFIED");
+        Long apple = product("Apple", "iPhone 17", "SMARTPHONE", "VERIFIED");
+        price(samsung, "900.00", LATER);
+        price(apple, "900.00", LATER);
+
+        assertEquals(List.of(samsung), productIds(service.getViableCandidates(userDeviceId)));
+        assertEquals(List.of(apple), productIds(service.getViableCandidates(secondDevice)));
+
+        brandFlexibility(userDeviceId, "FLEXIBLE");
+
+        assertEquals(List.of(samsung, apple), productIds(service.getViableCandidates(userDeviceId)));
+        assertEquals(List.of(apple), productIds(service.getViableCandidates(secondDevice)));
+        assertEquals("NOT_FLEXIBLE", db.queryForObject(
+                "SELECT brand_flexibility FROM device_preferences WHERE user_device_id = ?", String.class, secondDevice));
     }
 
     @Test
@@ -196,6 +275,12 @@ class CandidateFilterIntegrationTest {
         assertEquals(
                 List.of(previouslyDismissedProduct),
                 productIds(service.getViableCandidates(userDeviceId)), "An expired cooldown must not permanently " + "exclude the product");
+    }
+
+    private void brandFlexibility(Long deviceId, String flexibility) {
+        db.update("UPDATE device_preferences SET brand_flexibility = ? WHERE user_device_id = ?",
+                flexibility, deviceId);
+        entityManager.clear();
     }
 
     private Long product(String brand, String model, String category, String status) {
