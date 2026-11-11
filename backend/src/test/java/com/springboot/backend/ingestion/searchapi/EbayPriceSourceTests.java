@@ -165,6 +165,38 @@ class EbayPriceSourceTests {
         verify(repository, times(2)).save(state); // once at product id 5, once resetting to 0
     }
 
+    @Test void ingestContinuesPastAProductWithNoEbayListingsInsteadOfStoppingTheBatch() throws Exception {
+        // The actual production incident (Oct 2026): SearchApiClient.ebay() now resolves eBay's
+        // "no listings found" response to a clean empty array (see
+        // SearchApiTests.ebayNoListingsFoundIsEmptyResultsNotMalformed) rather than throwing -
+        // confirm that reaches all the way through here as an ordinary skipped product, with
+        // the rest of the batch (and the cursor) unaffected.
+        var repository = mock(EbayPriceRepository.class);
+        var client = mock(SearchApiClient.class);
+        var settings = new EbayPriceSettings(10);
+        var noListings = new EbayPriceRepository.Product(1, "Apple", "iPhone 16", "SMARTPHONE");
+        var priced = new EbayPriceRepository.Product(2, "Apple", "iPhone 16 Pro", "SMARTPHONE");
+        var state = new EbayPriceIngestionState();
+        when(repository.state()).thenReturn(state);
+        when(repository.nextProducts(0, 10, settings))
+                .thenReturn(new EbayPriceRepository.Batch(List.of(noListings, priced), false));
+        when(client.ebay(any(), eq("Apple iPhone 16"))).thenReturn(json.readTree("[]"));
+        when(client.ebay(any(), eq("Apple iPhone 16 Pro"))).thenReturn(priced("Apple iPhone 16 Pro", "$899.00"));
+        var source = new EbayPriceSource(repository, settings, client);
+
+        var output = new ArrayList<Payload>();
+        try (var context = new SourceContext(Clock.fixed(now, ZoneOffset.UTC), () -> {})) {
+            source.ingest(context, output::add);
+        }
+
+        assertEquals(1, output.size());
+        assertEquals("2", ((Payload.Price) output.getFirst().body()).productReference());
+        // Both products advance the cursor - the no-listings product is a normal, successfully
+        // attempted product, not a failure that would halt the batch before it.
+        assertEquals(2, state.catalogueCursor);
+        verify(repository, times(2)).save(state);
+    }
+
     @Test void ingestPropagatesARealListingLookupFailureInsteadOfSwallowingIt() throws Exception {
         // A real failure (auth, malformed response, transport, rate limit - anything
         // client.ebay() can throw) must abort the run and reach the orchestrator, not be
