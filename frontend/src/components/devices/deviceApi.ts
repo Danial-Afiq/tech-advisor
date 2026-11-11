@@ -1,6 +1,13 @@
 import { CONDITIONS, DEFAULT_CURRENCY, PRIORITY_FACTORS, defaultPrefs } from "./deviceOptions";
-import { PHONE_SPEC_KEYS, TEXT_SPEC_KEYS } from "./phoneSpecs";
-import type { PhoneSpecKey, PhoneSpecs } from "./phoneSpecs";
+import type { PhoneSpecs } from "./phoneSpecs";
+import {
+  ALL_SPEC_KEYS,
+  ALL_TEXT_SPEC_KEYS,
+  GPU_SPEC_SCHEMA,
+  PHONE_SPEC_SCHEMA,
+  specSchemaFor,
+} from "./specSchemas";
+import type { DeviceSpecs, SpecKey } from "./specSchemas";
 import type { Condition, Device, UpgradePreferences } from "./types";
 
 /**
@@ -78,8 +85,8 @@ const snake = (key: string) =>
  * Device type is not stored by the backend; it comes from the linked
  * product's category.
  *
- * Only `device.specOverrides` is sent, keyed by `phone` column name as the
- * backend reads them. `device.specs` is catalogue + overrides merged, so
+ * Only `device.specOverrides` is sent, keyed by spec name as the backend
+ * reads them (`phone` columns, or `GpuSpecMapping` names for GPUs). `device.specs` is catalogue + overrides merged, so
  * sending it would copy catalogue values into overrides.
  * A cleared spec is sent as `null`, which the backend reads as "unknown"
  * rather than falling back to the catalogue value.
@@ -130,6 +137,7 @@ const CATEGORY_TO_TYPE: Record<string, string> = {
   TABLET: "Tablet",
   MONITOR: "Monitor",
   DESKTOP: "Desktop PC",
+  GPU: "GPU",
 };
 
 function parseJson(text: string | null | undefined): unknown {
@@ -194,26 +202,37 @@ const camel = (key: string) =>
   key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 
 /**
- * Keeps only known phone columns from a raw object, accepting snake_case
- * (`battery_mah`) or camelCase (`batteryMah`) keys. Postgres NUMERIC can
- * arrive as a string, so numeric-looking strings become numbers.
+ * Keeps only known spec keys (`keys`, default: phone and GPU) from a raw
+ * object, accepting snake_case (`battery_mah`) or camelCase (`batteryMah`)
+ * keys. Postgres NUMERIC can arrive as a string, so numeric-looking strings
+ * become numbers.
  */
-export function normalizePhoneSpecs(raw: unknown): PhoneSpecs {
+export function normalizeSpecs(
+  raw: unknown,
+  keys: readonly SpecKey[] = ALL_SPEC_KEYS
+): DeviceSpecs {
   if (!raw || typeof raw !== "object") return {};
   const specs: Record<string, string | number | null> = {};
   for (const [key, value] of Object.entries(raw)) {
-    const k = camel(key) as PhoneSpecKey;
-    if (!PHONE_SPEC_KEYS.includes(k)) continue;
+    const k = camel(key) as SpecKey;
+    if (!keys.includes(k)) continue;
     if (typeof value === "number" || value === null) {
       specs[k] = value;
     } else if (typeof value === "string") {
       const n = Number(value);
-      const numeric = !TEXT_SPEC_KEYS.has(k) && value.trim() !== "" && !Number.isNaN(n);
+      const numeric = !ALL_TEXT_SPEC_KEYS.has(k) && value.trim() !== "" && !Number.isNaN(n);
       specs[k] = numeric ? n : value;
     }
   }
-  return specs as PhoneSpecs;
+  return specs as DeviceSpecs;
 }
+
+/** Phone columns only; see `normalizeSpecs`. */
+export const normalizePhoneSpecs = (raw: unknown): PhoneSpecs =>
+  normalizeSpecs(raw, PHONE_SPEC_SCHEMA.keys);
+
+const hasAny = (specs: DeviceSpecs, keys: readonly SpecKey[]) =>
+  keys.some((key) => key in specs);
 
 function parseCondition(value: string | null): Condition | undefined {
   return CONDITIONS.find(
@@ -227,22 +246,27 @@ function parseUseCases(text: string): string {
 }
 
 /**
- * Builds a UI `Device` from a `DeviceResponse`. Phone specs are the catalogue
- * row with the user's `spec_overrides` applied on top, mirroring the schema's
- * intent that overrides never mutate the shared product.
+ * Builds a UI `Device` from a `DeviceResponse`. Phone/GPU specs are the
+ * catalogue row with the user's `spec_overrides` applied on top, mirroring
+ * the schema's intent that overrides never mutate the shared product.
+ *
+ * The backend stores no device type: it comes from the linked product's
+ * category, else from which kind of specs the overrides hold.
  */
 export function deviceFromApi(
   response: DeviceResponse,
   extras: DeviceExtras = {}
 ): Device {
   const category = (extras.category ?? response.productCategory)?.toUpperCase();
-  const overrides = normalizePhoneSpecs(parseJson(response.specOverrides));
-  const hasPhone = Boolean(extras.phone) || Object.keys(overrides).length > 0;
+  const overrides = normalizeSpecs(parseJson(response.specOverrides));
   const type = category
     ? (CATEGORY_TO_TYPE[category] ?? "Other")
-    : hasPhone
-      ? "Phone"
-      : "Other";
+    : hasAny(overrides, GPU_SPEC_SCHEMA.keys)
+      ? "GPU"
+      : extras.phone || hasAny(overrides, PHONE_SPEC_SCHEMA.keys)
+        ? "Phone"
+        : "Other";
+  const schema = specSchemaFor(type);
 
   return {
     id: String(response.id),
@@ -257,10 +281,9 @@ export function deviceFromApi(
     purchaseDate: response.purchaseDate ?? "",
     satisfaction: response.satisfactionScore ?? undefined,
     upgradePreferences: preferencesFromApi(response),
-    specs:
-      type === "Phone"
-        ? { ...normalizePhoneSpecs(extras.phone), ...overrides }
-        : undefined,
+    specs: schema
+      ? normalizeSpecs({ ...normalizePhoneSpecs(extras.phone), ...overrides }, schema.keys)
+      : undefined,
     specOverrides: overrides,
   };
 }

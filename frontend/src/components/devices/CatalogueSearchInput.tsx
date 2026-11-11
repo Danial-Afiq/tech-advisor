@@ -1,8 +1,8 @@
 import { useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
-import type { SmartphoneCatalogueItem } from "../../api/catalogue";
 import { FieldHint, Input } from "../ui/Form";
 import { catalogueName, catalogueSummary } from "./catalogue";
+import type { CatalogueItem } from "./catalogue";
 
 /**
  * Text input with a dropdown of matching catalogue devices (ARIA combobox).
@@ -26,8 +26,8 @@ export function CatalogueSearchInput({
   value: string;
   onChange: (value: string) => void;
   /** Already filtered to what matches `value`. */
-  suggestions: SmartphoneCatalogueItem[];
-  onPick: (item: SmartphoneCatalogueItem) => void;
+  suggestions: CatalogueItem[];
+  onPick: (item: CatalogueItem) => void;
   /** Muted note under the input, e.g. "No catalogue match". */
   hint?: ReactNode;
   placeholder?: string;
@@ -42,7 +42,7 @@ export function CatalogueSearchInput({
   const showList = open && suggestions.length > 0;
   const activeIndex = Math.min(active, suggestions.length - 1);
 
-  const pick = (item: SmartphoneCatalogueItem) => {
+  const pick = (item: CatalogueItem) => {
     onPick(item);
     setOpen(false);
   };
@@ -113,7 +113,7 @@ export function CatalogueSearchInput({
                   onMouseEnter={() => setActive(index)}
                   onClick={() => pick(item)}
                 >
-                  <div className="text-[13px] font-semibold text-[#eef5ff]">
+                  <div className="text-[13px] font-semibold break-words text-[#eef5ff]">
                     {catalogueName(item)}
                   </div>
                   {summary && (

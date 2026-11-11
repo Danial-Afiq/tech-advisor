@@ -198,3 +198,26 @@ describe("deviceFromApi", () => {
     expect(device.specs).toBeUndefined();
   });
 });
+
+describe("GPU devices", () => {
+  it("reads the type from the GPU category, else from GPU overrides", () => {
+    expect(deviceFromApi({ ...base, productCategory: "GPU" }).type).toBe("GPU");
+
+    const manual = deviceFromApi({
+      ...base,
+      productId: null,
+      productBrand: null,
+      productModelName: null,
+      customName: "Old card",
+      specOverrides: '{"vram":"8","bus_width":128,"memory_type":"GDDR5"}',
+    });
+    expect(manual.type).toBe("GPU");
+    expect(manual.specs).toEqual({ vram: 8, busWidth: 128, memoryType: "GDDR5" });
+    // Saved back under the names the recommendation scorer reads.
+    expect(JSON.parse(deviceToRequest(manual).specOverrides)).toEqual({
+      vram: 8,
+      bus_width: 128,
+      memory_type: "GDDR5",
+    });
+  });
+});

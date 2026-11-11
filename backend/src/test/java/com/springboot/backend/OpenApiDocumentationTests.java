@@ -149,6 +149,9 @@ class OpenApiDocumentationTests {
                 .andExpect(jsonPath("$['paths']['/api/admin/catalogue/gpus/{id}']['get']['responses']['404']").exists())
                 .andExpect(jsonPath("$['paths']['/api/admin/catalogue/gpus/{id}']['put']").exists())
                 .andExpect(jsonPath("$['paths']['/api/admin/catalogue/gpus/{id}']['delete']['responses']['204']").exists())
+                .andExpect(jsonPath("$['paths']['/api/catalogue/gpus']['get']['responses']['401']").exists())
+                .andExpect(jsonPath("$['paths']['/api/catalogue/gpus/{id}']['get']['responses']['404']").exists())
+                .andExpect(jsonPath("$['paths']['/api/catalogue/gpus']['post']").doesNotExist())
 
                 .andExpect(jsonPath("$['paths']['/api/admin/ingestion/session']['get']").exists())
                 .andExpect(jsonPath("$['paths']['/api/admin/ingestion/session']['get']['responses']['200']['content']['application/json']['schema']['$ref']")

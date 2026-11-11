@@ -9,6 +9,7 @@ export const DEVICE_ICONS: Record<string, string> = {
   Keyboard: "⌨️",
   Mouse: "🖱️",
   Tablet: "◫",
+  GPU: "🎮",
   // Unlinked devices come back without a stored type (see `deviceFromApi`).
   Other: "🔌",
 };
