@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 29 October 2026
+> **Last consolidated:** 11 November 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -1954,7 +1954,7 @@ ingestion/
 ├─ run/          # persisted run state and scheduling
 ├─ searchapi/    # SearchAPI matching, HTTP, mapping cache and workflow
 ├─ reviews/      # review embeddings and transactional corpus persistence
-└─ simulation/   # demo sources and receipts
+└─ simulation/   # demo sources/receipts plus local-only simulated history
 ```
 
 ## 16.1 Current normalized ingestion contract
@@ -2047,6 +2047,59 @@ This is legitimate for:
 - demos when external sources are quiet.
 
 But simulated fixtures are **not** the final production data source.
+
+SCRUM-7 Batch 1 adds a separate, ADMIN-only historical simulator at
+`POST /api/admin/simulation/history`. It reuses existing VERIFIED `SMARTPHONE`
+or `GPU` products and appends seeded, bounded observations to the existing
+`price_history` and `benchmark_results` tables. It never changes product/subtype
+specifications, overwrites observations, emits a `market_event`, or invokes the
+recommendation engine. The generated source has the durable form
+`simulated-history:<product-id>:<scenario-hash>`; identical inputs acquire a
+PostgreSQL transaction advisory lock and reuse that source, so reruns do not
+insert duplicates.
+
+This simulator exists only when the `ingestion-demo` Spring profile is active.
+Its service also rejects any datasource URL that is not PostgreSQL with an
+explicit loopback host (`localhost`, `127.0.0.1`, or loopback IPv6). The guard
+does not trust the database name, so enabling the profile cannot make a Neon or
+other remote URL eligible. Production has no simulator bean or route.
+
+Each scenario derives its baseline only from genuine rows (sources beginning
+`simulated-` are excluded). Its last generated timestamp must be strictly older
+than the current effective price and every generated benchmark's current latest
+observation. Existing latest-price and latest-benchmark queries therefore keep
+reading the genuine rows, and historical backfill cannot change a current
+recommendation. A product with only genuine price data or only genuine benchmark
+data gets only that available stream; a missing stream is never fabricated.
+
+SCRUM-7 Batch 2 adds current-change injection under the same local-only profile
+and datasource guard:
+
+```text
+POST /api/admin/simulation/changes/price
+POST /api/admin/simulation/changes/benchmark
+```
+
+Each request carries an idempotency key. The service locks the existing product,
+appends one latest observation, and calls `MarketEventService.record()` in the
+same transaction with correct old/new values and `PRICE_CHANGE` or
+`BENCHMARK_UPDATE`. The existing `AFTER_COMMIT` asynchronous listener then runs
+the unchanged recommendation pipeline. A retry returns the already-linked
+observation/event without republishing the application event, so it cannot
+duplicate the recommendation trigger. No new table or migration is used.
+
+Local usage and constraints are documented in `docs/simulated-history-demo.md`.
+
+SCRUM-7 Batch 3 verifies the complete price-drop path in
+`SimulatedRecommendationWorkflowIntegrationTest`: a S$1,300 smartphone is
+excluded from a S$1,200 budget, the Batch 2 service injects S$1,100, the real
+after-commit trigger persists the recommendation, and the authenticated
+dashboard returns it. The test uses local PostgreSQL with a `_test` database
+guard and mocks only external AI/email boundaries. The same documentation now
+contains a presentation runbook and exact source-scoped cleanup; its safety
+preflight refuses a manual demo when other evaluable smartphone users could be
+affected. No Batch 3 production component, table, migration, or frontend
+feature was added.
 
 ## 16.7 Admin routes and UI
 Current frontend contains separate ingestion and smartphone-catalogue admin pages.
