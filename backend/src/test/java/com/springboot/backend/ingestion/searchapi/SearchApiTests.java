@@ -398,6 +398,49 @@ class SearchApiTests {
         assertEquals("Apple iPhone 16 Pro 256GB", results.get(0).path("title").asText());
     }
 
+    // Confirmed live (prod incident, Oct 2026): SearchAPI.io's ebay_search returns exactly
+    // this body for an ordinary "no listings found" outcome, not a clean empty organic_results
+    // array. Before this fix, fetchRoot()'s generic root.has("error") guard treated it as
+    // SEARCHAPI_MALFORMED_RESPONSE, which - since EbayPriceSource.priceOne() has no per-product
+    // catch - aborted the entire run the first time ANY product had no eBay listing.
+    @Test void ebayNoListingsFoundIsEmptyResultsNotMalformed() throws Exception {
+        var context = mock(SourceContext.class);
+        when(context.get(any(), anyString(), anyString()))
+                .thenReturn("{\"error\":\"Ebay didn't return any results.\"}".getBytes());
+
+        JsonNode results = new SearchApiClient(settings).ebay(context, "a product nobody is selling");
+
+        assertEquals(0, results.size());
+    }
+
+    // The same no-results error text must stay engine-specific: a Google Shopping response
+    // that happens to carry the exact same string is still a real, unrecognized failure and
+    // must fail loudly rather than being silently treated as "no results" too.
+    @Test void theSameErrorTextOnGoogleShoppingStillFailsLoudly() throws Exception {
+        var context = mock(SourceContext.class);
+        when(context.get(any(), anyString(), anyString()))
+                .thenReturn("{\"error\":\"Ebay didn't return any results.\"}".getBytes());
+
+        var error = assertThrows(IngestionFailure.class,
+                () -> new SearchApiClient(settings).shopping(context, "phone"));
+
+        assertEquals(SEARCHAPI_MALFORMED_RESPONSE, error.code());
+    }
+
+    // A different eBay error (auth failure, quota exhaustion, a genuinely malformed body) must
+    // still propagate as a real failure - only the one confirmed, exact "no results" message
+    // is special-cased.
+    @Test void aDifferentEbayErrorStillFailsLoudly() throws Exception {
+        var context = mock(SourceContext.class);
+        when(context.get(any(), anyString(), anyString()))
+                .thenReturn("{\"error\":\"Your account has run out of searches.\"}".getBytes());
+
+        var error = assertThrows(IngestionFailure.class,
+                () -> new SearchApiClient(settings).ebay(context, product.name()));
+
+        assertEquals(SEARCHAPI_MALFORMED_RESPONSE, error.code());
+    }
+
     // The explicit-category overload lets EbayPriceSource apply the GPU ruleset (memory-size
     // splitting, partner-board tolerance) the 3-arg overload above can't reach.
     @Test void titleMatchesUnderGpuCategoryAppliesTheGpuRuleset() {

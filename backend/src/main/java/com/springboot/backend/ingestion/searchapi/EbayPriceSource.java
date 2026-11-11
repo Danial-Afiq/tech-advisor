@@ -114,7 +114,11 @@ public class EbayPriceSource implements IngestionSource {
      * "no match for this product" IngestionFailure code it legitimately swallows in untargeted
      * mode), SearchApiClient.ebay() has no such code: an empty organic_results array already
      * resolves to an empty, harmless result through the normal return path, no exception
-     * involved. Every exception client.ebay() can actually throw - auth failure, malformed
+     * involved - this now also covers eBay's "no listings found" response (see
+     * SearchApiClient.EBAY_NO_RESULTS_ERROR), which SearchAPI.io returns as a body shaped like
+     * an error rather than a clean empty array; fetchRoot() resolves that one specific,
+     * confirmed case back to the normal empty-results path before it ever reaches here. Every
+     * exception client.ebay() can actually throw - auth failure, a genuinely malformed
      * response, HTTP failure, SourceContext's own RetryLater/TransportFailure/deadline checks -
      * represents a real problem with the run, not a per-product non-match, and must propagate
      * to the orchestrator the same way every other source's real failures do (fails the run,
