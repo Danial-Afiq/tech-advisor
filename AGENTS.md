@@ -2111,6 +2111,37 @@ The Edit modal also shows read-only history from two ADMIN-only routes,
 the observation is SKU-level) and `.../{id}/benchmarks`, newest first and capped
 at 50 rows (`AdminCatalogueHistoryController`/`CatalogueHistoryService`); 404 for
 a non-smartphone id. Manual price/benchmark corrections are not implemented yet.
+
+**GPU catalogue (SCRUM-136).** ADMIN-only `GET/POST /api/admin/catalogue/gpus` and
+`GET/PUT/DELETE /api/admin/catalogue/gpus/{id}` (`AdminGpuCatalogueController`/
+`GpuCatalogueService`, the twin of the smartphone service) list, read, create,
+replace and delete GPUs, writing the `products` row (`category = 'GPU'`) and its
+`gpu` row in one transaction, rejecting a case-insensitive duplicate brand + model
+with 409 and returning 404 for a non-GPU id. Editable specs are the columns `Gpu`
+maps (base/boost clock, VRAM, memory type, bus width, TDP, architecture); the V6
+columns with no source (core count, fill rates, bandwidth, memory speed,
+`clock_speeds`, `tgp`) are not exposed. Blank specs are stored as null. An admin
+save stamps `gpu.source = 'admin'` and leaves `source_url`/`fetched_at` alone; as
+with smartphones and MobileAPI, the next GPU seed/TechSpot refresh of that card
+overwrites any value it publishes. Responses carry the same read-only
+`latestPrice`/`currency` as smartphones, plus `imageUrl` (`products.image_url`; no
+GPU source fills it yet). Signed-in USER and ADMIN accounts can read GPUs through
+`GET /api/catalogue/gpus` and `GET /api/catalogue/gpus/{id}` (`GpuCatalogueController`,
+SCRUM-137), which the device form searches; mutations stay ADMIN-only. There is no
+GPU price/benchmark history route yet. No migration was needed.
+`GpuCatalogueIntegrationTest` covers CRUD, null handling, duplicates, category,
+authorisation and the USER read routes; `OpenApiDocumentationTests` covers the routes.
+
+**GPUs in the device inventory (SCRUM-137).** "GPU" is a device type on the device
+form. It searches the GPU catalogue as the Phone type searches smartphones (other
+types search both); picking a GPU links its `productId` and prefills its specs, and
+only the specs the user changes are saved in `spec_overrides`, keyed by the
+`GpuSpecMapping` spec names the scorer reads (`vram`, `bus_width`, `boost_clock_mhz`,
+`base_clock_mhz`, `tdp_watts`, `memory_type`, `architecture`). A GPU not in the
+catalogue is saved as a custom name with its entered specs as overrides; as with
+phones, the backend stores no device type, so an unlinked device is shown as a GPU
+only when its overrides hold GPU specs. GPU cards show the catalogue specs and,
+until GPU images exist, a bundled placeholder drawing (`assets/placeholders/gpu.svg`).
 The page's "Show visualisation of all tables" button opens a side panel of cards, one per table, from `GET /api/admin/database/tables`
 (ADMIN-only, `AdminDatabaseController`/`DatabaseSchemaService`): table names,
 columns, types, primary keys, foreign-key targets and exact row counts read from
@@ -2801,8 +2832,9 @@ Known files include:
 - `App.test.tsx`
 - `IngestionAdmin.tsx`
 - `IngestionAdmin.test.tsx`
-- `pages/AdminCatalogue.tsx` (`/admin/catalogue`): ADMIN catalogue search,
-  filter, sort, paging and CRUD, plus the all-tables visualisation panel (§16.7).
+- `pages/AdminCatalogue.tsx` (`/admin/catalogue`, `?type=gpus` for GPUs): ADMIN
+  catalogue search, filter, sort, paging and CRUD for smartphones and GPUs, plus
+  the all-tables visualisation panel (§16.7).
 - `pages/DashboardPage.tsx` (`/dashboard`): the authenticated USER's single
   recommendation overview/browsing page, using reusable cards, server-side sort
   and device/verdict/evidence-grade filters (§23.4, §26.4).

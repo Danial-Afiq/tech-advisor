@@ -23,7 +23,7 @@ import { withCatalogue } from "../components/devices/catalogue";
 import { deviceFromApi, deviceToRequest } from "../components/devices/deviceApi";
 import type { DeviceResponse } from "../components/devices/deviceApi";
 import type { Device, UpgradePreferences } from "../components/devices/types";
-import { useSmartphoneCatalogue } from "../components/devices/useSmartphoneCatalogue";
+import { useDeviceCatalogue } from "../components/devices/useSmartphoneCatalogue";
 import {
   DASHBOARD_PATH,
   DEVICES_PATH,
@@ -37,7 +37,8 @@ import {
  * devices are saved with `POST /api/devices`, edits with `PUT /api/devices/{id}`
  * and removals with `DELETE /api/devices/{id}`. Saving upgrade preferences
  * persists every field with `PUT /api/devices/{id}`. The device form suggests
- * smartphones from `GET /api/catalogue/smartphones` and prefills their specs.
+ * smartphones and GPUs from `GET /api/catalogue/smartphones` and
+ * `GET /api/catalogue/gpus` and prefills their specs.
  */
 export default function DevicesPageTest() {
   const navigate = useNavigate();
@@ -49,7 +50,7 @@ export default function DevicesPageTest() {
     null
   );
   const { toasts, pushToast } = useToasts();
-  const catalogue = useSmartphoneCatalogue(true);
+  const catalogue = useDeviceCatalogue(true);
   // Linked devices get their specs from the catalogue list.
   const shownDevices = useMemo(() => {
     const byId = new Map(catalogue.items.map((item) => [item.id, item]));

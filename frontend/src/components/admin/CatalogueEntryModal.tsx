@@ -1,32 +1,35 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import type { SmartphoneCatalogueItem } from "../../api/catalogue";
 import { PhoneSpecFields } from "../devices/PhoneSpecFields";
 import { Button } from "../ui/Button";
 import { Field, FormError, FormGrid, Input, Select } from "../ui/Form";
 import { Modal, ModalActions } from "../ui/Modal";
+import type { SpecFormValues } from "../devices/catalogue";
 import { CatalogueHistorySection } from "./CatalogueHistorySection";
-import { CATALOGUE_STATUSES, itemToForm } from "./catalogueAdmin";
-import type { CatalogueFormValues } from "./catalogueAdmin";
+import { CATALOGUE_STATUSES } from "./catalogueAdmin";
+import type { CatalogueFormValues, CatalogueItemBase, CatalogueKind, GpuSpecFormValues } from "./catalogueAdmin";
+import { GpuSpecFields } from "./GpuSpecFields";
 
 /**
- * Add or edit one catalogue smartphone: the `products` fields plus every
- * `phone` spec (reusing the device form's `PhoneSpecFields`). An emptied
- * spec is saved as null, i.e. unknown. Editing also shows the entry's
- * read-only price and benchmark history.
+ * Add or edit one catalogue entry of the given kind: the `products` fields
+ * plus every spec (`PhoneSpecFields` for smartphones, `GpuSpecFields` for
+ * GPUs). An emptied spec is saved as null, i.e. unknown. Editing a smartphone
+ * also shows its read-only price and benchmark history.
  */
 export function CatalogueEntryModal({
+  kind,
   item,
   onClose,
   onSave,
 }: {
+  kind: CatalogueKind<CatalogueItemBase>;
   /** The entry being edited; omit to add a new one. */
-  item?: SmartphoneCatalogueItem;
+  item?: CatalogueItemBase & { source?: string | null; fetchedAt?: string | null };
   onClose: () => void;
   /** Throws to keep the modal open and show the message. */
   onSave: (values: CatalogueFormValues) => Promise<void>;
 }) {
-  const [values, setValues] = useState(() => itemToForm(item));
+  const [values, setValues] = useState(() => kind.toForm(item));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -52,7 +55,7 @@ export function CatalogueEntryModal({
   return (
     <Modal
       eyebrow={item ? `Catalogue entry #${item.id}` : "New catalogue entry"}
-      title={item ? `Edit ${item.brand} ${item.modelName}` : "Add smartphone"}
+      title={item ? `Edit ${item.brand} ${item.modelName}` : `Add ${kind.noun}`}
       width="max-w-[760px]"
       onClose={onClose}
     >
@@ -90,12 +93,20 @@ export function CatalogueEntryModal({
           </Field>
         </FormGrid>
 
-        <PhoneSpecFields
-          values={values.specs}
-          onChange={(key, value) => set({ specs: { ...values.specs, [key]: value } })}
-        />
+        {kind.key === "gpus" ? (
+          <GpuSpecFields
+            values={values.specs as GpuSpecFormValues}
+            onChange={(key, value) => set({ specs: { ...values.specs, [key]: value } })}
+            provenance={item?.source && `${item.source}${item.fetchedAt ? `, ${item.fetchedAt.slice(0, 10)}` : ""}`}
+          />
+        ) : (
+          <PhoneSpecFields
+            values={values.specs as SpecFormValues}
+            onChange={(key, value) => set({ specs: { ...values.specs, [key]: value } })}
+          />
+        )}
 
-        {item && <CatalogueHistorySection productId={item.id} />}
+        {item && kind.hasHistory && <CatalogueHistorySection productId={item.id} />}
 
         <FormError message={error} />
         <ModalActions>
@@ -103,7 +114,7 @@ export function CatalogueEntryModal({
             Cancel
           </Button>
           <Button type="submit" variant="primary" loading={saving}>
-            {item ? "Save changes" : "Add smartphone"}
+            {item ? "Save changes" : `Add ${kind.noun}`}
           </Button>
         </ModalActions>
       </form>

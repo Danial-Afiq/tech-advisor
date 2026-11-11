@@ -1,18 +1,22 @@
-import { PHONE_SPEC_GROUPS, formatSpec } from "./phoneSpecs";
-import type { PhoneSpecs } from "./phoneSpecs";
+import { formatSpec } from "./phoneSpecs";
+import { PHONE_SPEC_SCHEMA } from "./specSchemas";
+import type { DeviceSpecs, SpecSchema } from "./specSchemas";
 
 /**
- * Collapsible "Specifications" panel (daisyUI `collapse`) for a phone.
- * Unknown values are left out; groups with nothing known are hidden.
+ * Collapsible "Specifications" panel (daisyUI `collapse`) for a phone, or a
+ * GPU with `schema={GPU_SPEC_SCHEMA}`. Unknown values are left out; groups
+ * with nothing known are hidden.
  */
 export function PhoneSpecsDropdown({
   specs,
+  schema = PHONE_SPEC_SCHEMA,
   defaultOpen = false,
 }: {
-  specs?: PhoneSpecs | null;
+  specs?: DeviceSpecs | null;
+  schema?: SpecSchema;
   defaultOpen?: boolean;
 }) {
-  const groups = PHONE_SPEC_GROUPS.map((group) => ({
+  const groups = schema.groups.map((group) => ({
     title: group.title,
     rows: group.fields
       .map((field) => ({
@@ -39,7 +43,7 @@ export function PhoneSpecsDropdown({
       <div className="collapse-content px-3 text-[12px]">
         {groups.length === 0 ? (
           <p className="m-0 text-[#8fa0b8]">
-            No specifications are on file for this phone yet.
+            No specifications are on file for this device yet.
           </p>
         ) : (
           <div className="grid gap-3">

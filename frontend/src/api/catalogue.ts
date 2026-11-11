@@ -96,3 +96,57 @@ export const listSmartphonePrices = (id: number) =>
 /** `GET /api/admin/catalogue/smartphones/{id}/benchmarks` — ADMIN only, newest first, at most 50. */
 export const listSmartphoneBenchmarks = (id: number) =>
   apiFetch<CatalogueBenchmark[]>(`/api/admin/catalogue/smartphones/${id}/benchmarks`);
+
+/**
+ * One item of `GET /api/admin/catalogue/gpus` (backend
+ * `dto/GpuCatalogueResponse.java`): a `products` row plus its `gpu` specs.
+ * `source`/`sourceUrl`/`fetchedAt` are read-only provenance ("admin" after an
+ * admin save; the next ingestion refresh of the card overwrites what it publishes).
+ */
+export type GpuCatalogueItem = {
+  id: number;
+  brand: string;
+  modelName: string;
+  releaseDate: string | null;
+  status: string;
+  baseClockMhz: number | null;
+  boostClockMhz: number | null;
+  /** Video memory in GB; BigDecimal, so it may arrive as a string. */
+  vramGb: number | string | null;
+  memoryType: string | null;
+  /** Memory bus width in bits. */
+  memoryBusBits: number | null;
+  tdpWatts: number | null;
+  architecture: string | null;
+  source: string | null;
+  sourceUrl: string | null;
+  fetchedAt: string | null;
+  latestPrice: number | string | null;
+  currency: string | null;
+  /** `products.image_url`; null until a source supplies GPU images. */
+  imageUrl?: string | null;
+};
+
+/** Body of the GPU create/replace routes; blank specs are sent as null. */
+export type GpuCatalogueRequest = Omit<
+  GpuCatalogueItem,
+  "id" | "latestPrice" | "currency" | "source" | "sourceUrl" | "fetchedAt" | "imageUrl"
+>;
+
+/** `GET /api/catalogue/gpus` — any signed-in user; read-only, for the device form. */
+export const listCatalogueGpus = () => apiFetch<GpuCatalogueItem[]>("/api/catalogue/gpus");
+
+/** `GET /api/admin/catalogue/gpus` — ADMIN only, ordered by brand and model. */
+export const listGpus = () => apiFetch<GpuCatalogueItem[]>("/api/admin/catalogue/gpus");
+
+/** `POST /api/admin/catalogue/gpus` — ADMIN only; 409 on a duplicate brand + model. */
+export const createGpu = (body: GpuCatalogueRequest) =>
+  apiFetch<GpuCatalogueItem>("/api/admin/catalogue/gpus", { method: "POST", body });
+
+/** `PUT /api/admin/catalogue/gpus/{id}` — replaces the products and gpu rows. */
+export const updateGpu = (id: number, body: GpuCatalogueRequest) =>
+  apiFetch<GpuCatalogueItem>(`/api/admin/catalogue/gpus/${id}`, { method: "PUT", body });
+
+/** `DELETE /api/admin/catalogue/gpus/{id}` — deletes both rows together. */
+export const deleteGpu = (id: number) =>
+  apiFetch<void>(`/api/admin/catalogue/gpus/${id}`, { method: "DELETE" });

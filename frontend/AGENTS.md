@@ -93,18 +93,26 @@ Reach for these first. All are named exports.
 
 ### `components/devices/` — device domain
 
-`DeviceGrid` (picks `PhoneCard` for phones, `DeviceCard` otherwise),
+`DeviceGrid` (picks `PhoneCard` for phones and GPUs, `DeviceCard` otherwise),
 `DeviceCard` (`children` slot for extra panels; nudges "set a budget" when the
 device has none, because the backend never evaluates it without one),
 `PhoneCard` (`DeviceCard` + `PhoneSpecsDropdown`), `DeviceThumb` (product
-image, else the type emoji; also used for suggested products on dashboard cards),
+image, else the type's placeholder image (GPUs: `assets/placeholders/gpu.svg`),
+else the type emoji; also used for suggested products on dashboard cards),
 `ConditionBadge`, `UpgradeProfileSummary`, `DeviceFormModal`,
 `UpgradePreferencesModal`, `BudgetSlider`, `PriorityPicker`,
 `CatalogueSearchInput` (ARIA combobox of
 catalogue suggestions; typing stays free text), `PhoneSpecFields` (editable
-phone specs, tagging fields changed from the catalogue as "Edited").
-`useSmartphoneCatalogue(enabled)` loads the catalogue once, and
-`catalogue.ts` holds the matching, spec-form and `withCatalogue` helpers. Shared types are in `types.ts`, and option
+phone or GPU specs, tagging fields changed from the catalogue as "Edited").
+Which specs a device type has lives in one `SpecSchema` per type
+(`PHONE_SPEC_SCHEMA`, `GPU_SPEC_SCHEMA` in `specSchemas.ts`; `specSchemaFor(type)`
+is undefined for types without spec fields). `PhoneSpecFields` and
+`PhoneSpecsDropdown` take a `schema` (default phone). GPU spec keys follow the
+backend `GpuSpecMapping` names (`vram`, `busWidth`, …) so overrides reach the
+scorer. `useDeviceCatalogue(enabled)` loads the smartphone and GPU catalogues
+once each (`useSmartphoneCatalogue` loads phones only), and `catalogue.ts`
+holds the matching, spec-form and `withCatalogue` helpers for either kind of
+`CatalogueItem`. Shared types are in `types.ts`, and option
 lists and formatters (`money`, `formatDate`, `ageLabel`) are in
 `deviceOptions.ts`.
 
@@ -127,7 +135,8 @@ them. Never show placeholder numbers as if they were real.
   ADMIN `createSmartphone` / `updateSmartphone` / `deleteSmartphone`
   (`/api/admin/catalogue/smartphones[/{id}]`), plus the read-only
   `listSmartphonePrices` / `listSmartphoneBenchmarks` (`.../{id}/prices`,
-  `.../{id}/benchmarks`).
+  `.../{id}/benchmarks`). For GPUs it has the ADMIN-only `listGpus` /
+  `createGpu` / `updateGpu` / `deleteGpu` (`/api/admin/catalogue/gpus[/{id}]`).
 - `database.ts` has `listDatabaseTables` (`GET /api/admin/database/tables`).
 - `session.ts` stores the JWT.
 
@@ -481,6 +490,16 @@ sticky sidebar and top bar stick to.
   `DatabaseTablesPanel`, one card per table from `GET /api/admin/database/tables`.
   Catalogue GET routes are available to authenticated USER and ADMIN accounts,
   while mutations remain ADMIN-only.
+- The same page manages GPUs (SCRUM-136): a Smartphones/GPUs switch sets
+  `?type=gpus` and remounts the page, so filters, sort and paging reset. What
+  differs per kind lives in one `CatalogueKind` (`PHONE_KIND`, `GPU_KIND` in
+  `catalogueAdmin.ts`): table columns, kind-specific sorts, search fields,
+  which specs count as missing, the family filter (OS family for phones,
+  architecture for GPUs; the filter field is still named `osFamily`), the API
+  calls and the form mapping. `CatalogueEntryModal` takes the kind and shows
+  `PhoneSpecFields` or `GpuSpecFields` (blank saved as null, with the read-only
+  source and fetch date when editing). Price/benchmark history stays
+  smartphone-only (`hasHistory`). GPU routes are ADMIN-only.
 - Both admin pages use `AdminShell`, which supplies the same responsive sidebar
   treatment as user pages, navigation between manual ingestion and catalogue,
   and the profile-card sign-out control.

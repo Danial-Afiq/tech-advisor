@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   updateDevice: vi.fn(),
   deleteDevice: vi.fn(),
   listSmartphones: vi.fn(),
+  listCatalogueGpus: vi.fn(),
 }));
 
 vi.mock("../api/notifications", async (importOriginal) => ({
@@ -38,6 +39,7 @@ vi.mock("../api/devices", () => ({
 
 vi.mock("../api/catalogue", () => ({
   listSmartphones: mocks.listSmartphones,
+  listCatalogueGpus: mocks.listCatalogueGpus,
 }));
 
 function renderPage() {
@@ -81,6 +83,7 @@ beforeEach(() => {
   mocks.listDevices.mockResolvedValue([]);
   mocks.createDevice.mockResolvedValue(apiDevice);
   mocks.listSmartphones.mockResolvedValue([]);
+  mocks.listCatalogueGpus.mockResolvedValue([]);
   vi.spyOn(window, "confirm").mockReturnValue(true);
 });
 
@@ -472,3 +475,109 @@ describe("DevicesPageTest", () => {
     expect(screen.queryByText("Device updated")).not.toBeInTheDocument();
   });
 });
+
+describe("DevicesPageTest GPUs", () => {
+  const rtx = {
+    id: 40,
+    brand: "NVIDIA",
+    modelName: "GeForce RTX 4070",
+    releaseDate: "2023-04-13",
+    status: "VERIFIED",
+    baseClockMhz: 1920,
+    boostClockMhz: 2475,
+    vramGb: "12",
+    memoryType: "GDDR6X",
+    memoryBusBits: 192,
+    tdpWatts: 200,
+    architecture: "Ada Lovelace",
+    source: "seed:gpus.v2",
+    sourceUrl: null,
+    fetchedAt: null,
+    latestPrice: null,
+    currency: null,
+    imageUrl: null,
+  };
+  const linkedGpu = {
+    ...apiDevice,
+    id: 41,
+    productId: 40,
+    productBrand: "NVIDIA",
+    productModelName: "GeForce RTX 4070",
+    productCategory: "GPU",
+    customName: null,
+  };
+
+  it("adds a catalogue GPU, saving only the changed spec under its backend name", async () => {
+    const user = userEvent.setup();
+    mocks.listCatalogueGpus.mockResolvedValue([rtx]);
+    mocks.createDevice.mockResolvedValue({ ...linkedGpu, specOverrides: '{"tdp_watts":180}' });
+    renderPage();
+
+    await screen.findByText("No devices yet");
+    await user.click(screen.getByRole("button", { name: "Add device" }));
+    await user.selectOptions(screen.getByLabelText("Device type"), "GPU");
+    await user.type(screen.getByRole("combobox", { name: "Model / configuration" }), "4070");
+    const option = await screen.findByRole("option", { name: /NVIDIA GeForce RTX 4070/ });
+    expect(option).toHaveTextContent("12 GB · GDDR6X · Ada Lovelace");
+    await user.click(option);
+
+    expect(screen.getByLabelText("Device type")).toHaveValue("GPU");
+    expect(screen.getByLabelText("VRAM (GB)")).toHaveValue(12);
+    expect(screen.getByLabelText("Architecture")).toHaveValue("Ada Lovelace");
+    const tdp = screen.getByLabelText("TDP (W)");
+    await user.clear(tdp);
+    await user.type(tdp, "180");
+    await user.click(screen.getByRole("button", { name: /Continue to upgrade preferences/ }));
+
+    await waitFor(() =>
+      expect(mocks.createDevice).toHaveBeenCalledWith(
+        expect.objectContaining({ productId: 40, customName: null, specOverrides: '{"tdp_watts":180}' })
+      )
+    );
+  });
+
+  it("enters a GPU that isn't in the catalogue by hand", async () => {
+    const user = userEvent.setup();
+    mocks.listCatalogueGpus.mockResolvedValue([rtx]);
+    renderPage();
+
+    await screen.findByText("No devices yet");
+    await user.click(screen.getByRole("button", { name: "Add device" }));
+    await user.selectOptions(screen.getByLabelText("Device type"), "GPU");
+    await user.type(screen.getByLabelText("Brand"), "Custom");
+    await user.type(screen.getByRole("combobox", { name: "Model / configuration" }), "Prototype X");
+    expect(screen.getByText("Not in the product catalogue. Enter the details yourself.")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("VRAM (GB)"), "8");
+    await user.type(screen.getByLabelText("Memory bus (bits)"), "128");
+    await user.click(screen.getByRole("button", { name: /Continue to upgrade preferences/ }));
+
+    await waitFor(() =>
+      expect(mocks.createDevice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          productId: null,
+          customName: "Custom Prototype X",
+          specOverrides: '{"vram":8,"bus_width":128}',
+        })
+      )
+    );
+  });
+
+  it("shows a linked GPU with its catalogue specs, a placeholder image and a prefilled edit form", async () => {
+    const user = userEvent.setup();
+    mocks.listDevices.mockResolvedValue([linkedGpu]);
+    mocks.listCatalogueGpus.mockResolvedValue([rtx]);
+    renderPage();
+
+    await screen.findByRole("heading", { name: /NVIDIA GeForce RTX 4070/ });
+    expect(screen.getByText(/^GPU ·/)).toBeInTheDocument();
+    expect(screen.getByTestId("device-placeholder")).toBeInTheDocument();
+    expect(await screen.findByText("Ada Lovelace")).toBeInTheDocument();
+    expect(screen.getByText("12 GB")).toBeInTheDocument();
+    expect(screen.getByText("192-bit")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Edit device" }));
+    expect(screen.getByLabelText("Device type")).toHaveValue("GPU");
+    expect(screen.getByLabelText("Boost clock (MHz)")).toHaveValue(2475);
+  });
+});
+
