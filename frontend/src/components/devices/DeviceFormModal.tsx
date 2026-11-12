@@ -57,7 +57,7 @@ export function DeviceFormModal({
   const isNew = device === null;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [type, setType] = useState(device?.type ?? "Laptop");
+  const [type, setType] = useState(device?.type ?? "Phone");
   const [condition, setCondition] = useState<Condition>(
     device?.condition ?? "Good"
   );
@@ -211,7 +211,8 @@ export function DeviceFormModal({
         <FormGrid>
           <Field label="Device type">
             <Select
-              options={DEVICE_TYPES}
+              // An older device keeps its saved type as an option.
+              options={DEVICE_TYPES.includes(type) ? DEVICE_TYPES : [...DEVICE_TYPES, type]}
               value={type}
               onChange={(e) => {
                 setType(e.target.value);

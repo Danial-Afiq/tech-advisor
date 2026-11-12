@@ -13,7 +13,11 @@ export const DEVICE_ICONS: Record<string, string> = {
   // Unlinked devices come back without a stored type (see `deviceFromApi`).
   Other: "🔌",
 };
-export const DEVICE_TYPES = Object.keys(DEVICE_ICONS);
+/**
+ * Types offered on the device form. `DEVICE_ICONS` keeps the older types so
+ * devices saved with them (or linked to such a product) still show an icon.
+ */
+export const DEVICE_TYPES = ["Phone", "GPU", "Other"];
 export const CONDITIONS: Condition[] = ["Excellent", "Good", "Fair", "Poor"];
 /** Labels mapped to the existing Java/Python factor vocabulary. */
 export const PRIORITY_FACTORS: Record<string, string> = {
@@ -31,6 +35,14 @@ export const PRIORITY_FACTORS: Record<string, string> = {
   Audio: "audio",
 };
 export const PRIORITIES = Object.keys(PRIORITY_FACTORS);
+/**
+ * Factors that apply to a GPU. Matches the backend `GpuSpecMapping`, which
+ * marks battery, camera, display, build quality, software support,
+ * connectivity, audio and portability as not applicable to GPUs.
+ */
+const GPU_PRIORITIES = ["Value for money", "Performance", "Longevity", "Thermal management"];
+/** The priorities offered for a device type. */
+export const prioritiesFor = (type: string) => (type === "GPU" ? GPU_PRIORITIES : PRIORITIES);
 export const URGENCIES = [
   { value: "", label: "Choose urgency" },
   { value: "NOT_URGENT", label: "Not urgent" },
