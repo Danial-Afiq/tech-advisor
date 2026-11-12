@@ -2760,9 +2760,11 @@ can actually throw represents a real problem that must propagate to
 
 **Scheduling uses the newer per-source mechanism** (`IngestionSource
 .requestLimit()`/`executionBudget()`/`scheduleInterval()`), not
-`SourceContext`'s old shared 10-request default: 1 request per product means
-`requestLimit()` is simply the configured product count, and
-`scheduleInterval()` (1 day) runs this source on its own cadence
+`SourceContext`'s old shared 10-request default: 1 request per product in the
+common case, but `requestLimit()` budgets **3x** the configured product count
+(not a 1:1 ratio) to leave room for `SourceContext`'s own per-request retries
+— see the TimeoutException writeup below for why that slack turned out to be
+load-bearing, not defensive padding. `scheduleInterval()` (1 day) runs this source on its own cadence
 independent of the shared scheduler tick (§16.5) - deliberately *more*
 frequent than the shared cadence, not less: a round-robin sweep only reaches
 every product once every `catalogue size / maxProductsPerRun` runs, so a slow
@@ -2788,19 +2790,17 @@ reach every product for the first time over many days, is explicitly out of
 scope** — a later, separate pass, by explicit instruction, same reasoning
 ticket 1.8 kept its schema work and backfill as separate steps.
 
-**Not yet live-verified against the real eBay API** — SearchAPI.io's account
-quota was still exhausted (confirmed live, "You have used all of the
-searches for the month") both when this was built and again when an
-end-to-end demonstration was attempted. Verified instead with a genuine,
-non-mocked-logic run: real Postgres rows, the real repository/matching/
-persistence code path, with only the literal TCP/TLS socket layer stood in
-for (the same `HttpClient`-injection seam `SourceContextTests` already uses —
-this also sidesteps a real blocker, not just the quota: binding port 443 for
-a true local HTTPS stub needs root, which isn't available in this sandbox).
-The response shape itself was also independently confirmed against
-SearchAPI.io's own documentation. **Swap `SEARCHAPI_API_KEY` to the real
-deployment key (9,000 req/month quota, not the exhausted personal key used
-during development) before this runs for real.**
+**Live-verified against the real eBay API (Nov 2026 incident below) —
+superseded the "not yet live-verified" gap this paragraph used to flag.**
+Earlier development verified only a genuine, non-mocked-logic run with the
+literal TCP/TLS socket layer stood in (`HttpClient`-injection seam, same one
+`SourceContextTests` uses) because SearchAPI.io's account quota was exhausted
+and binding port 443 for a true local HTTPS stub needs root. The Nov 2026
+incident forced a real run against the production key and surfaced three
+real bugs that no amount of socket-stub or mocked-logic testing could have
+caught — see below. Confirmed clean end-to-end afterward: 10/10 real
+`ebay_search` requests against production SearchAPI.io completed
+successfully in a single run (114s, well inside the corrected budget).
 
 **GPU support (`feat/gpu-ebay-ingestion` branch, stacked on this one):**
 `EbayPriceRepository`'s catalogue query and `EbayPriceSettings` both gained
@@ -2843,6 +2843,47 @@ same error text appearing on a different engine) still throws
 `SearchApiTests` (the fix itself, engine-scoping, and that other errors still
 fail loudly) and `EbayPriceSourceTests` (`ingest()` continues past a
 no-listings product to the rest of the batch instead of stopping).
+
+**Confirmed-live production bug (Nov 12 2026), fixed — `TimeoutException` in
+`IngestionOrchestrator.execute()`.** With the fix above live, a real
+production run failed differently: `searchapi-ebay-prices` aborted with a
+`TimeoutException` at `IngestionOrchestrator.execute`/`kick`, elapsed time
+matching the old `executionBudget()` (`requestLimit() + 30s` = exactly 40s
+for the default 10-product run) to the millisecond, with only 1 of 10
+products processed. Three distinct, independently-confirmed causes, found by
+live-testing directly against production SearchAPI.io (not mocks — this bug
+class is specifically the kind mocked-logic testing can't catch):
+1. **`SourceContext`'s shared `HttpClient` defaulted to HTTP/2.** Reusing
+   that connection for a second request to `www.searchapi.io` hung for the
+   full per-request timeout, every single time (100% reproducible, confirmed
+   by toggling HTTP versions directly) — this alone explains "1 product
+   processed, then silence." Fixed by pinning
+   `HttpClient.Version.HTTP_1_1` on the client `SourceContext` builds
+   itself.
+2. **The old 20s per-request HTTP timeout was too short.** `ebay_search` is
+   live eBay scraping, not a fixed-latency API — confirmed real response
+   times from 2.3s up to 30.9s across many live calls, well past 20s on a
+   non-trivial fraction of requests. Raised to 45s (`SourceContext
+   .REQUEST_TIMEOUT`).
+3. **A single slow response still occasionally exceeds even 45s** — there is
+   no fixed constant that eliminates this risk entirely; a live scraper's
+   tail latency is unbounded in principle. A fresh retry of the exact same
+   query right after a timeout typically succeeds quickly, so
+   `SourceContext.send()` now retries a client-side `HttpTimeoutException`
+   the same way it already retried 429/503 (same 3-attempt cap), instead of
+   failing the whole run on one outlier. This made cause (3) below
+   necessary: `EbayPriceSource.requestLimit()` was exactly 1:1 with the
+   configured product count, so the very first retry anywhere in a run
+   silently starved the last configured product(s) of their own first
+   attempt (`IllegalStateException: Source request limit exceeded`) —
+   confirmed live. Fixed by budgeting `requestLimit() * 3` (matching
+   `SourceContext`'s own retry cap), with `executionBudget()` scaled
+   accordingly (`PER_REQUEST_SECONDS = 50`, matching the new 45s per-request
+   timeout with margin — for the default 10-product run, worst case is now
+   10×3×50+10 = 1510s, acceptable for a once-daily background job).
+Regression coverage: `SourceContextTests` (HTTP/1.1 pin, the 45s timeout
+value, timeout-retry-then-success) and `EbayPriceSourceTests` (the new 3x
+request-limit/budget formula).
 
 ---
 
