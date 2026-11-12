@@ -70,7 +70,7 @@ class SourceContextTests {
             verify(client).send(request.capture(), any(HttpResponse.BodyHandler.class));
             assertEquals("Bearer secret-key", request.getValue().headers().firstValue("Authorization").orElseThrow());
             assertFalse(request.getValue().uri().toString().contains("secret-key"));
-            assertEquals(20, request.getValue().timeout().orElseThrow().toSeconds());
+            assertEquals(45, request.getValue().timeout().orElseThrow().toSeconds());
             assertThrows(IllegalArgumentException.class, () -> context.get(URI.create("https://evil.example"), "secret-key", "www.searchapi.io"));
             assertThrows(IllegalArgumentException.class, () -> context.get(URI.create("http://www.searchapi.io"), "secret-key", "www.searchapi.io"));
         }
@@ -89,6 +89,23 @@ class SourceContextTests {
             context.close();
             assertThrows(IllegalStateException.class, () -> context.get(URI.create("https://www.searchapi.io")));
             verify(client, times(1)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+        }
+    }
+
+    @Test @SuppressWarnings("unchecked") void aTimeoutIsRetriedAndSucceedsOnALaterAttempt() throws Exception {
+        // Confirmed live against www.searchapi.io: a single slow response is usually a one-off,
+        // not a persistent failure - a retry of the exact same request right after typically
+        // succeeds quickly. This must not fail the whole run on one outlier.
+        var client = mock(HttpClient.class);
+        HttpResponse<InputStream> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn(new ByteArrayInputStream("{}".getBytes()));
+        when(client.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenThrow(new HttpTimeoutException("slow")).thenReturn(response);
+        try (var context = new SourceContext(Clock.systemUTC(), () -> {}, client)) {
+            byte[] body = context.get(URI.create("https://www.searchapi.io"));
+            assertArrayEquals("{}".getBytes(), body);
+            verify(client, times(2)).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
         }
     }
 

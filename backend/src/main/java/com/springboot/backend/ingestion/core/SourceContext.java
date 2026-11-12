@@ -19,6 +19,14 @@ public final class SourceContext implements AutoCloseable {
     public static final String BOT_NAME = "TechAdvisorBot";
     public static final String USER_AGENT =
             BOT_NAME + "/1.0 (+https://github.com/Danial-Afiq/tech-advisor)";
+    // Confirmed live against www.searchapi.io's ebay_search engine: a real, eventually-
+    // successful response can legitimately take over 20s (observed up to 30.9s) - it's live
+    // eBay scraping, not a fixed-latency API. The old 20s value was cutting off requests that
+    // would have succeeded given more time, which is what EbayPriceSource's production
+    // TimeoutException actually was. 45s gives real margin above the worst case observed so
+    // far; adapters needing a tighter per-request bound can still rely on their own
+    // executionBudget() as the real outer limit.
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(45);
     public static final class RetryLater extends RuntimeException {
         public final Instant until;
         RetryLater(Instant until) { super("Source requested a later retry"); this.until = until; }
@@ -42,14 +50,21 @@ public final class SourceContext implements AutoCloseable {
         public TransportFailure() { super("Source transport failed"); }
     }
     public SourceContext(Clock clock, Runnable ownershipCheck, RunLog.ProductTarget product) {
-        this(clock, ownershipCheck, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
-                .followRedirects(HttpClient.Redirect.NEVER).build(), product,
+        this(clock, ownershipCheck, defaultHttpClient(), product,
                 IngestionSource.DEFAULT_REQUEST_LIMIT, IngestionSource.DEFAULT_EXECUTION_BUDGET);
     }
     SourceContext(Clock clock, Runnable ownershipCheck, RunLog.ProductTarget product,
                   int requestLimit, Duration executionBudget) {
-        this(clock, ownershipCheck, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
-                .followRedirects(HttpClient.Redirect.NEVER).build(), product, requestLimit, executionBudget);
+        this(clock, ownershipCheck, defaultHttpClient(), product, requestLimit, executionBudget);
+    }
+    // Confirmed live against www.searchapi.io: the JDK default (HTTP/2 via ALPN, connection
+    // reused across requests) consistently hung on the second request a run sent, every time -
+    // pinning HTTP/1.1 fixed that specific, 100%-reproducible failure. This is the real
+    // mechanism behind EbayPriceSource's production TimeoutException: one product processed,
+    // the next silently hangs until the orchestrator's execution budget kills the run.
+    private static HttpClient defaultHttpClient() {
+        return HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
+                .followRedirects(HttpClient.Redirect.NEVER).version(HttpClient.Version.HTTP_1_1).build();
     }
     SourceContext(Clock clock, Runnable ownershipCheck, HttpClient http) {
         this(clock, ownershipCheck, http, null,
@@ -128,12 +143,18 @@ public final class SourceContext implements AutoCloseable {
             long delay = Math.max(1000 - Duration.ofNanos(System.nanoTime() - lastRequest).toMillis(), hostDelay(host));
             if (delay > 0) Thread.sleep(delay);
             check(); lastRequest = System.nanoTime(); lastHostRequest.put(host, lastRequest);
-            var builder = HttpRequest.newBuilder(url).timeout(Duration.ofSeconds(20))
+            var builder = HttpRequest.newBuilder(url).timeout(REQUEST_TIMEOUT)
                     .header("User-Agent", USER_AGENT);
             if (bearer != null) builder.header("Authorization", "Bearer " + bearer);
             HttpResponse<InputStream> response;
             try { response = http.send(builder.GET().build(), HttpResponse.BodyHandlers.ofInputStream()); }
             catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException("Source interrupted"); }
+            // Confirmed live: a single ebay_search response can occasionally exceed even a
+            // generous REQUEST_TIMEOUT (observed one case past 45s), but a fresh attempt at the
+            // exact same query right afterward typically succeeds quickly - a one-off slow
+            // response, not a persistent failure. Retried like a 429/503 rather than failing the
+            // whole run on one outlier; a genuinely unresponsive host still fails after 3 tries.
+            catch (java.net.http.HttpTimeoutException e) { if (attempt == 2) throw new TransportFailure(); continue; }
             catch (Exception e) { throw new TransportFailure(); }
             try (InputStream body = response.body()) {
                 if (response.statusCode() == 429 || response.statusCode() == 503) {

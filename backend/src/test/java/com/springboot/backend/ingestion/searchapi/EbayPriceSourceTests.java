@@ -86,9 +86,13 @@ class EbayPriceSourceTests {
 
     @Test void requestLimitAndExecutionBudgetMatchTheConfiguredProductCount() {
         var source = new EbayPriceSource(null, new EbayPriceSettings(7), null);
-        assertEquals(7, source.requestLimit());
-        // 30s network overhead + 1s/request (SourceContext's own pacing) - generous, not tight.
-        assertTrue(source.executionBudget().getSeconds() >= 7);
+        // x3: confirmed live a retry (SourceContext's own 3-attempt cap) is common on this
+        // engine, not rare - every configured product needs its own full retry allowance, not
+        // just 1 request each.
+        assertEquals(7 * 3, source.requestLimit());
+        // 50s/request (observed live ebay_search latency up to 30.9s, matching SourceContext's
+        // 45s per-request HTTP timeout) + 10s fixed overhead - generous, not tight.
+        assertEquals(7 * 3 * 50 + 10, source.executionBudget().getSeconds());
     }
 
     @Test void sourceIdAndScheduleAreStable() {
