@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 29 October 2026
+> **Last consolidated:** 12 November 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -355,12 +355,16 @@ tech-advisor/
 
 Notable current docs:
 - `docs/ingestion.md`
+- `docs/backfill-product-images.md`
 - `docs/1.1-ingestion-task-orchestration-plan.md`
 - `docs/ingestion-openapi.yaml`
 - `docs/git-cheatsheet.md`
 
 Notable demo script:
 - `scripts/ingestion-demo.ps1`
+
+Notable one-time maintenance script:
+- `scripts/backfill_product_images.py`
 
 ## 4.2 Hosted environments
 
@@ -578,6 +582,10 @@ affordable candidate set by `recommendation/CandidatePruningService`, backed by
 
 Rules enforced in SQL:
 - candidate `products.category` equals the owned device's category,
+- when that device's saved `brand_flexibility` is `NOT_FLEXIBLE`, candidate
+  `products.brand` must equal the owned catalogue product's brand, ignoring case
+  and surrounding whitespace (SCRUM-139). `SOMEWHAT_FLEXIBLE`, `FLEXIBLE`,
+  `EXTREMELY_FLEXIBLE` and legacy unset preferences do not restrict brands,
 - the currently owned `product_id` is excluded,
 - products under an active dismissal cooldown for this user are excluded,
 - products with **no** price history are excluded - affordability cannot be
@@ -1376,7 +1384,31 @@ database is needed.
 3. ~~No Java caller exists yet~~ — **resolved.** The Spring caller now exists
    (§18.8) and the §9/§10 contract is exercised over real HTTP in
    `RecommendationPersistenceTests`, against a stub AI service rather than a live
-   model. What remains unexercised is Spring against the *real* FastAPI process.
+   model. Spring against the *real* FastAPI process and model is now exercised by
+   the SCRUM-143 real-AI suite (§13.6).
+
+## 13.6 End-to-end tests — SCRUM-143 (12 Nov 2026)
+
+Two classes in `backend/src/test/java/com/springboot/backend/ingestion/simulation/`,
+sharing `RecommendationE2EFixture` (fixtures via `JdbcTemplate`, so no inventory trigger fires
+during setup; the pipeline is run with `RecommendationTriggerService.runForDevice`) and
+`AiOutputJudge` (fixed keyword/regex rules for LLM text):
+
+| Class | What | Runs in default `mvnw test` |
+|---|---|---|
+| `RecommendationVerdictE2EIntegrationTest` | verdict channel, mocked `AiAssessmentClient`: base strong upgrade, priority shift, brand lock (no row, no AI call), condition/satisfaction don't move the verdict, price drop into budget (via `injectPrice`), one candidate vs two devices | yes |
+| `RecommendationAiOutputE2EIntegrationTest` | AI channel against the **real** AI service + model, reviews seeded through `ReviewBatchSink`: no reviews → `-` with no LLM call, negative/positive/injected review sets (5 runs each), summary personalisation, no contradiction / invented specs | **no**: `@Tag("real-ai")`, only when `E2E_REAL_AI=true`; billed (~26 calls) |
+
+`VerdictScenarioScoringTest` (`recommendation/classification/`) holds the pure-unit versions and
+locks in that `UpgradeClassificationService.OwnedSide` carries no condition or satisfaction.
+
+How to run, expectations, results and drafted bugs: `docs/e2e/SCRUM-143-*.md`.
+Findings from the first run (`gpt-5.5`): the verdict channel matched 6/6 scenarios;
+grades followed review tone (negative D–F 10/10, positive A 5/5); the injected
+instruction was ignored 5/5. **Summaries never mention the user's condition,
+satisfaction or pain points** (0/11), because `prompt.py` never asks for it. They also
+narrate internals and sometimes cite `P*` refs in prose. Both are open bugs, not
+intended behaviour.
 
 ---
 
@@ -1954,7 +1986,7 @@ ingestion/
 ├─ run/          # persisted run state and scheduling
 ├─ searchapi/    # SearchAPI matching, HTTP, mapping cache and workflow
 ├─ reviews/      # review embeddings and transactional corpus persistence
-└─ simulation/   # demo sources and receipts
+└─ simulation/   # demo sources/receipts plus local-only simulated history
 ```
 
 ## 16.1 Current normalized ingestion contract
@@ -2047,6 +2079,59 @@ This is legitimate for:
 - demos when external sources are quiet.
 
 But simulated fixtures are **not** the final production data source.
+
+SCRUM-7 Batch 1 adds a separate, ADMIN-only historical simulator at
+`POST /api/admin/simulation/history`. It reuses existing VERIFIED `SMARTPHONE`
+or `GPU` products and appends seeded, bounded observations to the existing
+`price_history` and `benchmark_results` tables. It never changes product/subtype
+specifications, overwrites observations, emits a `market_event`, or invokes the
+recommendation engine. The generated source has the durable form
+`simulated-history:<product-id>:<scenario-hash>`; identical inputs acquire a
+PostgreSQL transaction advisory lock and reuse that source, so reruns do not
+insert duplicates.
+
+This simulator exists only when the `ingestion-demo` Spring profile is active.
+Its service also rejects any datasource URL that is not PostgreSQL with an
+explicit loopback host (`localhost`, `127.0.0.1`, or loopback IPv6). The guard
+does not trust the database name, so enabling the profile cannot make a Neon or
+other remote URL eligible. Production has no simulator bean or route.
+
+Each scenario derives its baseline only from genuine rows (sources beginning
+`simulated-` are excluded). Its last generated timestamp must be strictly older
+than the current effective price and every generated benchmark's current latest
+observation. Existing latest-price and latest-benchmark queries therefore keep
+reading the genuine rows, and historical backfill cannot change a current
+recommendation. A product with only genuine price data or only genuine benchmark
+data gets only that available stream; a missing stream is never fabricated.
+
+SCRUM-7 Batch 2 adds current-change injection under the same local-only profile
+and datasource guard:
+
+```text
+POST /api/admin/simulation/changes/price
+POST /api/admin/simulation/changes/benchmark
+```
+
+Each request carries an idempotency key. The service locks the existing product,
+appends one latest observation, and calls `MarketEventService.record()` in the
+same transaction with correct old/new values and `PRICE_CHANGE` or
+`BENCHMARK_UPDATE`. The existing `AFTER_COMMIT` asynchronous listener then runs
+the unchanged recommendation pipeline. A retry returns the already-linked
+observation/event without republishing the application event, so it cannot
+duplicate the recommendation trigger. No new table or migration is used.
+
+Local usage and constraints are documented in `docs/simulated-history-demo.md`.
+
+SCRUM-7 Batch 3 verifies the complete price-drop path in
+`SimulatedRecommendationWorkflowIntegrationTest`: a S$1,300 smartphone is
+excluded from a S$1,200 budget, the Batch 2 service injects S$1,100, the real
+after-commit trigger persists the recommendation, and the authenticated
+dashboard returns it. The test uses local PostgreSQL with a `_test` database
+guard and mocks only external AI/email boundaries. The same documentation now
+contains a presentation runbook and exact source-scoped cleanup; its safety
+preflight refuses a manual demo when other evaluable smartphone users could be
+affected. No Batch 3 production component, table, migration, or frontend
+feature was added.
 
 ## 16.7 Admin routes and UI
 Current frontend contains separate ingestion and smartphone-catalogue admin pages.
@@ -2300,6 +2385,20 @@ never being provisioned, not a missing sink anymore.
   a missing/unusable link instead of losing the device. No extra HTTP request: the
   list response already carries it. The sink writes `products.image_url` with
   `COALESCE(EXCLUDED.image_url, products.image_url)`.
+- **Legacy image backfill (updated 12 Nov 2026):** `scripts/backfill_product_images.py` is a
+  standalone, dry-run-first maintenance utility for existing smartphone rows whose
+  `products.image_url` is null. It uses `MOBILEAPI_API_KEY` plus the dedicated,
+  required `BACKFILL_DATABASE_URL`, matches conservatively, verifies public HTTPS
+  image responses, and updates only the null image column. Its Pro-oriented run is
+  bounded to 1,000 authenticated requests by default with a one-second request
+  delay. Atomic local caching preserves manufacturer pages, successful anonymous
+  image checks and verified matches across interrupted runs; the apply path
+  revalidates database/catalogue identity and current product fields and performs
+  zero MobileAPI requests. Cache-only recovery can explicitly acknowledge a
+  catalogue-only manufacturer that MobileAPI cannot serve; the named products
+  remain unmatched and unwritable, while all previously verified matches are
+  retained. Remote writes require both `--apply` and
+  `--confirm-production`; it is not part of scheduled ingestion.
 - **Bugfix (ingestion_cursors, V12, bugfix/smartphone-ingestion):** the
   default/automatic mode (`sources.mobileapi.year` unset) used to call the
   exact same URL on every single run — no `page` parameter existed
@@ -3179,8 +3278,8 @@ Still absent, deliberately:
 shortlisting (§7.1, SCRUM-34) to Channel A classification (§18.9) in one read-only
 transaction:
 
-1. `CandidatePruningService.getViableCandidates` - same category, latest price
-   within budget, verified, not the owned product;
+1. `CandidatePruningService.getViableCandidates` - same category, saved brand
+   restriction, latest price within budget, verified, not the owned product;
 2. `UpgradeClassificationService.loadOwnedSide` - owned spec sheet, overrides,
    benchmarks, budget and priorities, read **once** per run rather than once per candidate;
 3. `UpgradeClassificationService.classify(OwnedSide, ...)` per candidate, carrying
@@ -3241,7 +3340,7 @@ Lifecycle rules (decided 27 Sep 2026):
   that (user, device, candidate) becomes `SUPERSEDED` and is kept as history. Its
   `starred` flag is carried onto the new row (§14.12), and notifications linking to
   it are re-pointed at the new row (§14.14).
-- **Dropped off this device's shortlist** (over budget, delisted, unverified): every
+- **Dropped off this device's shortlist** (over budget, brand-restricted, delisted, unverified): every
   row for that device and candidate is **deleted**, history included, not superseded.
   Users come for products that are recommended; a record that a product once was is
   of no use to them. Scoped by `current_device_id`, so another device's rows are
@@ -3359,6 +3458,9 @@ the device save. Creating preferences requires a budget; later updates can suppl
 any subset of preference fields. Omitted/null fields preserve stored values; `{}`
 clears priorities, JSON `""`/`[]` clears pain points, and an empty string clears notes.
 Currency defaults to `SGD` on first save and is preserved when omitted on update.
+This preservation applies to preference fields. The device PUT still replaces
+editable device details, so callers include the current device fields alongside
+preference changes.
 
 Urgency and brand flexibility use `AssessVocabulary`'s closed values. `priorities`
 is a JSON-encoded object of `Factors` keys and 32-bit integer weights; `painPoints`
@@ -3388,7 +3490,18 @@ after the full profile commits. `DevicePreferencesIntegrationTest` also verifies
 that API-saved values reach `AssessRequestFactory` without a live AI call. Tests:
 `DevicePreferencesIntegrationTest`,
 `OpenApiDocumentationTests`, `deviceApi.test.ts`, `DevicesPageTest.test.tsx`.
-See `docs/device-preferences.md` for the API example and change-by-change explanation.
+API schemas and request examples are available through the generated OpenAPI
+documentation (§5.6).
+
+**Brand flexibility filtering — IMPLEMENTED (SCRUM-139).** Both market-event and
+device-inventory evaluations apply the saved device-specific restriction during
+candidate selection (§7.1), before currency conversion, scoring or AI assessment.
+Saving a preference change regenerates only that device's recommendations and
+removes candidates that no longer qualify. An empty shortlist clears that device's
+recommendations without falling back to unrelated brands. Regression coverage:
+`CandidatePruningServiceTest`, `CandidateFilterIntegrationTest` and
+`RecommendationTriggerIntegrationTest`, including flexible/unset preferences,
+case/whitespace matching, preference changes, device isolation and empty results.
 
 `AssessVocabulary` mirrors the non-factor closed vocabularies of `ai/app/factors.py`;
 `AssessVocabularyTest` reads `factors.py` and fails on drift (it also checks `Factors`).
@@ -3864,7 +3977,13 @@ handler — the generic `IllegalArgumentException` mapping in
   lookup as the card's `latestPrice`; missing prices are `NULLS LAST` in
   **both** directions. The API field remains `latestPrice`, but the card labels
   it **Indicative price** and the page shows one visible disclaimer that prices
-  may vary by storage configuration, retailer, region and availability.
+  may vary by storage configuration, retailer, region and availability. That
+  exact observation's `source` is also inspected for the first syntactically
+  valid HTTP(S) URL and exposed as nullable `listingUrl`; source identifiers
+  without a URL remain null. The dashboard shows **View listing** in the card's
+  upper-right action stack, beneath the verdict/star row, only when this field
+  is present, so review links and prices from other observations are never
+  substituted.
 - Every option ends `created_at DESC, id DESC` so ties are reproducible.
 - Dashboard price sorts use converted display amounts. Recommendation
   shortlisting separately normalizes candidate prices into the device budget

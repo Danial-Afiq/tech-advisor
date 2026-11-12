@@ -77,8 +77,13 @@ class DashboardSortIntegrationTest {
         long otherDevice = device(otherUser, ownedProduct);
 
         long a = product(unique, "A");
-        price(a, "500.00", "2026-09-20T00:00:00Z");
-        price(a, "899.00", "2026-10-03T00:00:00Z");
+        price(a, "500.00", "2026-09-20T00:00:00Z", "https://shop.example/old-a");
+        price(
+                a,
+                "899.00",
+                "2026-10-03T00:00:00Z",
+                "SearchAPI | https://shop.example/current-a | representative listing"
+        );
         recommendation(owner, ownerDevice, a, "WORTH_WATCHING", "0.80", "2026-10-10T00:00:00Z");
 
         long b = product(unique, "B");
@@ -139,7 +144,9 @@ class DashboardSortIntegrationTest {
     void sortingByPriceUsesTheLatestObservationNotTheEarlierOne() throws Exception {
         get("price_asc")
                 .andExpect(jsonPath("$[2].candidateModelName").value("A"))
-                .andExpect(jsonPath("$[2].latestPrice").value(899.00));
+                .andExpect(jsonPath("$[2].latestPrice").value(899.00))
+                .andExpect(jsonPath("$[2].listingUrl")
+                        .value("https://shop.example/current-a"));
     }
 
     @Test
@@ -199,10 +206,14 @@ class DashboardSortIntegrationTest {
     }
 
     private void price(long productId, String price, String observedAt) {
+        price(productId, price, observedAt, null);
+    }
+
+    private void price(long productId, String price, String observedAt, String source) {
         db.update(
-                "INSERT INTO price_history (product_id, price, currency, observed_at) "
-                        + "VALUES (?, ?::numeric, 'SGD', ?::timestamptz)",
-                productId, price, observedAt);
+                "INSERT INTO price_history (product_id, price, currency, source, observed_at) "
+                        + "VALUES (?, ?::numeric, 'SGD', ?, ?::timestamptz)",
+                productId, price, source, observedAt);
     }
 
     private void recommendation(

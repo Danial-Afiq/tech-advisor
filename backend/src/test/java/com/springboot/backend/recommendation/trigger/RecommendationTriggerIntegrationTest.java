@@ -157,6 +157,77 @@ class RecommendationTriggerIntegrationTest {
         assertEquals("1", log.get("devices_without_preferences"));
     }
 
+    @Test
+    void marketEventsApplyEachDevicesBrandRestrictionBeforeCallingAi() throws InterruptedException {
+        db.update("UPDATE products SET brand = 'Google' WHERE id = ?", flagship);
+        db.update("UPDATE device_preferences SET brand_flexibility = 'NOT_FLEXIBLE' WHERE user_device_id = ?",
+                upgrader1);
+
+        MarketEvent event = priceDrop(flagship);
+        Map<String, Object> log = awaitMarketEventLog(event.id());
+
+        assertEquals("SUCCESS", log.get("status"));
+        assertEquals(0, rowCount(upgrader1, null), "the restricted Samsung device must not receive Google");
+        assertNotNull(activeRow(upgrader2, flagship).get("ai_model"), "a flexible device can still receive Google");
+        verify(aiClient, never()).assess(argThat(r -> "upgrader-1".equals(r.userContext().ownedDevice().name())));
+        verify(aiClient, times(1)).assess(any());
+    }
+
+    @Test
+    void savedBrandPreferenceChangesRegenerateOnlyThatDevicesRecommendations() throws InterruptedException {
+        db.update("UPDATE products SET brand = 'Google' WHERE id = ?", newerFlagship);
+        Long owner = db.queryForObject("SELECT user_id FROM user_devices WHERE id = ?", Long.class, upgrader1);
+        String email = db.queryForObject("SELECT email FROM users WHERE id = ?", String.class, owner);
+        Long sibling = device(owner, olderPhone, "second-phone", true, true);
+        triggers.runForDevice(upgrader1, RecommendationTriggerService.CAUSE_ADMIN);
+        triggers.runForDevice(sibling, RecommendationTriggerService.CAUSE_ADMIN);
+        assertEquals(2, rowCount(upgrader1, "ACTIVE"));
+        List<Map<String, Object>> siblingBefore = db.queryForList(
+                "SELECT * FROM recommendations WHERE current_device_id = ? ORDER BY id", sibling);
+        assertEquals(2, rowCount(sibling, "ACTIVE"));
+
+        DeviceRequest request = new DeviceRequest();
+        request.setProductId(olderPhone);
+        request.setCustomName("upgrader-1");
+        request.setPurchaseDate(LocalDate.of(2024, 1, 15));
+        request.setCondition("FAIR");
+        request.setSatisfactionScore(45);
+        request.setUseCases("[\"gaming\"]");
+        request.setBrandFlexibility("NOT_FLEXIBLE");
+        clearInvocations(aiClient);
+
+        DeviceResponse restricted = deviceService.updateDevice(email, upgrader1, request);
+        awaitDeviceUpdates(upgrader1, 1);
+
+        assertEquals("NOT_FLEXIBLE", restricted.getBrandFlexibility());
+        assertEquals(1, rowCount(upgrader1, "ACTIVE"));
+        assertNotNull(activeRow(upgrader1, flagship));
+        assertEquals(0, db.queryForObject(
+                "SELECT count(*) FROM recommendations WHERE current_device_id = ? AND candidate_product_id = ?",
+                Integer.class, upgrader1, newerFlagship), "old cross-brand recommendations must also be removed");
+        verify(aiClient, never()).assess(argThat(r -> r.candidate().productId() == newerFlagship));
+
+        request.setBrandFlexibility("FLEXIBLE");
+        deviceService.updateDevice(email, upgrader1, request);
+        awaitDeviceUpdates(upgrader1, 2);
+
+        assertEquals(2, rowCount(upgrader1, "ACTIVE"));
+        assertNotNull(activeRow(upgrader1, newerFlagship).get("ai_model"));
+
+        // With no eligible same-brand product left, the saved restriction clears
+        // this device's recommendations rather than falling back to Google.
+        db.update("UPDATE products SET status = 'UNVERIFIED' WHERE id = ?", flagship);
+        request.setBrandFlexibility("NOT_FLEXIBLE");
+        deviceService.updateDevice(email, upgrader1, request);
+        awaitDeviceUpdates(upgrader1, 3);
+
+        assertEquals(0, rowCount(upgrader1, null));
+        assertEquals("FLEXIBLE", db.queryForObject(
+                "SELECT brand_flexibility FROM device_preferences WHERE user_device_id = ?", String.class, sibling));
+        assertEquals(siblingBefore, db.queryForList(
+                "SELECT * FROM recommendations WHERE current_device_id = ? ORDER BY id", sibling));
+    }
+
     // AC6
     @Test
     void reFiringTheSameEventLeavesExactlyOneActiveRowPerPair() throws InterruptedException {
@@ -373,6 +444,16 @@ class RecommendationTriggerIntegrationTest {
 
     private Map<String, Object> awaitDeviceLog(long deviceId) throws InterruptedException {
         return awaitLog("TRIGGER_DEVICE_INVENTORY", "user_device_id", deviceId);
+    }
+
+    private void awaitDeviceUpdates(long deviceId, int expected) throws InterruptedException {
+        await(() -> db.queryForObject("""
+                SELECT count(*) FROM system_log
+                WHERE component = 'TRIGGER_DEVICE_INVENTORY'
+                  AND (metadata ->> 'user_device_id')::bigint = ?
+                  AND metadata ->> 'cause' = 'DEVICE_UPDATED'
+                """, Integer.class, deviceId) == expected, "device update " + expected);
+        awaitIdle();
     }
 
     /** The run's one system_log row, flattened to text values, once it exists. */

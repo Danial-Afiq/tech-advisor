@@ -13,6 +13,7 @@ backend/target/
 __pycache__/
 *.egg-info/
 .pytest_cache/
+.backfill-cache/
 
 # Node / frontend
 frontend/node_modules/

@@ -50,6 +50,21 @@ describe("RecommendationCard", () => {
     expect(screen.getByText("📱")).toBeInTheDocument();
   });
 
+  it("uses the same large product thumbnail as the My devices card", () => {
+    render(
+      <RecommendationCard
+        recommendation={recommendation()}
+        showDevice={false}
+        image="https://img.example/galaxy-s26.png"
+      />
+    );
+
+    const image = screen.getByRole("img", {
+      name: "Samsung Galaxy S26 product image",
+    });
+    expect(image.parentElement).toHaveClass("h-[92px]", "w-[92px]");
+  });
+
   it("shows the owned device and suggested product", () => {
     render(
       <RecommendationCard
@@ -266,6 +281,46 @@ describe("RecommendationCard", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/USD\s*1,299\.00/)).toBeInTheDocument();
   });
+
+  it("shows View listing in the upper action stack and opens the exact URL", async () => {
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    render(
+      <RecommendationCard
+        recommendation={recommendation({
+          listingUrl: "https://shop.example/product?sku=123",
+        })}
+      />
+    );
+
+    const listing = screen.getByRole("button", { name: "View listing" });
+    expect(listing.parentElement).toContainElement(
+      screen.getByText("Strong upgrade candidate")
+    );
+    expect(listing.querySelector("svg")).not.toBeNull();
+
+    await userEvent.setup().click(listing);
+    expect(open).toHaveBeenCalledWith(
+      "https://shop.example/product?sku=123",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    open.mockRestore();
+  });
+
+  it.each([undefined, null, ""])(
+    "hides View listing when the URL is %s",
+    (listingUrl) => {
+      render(
+        <RecommendationCard
+          recommendation={recommendation({ listingUrl })}
+        />
+      );
+
+      expect(
+        screen.queryByRole("button", { name: "View listing" })
+      ).not.toBeInTheDocument();
+    }
+  );
 
   it("has no star control unless the caller handles it", () => {
     render(<RecommendationCard recommendation={recommendation()} />);
