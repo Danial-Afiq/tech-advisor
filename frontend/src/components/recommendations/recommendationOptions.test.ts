@@ -4,7 +4,14 @@ import {
   filterRecommendations,
   matchesSpecificationFilters,
 } from "./recommendationOptions";
-import { specificationFilterFields } from "./specificationFilterOptions";
+import {
+  candidateCategoryForDevice,
+  categoricalSpecificationChoices,
+  cloneSpecificationFilters,
+  specificationApiKey,
+  specificationFilterCount,
+  specificationFilterFields,
+} from "./specificationFilterOptions";
 import type { DashboardRecommendation, RecommendationFilters } from "./types";
 
 function recommendation(
@@ -39,6 +46,8 @@ function withSpecifications(
 
 describe("deterministic specification filters", () => {
   it("derives category-specific API keys and filter kinds from the shared schemas", () => {
+    expect(specificationApiKey("displaySizeInches")).toBe("display_size_inches");
+    expect(specificationFilterFields(undefined)).toEqual([]);
     expect(specificationFilterFields("SMARTPHONE")).toEqual(expect.arrayContaining([
       expect.objectContaining({ spec: "ram_gb", kind: "numeric", unit: "GB" }),
       expect.objectContaining({ spec: "display_size_inches", kind: "numeric", unit: "in" }),
@@ -51,6 +60,44 @@ describe("deterministic specification filters", () => {
       expect.objectContaining({ spec: "memory_type", kind: "categorical" }),
       expect.objectContaining({ spec: "tdp_watts", kind: "numeric", unit: "W" }),
     ]));
+  });
+
+  it("derives device categories and stable categorical choices from recommendations", () => {
+    const android = recommendation(1, 10, { os: " Android " });
+    const duplicate = recommendation(2, 10, { os: "android" });
+    const numeric = recommendation(3, 10, { os: 14 });
+    const otherDevice = recommendation(4, 11, { os: "iOS" });
+
+    expect(candidateCategoryForDevice([android], 10)).toBe("SMARTPHONE");
+    expect(candidateCategoryForDevice([android], 99)).toBeUndefined();
+    expect(categoricalSpecificationChoices(
+      [android, duplicate, numeric, otherDevice],
+      10,
+      "os",
+      [" HarmonyOS ", "", "ANDROID"],
+    )).toEqual(["android", "HarmonyOS"]);
+  });
+
+  it("counts only active filters and deep-clones categorical selections", () => {
+    const filters = withSpecifications({
+      10: [
+        { kind: "numeric", spec: "ram_gb", min: 8, max: null },
+        { kind: "numeric", spec: "display_size_inches", min: null, max: null },
+        { kind: "categorical", spec: "os", values: ["Android"] },
+      ],
+    });
+
+    expect(specificationFilterCount(filters)).toBe(2);
+    const clone = cloneSpecificationFilters(filters);
+    expect(clone).toEqual(filters.specificationsByDevice);
+    const categorical = clone["10"][2];
+    if (categorical.kind !== "categorical") throw new Error("Expected categorical constraint");
+    categorical.values.push("iOS");
+    expect(filters.specificationsByDevice["10"][2]).toEqual({
+      kind: "categorical",
+      spec: "os",
+      values: ["Android"],
+    });
   });
 
   it("supports inclusive minimum, maximum and range constraints", () => {
