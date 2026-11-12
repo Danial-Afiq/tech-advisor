@@ -1405,10 +1405,14 @@ locks in that `UpgradeClassificationService.OwnedSide` carries no condition or s
 How to run, expectations, results and drafted bugs: `docs/e2e/SCRUM-143-*.md`.
 Findings from the first run (`gpt-5.5`): the verdict channel matched 6/6 scenarios;
 grades followed review tone (negative D–F 10/10, positive A 5/5); the injected
-instruction was ignored 5/5. **Summaries never mention the user's condition,
-satisfaction or pain points** (0/11), because `prompt.py` never asks for it. They also
-narrate internals and sometimes cite `P*` refs in prose. Both are open bugs, not
-intended behaviour.
+instruction was ignored 5/5. Summaries never mentioned the user's condition,
+satisfaction or pain points (0/11) and narrated internals / `P*` refs (BUG-1, BUG-2).
+**Fixed on `fix/llm-sys-prompt`:** `INSTRUCTION_BLOCK` in `ai/app/prompt.py` now tells the model
+to personalise the summary from all of `user_context` (device condition, satisfaction, priorities,
+pain points, notes, budget, urgency, brand flexibility) and forbids internals (passage refs,
+"analysis block", enum values). Re-run (26 real calls): all 8 tests pass, scenario 11 found 0
+failures in 26 summaries. Remaining cosmetic issues: fixture names leak ("your My old phone") and
+enums are occasionally echoed in caps ("EXCELLENT").
 
 ---
 
