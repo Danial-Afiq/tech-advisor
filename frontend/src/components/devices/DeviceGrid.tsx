@@ -29,7 +29,7 @@ export function DeviceGrid({
       <EmptyState
         icon="🔌"
         title="No devices yet"
-        description="Add a phone, PC, laptop, monitor, keyboard, mouse or another supported category."
+        description="Add a phone, a GPU or another device."
         action={
           onAdd && (
             <Button variant="primary" onClick={onAdd}>

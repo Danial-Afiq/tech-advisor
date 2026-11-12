@@ -24,10 +24,10 @@ import java.util.List;
  * Reduces the catalogue to products that are compatible and
  * affordable for one owned device before any AI processing.
  *
- * <p>This exists so hard constraints never reach the model. Category and
- * budget are exact facts, and active product-dismissal cooldowns are enforced
- * before candidates are loaded. A language model asked to honour them is both
- * unreliable and expensive, since every product that survives costs embedding
+ * <p>This exists so hard constraints never reach the model. Category, brand
+ * restrictions and budget are exact facts, and active product-dismissal
+ * cooldowns are enforced before candidates are loaded. A language model asked
+ * to honour them is both unreliable and expensive, since every product that survives costs embedding
  * comparisons, retrieval and prompt tokens downstream. Everything here is
  * deterministic querying and currency conversion - no embeddings, retrieval,
  * or model call.
@@ -68,7 +68,8 @@ public class CandidatePruningService {
         Context context = resolve(userDeviceId);
 
         List<CandidateProduct> candidates = productRepository.findPricedCandidates(
-                context.category(), context.ownedProductId(), context.userId());
+                context.category(), context.ownedProductId(), context.userId(),
+                "NOT_FLEXIBLE".equals(context.preference().getBrandFlexibility()));
         if (candidates.isEmpty()) {
             return candidates;
         }

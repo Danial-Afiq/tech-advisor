@@ -78,6 +78,8 @@ public interface ProductRepository
      *   <li>{@code status = 'VERIFIED'} keeps products whose brand ingestion
      *       could not resolve out of user-facing results.</li>
      * </ul>
+     * When {@code sameBrandOnly} is true, candidates must match the owned
+     * product's brand, ignoring case and surrounding whitespace.
      */
     @Query(value = """
             SELECT p.id         AS productId,
@@ -95,6 +97,11 @@ public interface ProductRepository
             WHERE p.category = :category
               AND p.status   = 'VERIFIED'
               AND p.id      <> :currentProductId
+              AND (:sameBrandOnly = FALSE OR LOWER(BTRIM(p.brand)) = (
+                  SELECT LOWER(BTRIM(owned.brand))
+                  FROM products owned
+                  WHERE owned.id = :currentProductId
+              ))
               AND NOT EXISTS (
                   SELECT 1
                   FROM recommendation_dismissals dismissal
@@ -107,6 +114,7 @@ public interface ProductRepository
     List<CandidateProduct> findPricedCandidates(
             @Param("category") String category,
             @Param("currentProductId") Long currentProductId,
-            @Param("userId") Long userId
+            @Param("userId") Long userId,
+            @Param("sameBrandOnly") boolean sameBrandOnly
     );
 }

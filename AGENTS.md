@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 29 October 2026
+> **Last consolidated:** 11 November 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -578,6 +578,10 @@ affordable candidate set by `recommendation/CandidatePruningService`, backed by
 
 Rules enforced in SQL:
 - candidate `products.category` equals the owned device's category,
+- when that device's saved `brand_flexibility` is `NOT_FLEXIBLE`, candidate
+  `products.brand` must equal the owned catalogue product's brand, ignoring case
+  and surrounding whitespace (SCRUM-139). `SOMEWHAT_FLEXIBLE`, `FLEXIBLE`,
+  `EXTREMELY_FLEXIBLE` and legacy unset preferences do not restrict brands,
 - the currently owned `product_id` is excluded,
 - products under an active dismissal cooldown for this user are excluded,
 - products with **no** price history are excluded - affordability cannot be
@@ -2138,6 +2142,11 @@ catalogue is saved as a custom name with its entered specs as overrides; as with
 phones, the backend stores no device type, so an unlinked device is shown as a GPU
 only when its overrides hold GPU specs. GPU cards show the catalogue specs and,
 until GPU images exist, a bundled placeholder drawing (`assets/placeholders/gpu.svg`).
+A GPU's upgrade preferences offer only the factors `GpuSpecMapping` treats as
+applicable (value, performance, longevity, thermals; `prioritiesFor` in
+`deviceOptions.ts`), and saving drops any other saved priority. The device form
+offers the types Phone, GPU and Other (Laptop was removed); a device saved with an older type
+keeps it as an option.
 The page's "Show visualisation of all tables" button opens a side panel of cards, one per table, from `GET /api/admin/database/tables`
 (ADMIN-only, `AdminDatabaseController`/`DatabaseSchemaService`): table names,
 columns, types, primary keys, foreign-key targets and exact row counts read from
@@ -3150,8 +3159,8 @@ Still absent, deliberately:
 shortlisting (§7.1, SCRUM-34) to Channel A classification (§18.9) in one read-only
 transaction:
 
-1. `CandidatePruningService.getViableCandidates` - same category, latest price
-   within budget, verified, not the owned product;
+1. `CandidatePruningService.getViableCandidates` - same category, saved brand
+   restriction, latest price within budget, verified, not the owned product;
 2. `UpgradeClassificationService.loadOwnedSide` - owned spec sheet, overrides,
    benchmarks, budget and priorities, read **once** per run rather than once per candidate;
 3. `UpgradeClassificationService.classify(OwnedSide, ...)` per candidate, carrying
@@ -3212,7 +3221,7 @@ Lifecycle rules (decided 27 Sep 2026):
   that (user, device, candidate) becomes `SUPERSEDED` and is kept as history. Its
   `starred` flag is carried onto the new row (§14.12), and notifications linking to
   it are re-pointed at the new row (§14.14).
-- **Dropped off this device's shortlist** (over budget, delisted, unverified): every
+- **Dropped off this device's shortlist** (over budget, brand-restricted, delisted, unverified): every
   row for that device and candidate is **deleted**, history included, not superseded.
   Users come for products that are recommended; a record that a product once was is
   of no use to them. Scoped by `current_device_id`, so another device's rows are
@@ -3330,6 +3339,9 @@ the device save. Creating preferences requires a budget; later updates can suppl
 any subset of preference fields. Omitted/null fields preserve stored values; `{}`
 clears priorities, JSON `""`/`[]` clears pain points, and an empty string clears notes.
 Currency defaults to `SGD` on first save and is preserved when omitted on update.
+This preservation applies to preference fields. The device PUT still replaces
+editable device details, so callers include the current device fields alongside
+preference changes.
 
 Urgency and brand flexibility use `AssessVocabulary`'s closed values. `priorities`
 is a JSON-encoded object of `Factors` keys and 32-bit integer weights; `painPoints`
@@ -3359,7 +3371,18 @@ after the full profile commits. `DevicePreferencesIntegrationTest` also verifies
 that API-saved values reach `AssessRequestFactory` without a live AI call. Tests:
 `DevicePreferencesIntegrationTest`,
 `OpenApiDocumentationTests`, `deviceApi.test.ts`, `DevicesPageTest.test.tsx`.
-See `docs/device-preferences.md` for the API example and change-by-change explanation.
+API schemas and request examples are available through the generated OpenAPI
+documentation (§5.6).
+
+**Brand flexibility filtering — IMPLEMENTED (SCRUM-139).** Both market-event and
+device-inventory evaluations apply the saved device-specific restriction during
+candidate selection (§7.1), before currency conversion, scoring or AI assessment.
+Saving a preference change regenerates only that device's recommendations and
+removes candidates that no longer qualify. An empty shortlist clears that device's
+recommendations without falling back to unrelated brands. Regression coverage:
+`CandidatePruningServiceTest`, `CandidateFilterIntegrationTest` and
+`RecommendationTriggerIntegrationTest`, including flexible/unset preferences,
+case/whitespace matching, preference changes, device isolation and empty results.
 
 `AssessVocabulary` mirrors the non-factor closed vocabularies of `ai/app/factors.py`;
 `AssessVocabularyTest` reads `factors.py` and fails on drift (it also checks `Factors`).
