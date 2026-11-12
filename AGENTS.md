@@ -1384,7 +1384,31 @@ database is needed.
 3. ~~No Java caller exists yet~~ — **resolved.** The Spring caller now exists
    (§18.8) and the §9/§10 contract is exercised over real HTTP in
    `RecommendationPersistenceTests`, against a stub AI service rather than a live
-   model. What remains unexercised is Spring against the *real* FastAPI process.
+   model. Spring against the *real* FastAPI process and model is now exercised by
+   the SCRUM-143 real-AI suite (§13.6).
+
+## 13.6 End-to-end tests — SCRUM-143 (12 Nov 2026)
+
+Two classes in `backend/src/test/java/com/springboot/backend/ingestion/simulation/`,
+sharing `RecommendationE2EFixture` (fixtures via `JdbcTemplate`, so no inventory trigger fires
+during setup; the pipeline is run with `RecommendationTriggerService.runForDevice`) and
+`AiOutputJudge` (fixed keyword/regex rules for LLM text):
+
+| Class | What | Runs in default `mvnw test` |
+|---|---|---|
+| `RecommendationVerdictE2EIntegrationTest` | verdict channel, mocked `AiAssessmentClient`: base strong upgrade, priority shift, brand lock (no row, no AI call), condition/satisfaction don't move the verdict, price drop into budget (via `injectPrice`), one candidate vs two devices | yes |
+| `RecommendationAiOutputE2EIntegrationTest` | AI channel against the **real** AI service + model, reviews seeded through `ReviewBatchSink`: no reviews → `-` with no LLM call, negative/positive/injected review sets (5 runs each), summary personalisation, no contradiction / invented specs | **no**: `@Tag("real-ai")`, only when `E2E_REAL_AI=true`; billed (~26 calls) |
+
+`VerdictScenarioScoringTest` (`recommendation/classification/`) holds the pure-unit versions and
+locks in that `UpgradeClassificationService.OwnedSide` carries no condition or satisfaction.
+
+How to run, expectations, results and drafted bugs: `docs/e2e/SCRUM-143-*.md`.
+Findings from the first run (`gpt-5.5`): the verdict channel matched 6/6 scenarios;
+grades followed review tone (negative D–F 10/10, positive A 5/5); the injected
+instruction was ignored 5/5. **Summaries never mention the user's condition,
+satisfaction or pain points** (0/11), because `prompt.py` never asks for it. They also
+narrate internals and sometimes cite `P*` refs in prose. Both are open bugs, not
+intended behaviour.
 
 ---
 
