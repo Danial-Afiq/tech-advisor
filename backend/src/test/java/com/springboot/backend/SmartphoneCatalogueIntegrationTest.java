@@ -6,6 +6,7 @@ import com.springboot.backend.repository.PhoneRepository;
 import com.springboot.backend.repository.ProductRepository;
 import com.springboot.backend.repository.UserRepository;
 import com.springboot.backend.service.JwtService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +17,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
@@ -47,6 +49,7 @@ class SmartphoneCatalogueIntegrationTest {
 
     private MockMvc mvc;
     private String adminToken;
+    private Long adminId;
 
     @BeforeEach
     void setUp() {
@@ -58,7 +61,13 @@ class SmartphoneCatalogueIntegrationTest {
                 "{noop}unused",
                 "ADMIN"
         ));
+        adminId = admin.getId();
         adminToken = jwtService.generateToken(admin);
+    }
+
+    @AfterEach
+    void tearDown() {
+        users.findById(adminId).ifPresent(users::delete);
     }
 
     @Test
@@ -289,6 +298,7 @@ class SmartphoneCatalogueIntegrationTest {
     }
 
     @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void aFutureObservationRejectsTheWholeCreate() throws Exception {
         String model = "Future Phone " + UUID.randomUUID();
         String body = """
