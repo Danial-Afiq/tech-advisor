@@ -10,10 +10,10 @@ import java.util.regex.Pattern;
 
 /**
  * The SCRUM-143 LLM-output judging rules, copied verbatim from
- * {@code docs/e2e/SCRUM-143-expectations.md} ("Judging rules"). Fixed before any run; never tune
+ * {@code docs/e2e/recommendation-e2e-expectations.md} ("Judging rules"). Fixed before any run; never tune
  * these to make a run pass. Disagreements with a human read are recorded as WRONG_EXPECTATION.
  */
-final class Scrum143Judge {
+final class AiOutputJudge {
 
     static final List<String> OLD_PHONE = List.of(
             "poor condition", "older", "aging", "ageing", "low satisfaction", "dissatisf", "unhappy",
@@ -33,7 +33,7 @@ final class Scrum143Judge {
 
     static final List<String> CONTRADICTION = List.of(
             "not worth", "not recommended", "don't upgrade", "do not upgrade", "skip this",
-            "not a good upgrade", "not a strong upgrade", "no meaningful", "wouldn't recommend",
+            "not a good upgrade", "not a strong upgrade", "no meaningful change", "no meaningful upgrade", "wouldn't recommend",
             "would not recommend", "hold off", "stick with your current", "not an upgrade");
 
     static final Set<String> LOW_GRADES = Set.of("D", "E", "F");
@@ -49,16 +49,16 @@ final class Scrum143Judge {
 
     /** Fixture spec values per unit, owned and candidate together. */
     private static final Map<String, Set<String>> ALLOWED = Map.of(
-            "mAh", Set.of(Integer.toString(Scrum143Fixture.OWNED_BATTERY), Integer.toString(Scrum143Fixture.CANDIDATE_BATTERY)),
-            "GB", Set.of(Integer.toString(Scrum143Fixture.RAM_GB), Integer.toString(Scrum143Fixture.STORAGE_GB)),
-            "Hz", Set.of(Integer.toString(Scrum143Fixture.REFRESH_HZ)),
-            "inches", Set.of(Scrum143Fixture.DISPLAY_INCHES),
-            "inch", Set.of(Scrum143Fixture.DISPLAY_INCHES),
-            "\"", Set.of(Scrum143Fixture.DISPLAY_INCHES),
-            "g", Set.of(Integer.toString(Scrum143Fixture.WEIGHT_G)),
+            "mAh", Set.of(Integer.toString(RecommendationE2EFixture.OWNED_BATTERY), Integer.toString(RecommendationE2EFixture.CANDIDATE_BATTERY)),
+            "GB", Set.of(Integer.toString(RecommendationE2EFixture.RAM_GB), Integer.toString(RecommendationE2EFixture.STORAGE_GB)),
+            "Hz", Set.of(Integer.toString(RecommendationE2EFixture.REFRESH_HZ)),
+            "inches", Set.of(RecommendationE2EFixture.DISPLAY_INCHES),
+            "inch", Set.of(RecommendationE2EFixture.DISPLAY_INCHES),
+            "\"", Set.of(RecommendationE2EFixture.DISPLAY_INCHES),
+            "g", Set.of(Integer.toString(RecommendationE2EFixture.WEIGHT_G)),
             "W", Set.of());
 
-    private Scrum143Judge() {}
+    private AiOutputJudge() {}
 
     /** Every phrase from {@code phrases} found in {@code summary}; empty means no hit. */
     static List<String> hits(String summary, List<String> phrases) {
@@ -90,7 +90,7 @@ final class Scrum143Judge {
             String number = normalise(matcher.group(1).replace(",", ""));
             String unit = matcher.group(2);
             boolean allowed = ALLOWED.getOrDefault(unit, Set.of()).stream()
-                    .map(Scrum143Judge::normalise).anyMatch(number::equals);
+                    .map(AiOutputJudge::normalise).anyMatch(number::equals);
             if (!allowed) invented.add(matcher.group());
         }
         return invented;

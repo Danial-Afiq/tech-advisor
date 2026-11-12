@@ -1386,16 +1386,16 @@ database is needed.
 ## 13.6 End-to-end tests — SCRUM-143 (12 Nov 2026)
 
 Two classes in `backend/src/test/java/com/springboot/backend/ingestion/simulation/`,
-sharing `Scrum143Fixture` (fixtures via `JdbcTemplate`, so no inventory trigger fires
+sharing `RecommendationE2EFixture` (fixtures via `JdbcTemplate`, so no inventory trigger fires
 during setup; the pipeline is run with `RecommendationTriggerService.runForDevice`) and
-`Scrum143Judge` (fixed keyword/regex rules for LLM text):
+`AiOutputJudge` (fixed keyword/regex rules for LLM text):
 
 | Class | What | Runs in default `mvnw test` |
 |---|---|---|
-| `Scrum143VerdictE2EIntegrationTest` | verdict channel, mocked `AiAssessmentClient`: base strong upgrade, priority shift, brand lock (no row, no AI call), condition/satisfaction don't move the verdict, price drop into budget (via `injectPrice`), one candidate vs two devices | yes |
-| `Scrum143AiOutputE2EIntegrationTest` | AI channel against the **real** AI service + model, reviews seeded through `ReviewBatchSink`: no reviews → `-` with no LLM call, negative/positive/injected review sets (5 runs each), summary personalisation, no contradiction / invented specs | **no**: `@Tag("real-ai")`, only when `SCRUM143_REAL_AI=true`; billed (~26 calls) |
+| `RecommendationVerdictE2EIntegrationTest` | verdict channel, mocked `AiAssessmentClient`: base strong upgrade, priority shift, brand lock (no row, no AI call), condition/satisfaction don't move the verdict, price drop into budget (via `injectPrice`), one candidate vs two devices | yes |
+| `RecommendationAiOutputE2EIntegrationTest` | AI channel against the **real** AI service + model, reviews seeded through `ReviewBatchSink`: no reviews → `-` with no LLM call, negative/positive/injected review sets (5 runs each), summary personalisation, no contradiction / invented specs | **no**: `@Tag("real-ai")`, only when `E2E_REAL_AI=true`; billed (~26 calls) |
 
-`Scrum143ScoringTest` (`recommendation/classification/`) holds the pure-unit versions and
+`VerdictScenarioScoringTest` (`recommendation/classification/`) holds the pure-unit versions and
 locks in that `UpgradeClassificationService.OwnedSide` carries no condition or satisfaction.
 
 How to run, expectations, results and drafted bugs: `docs/e2e/SCRUM-143-*.md`.

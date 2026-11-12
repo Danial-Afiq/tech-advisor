@@ -39,8 +39,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * SCRUM-143 verdict channel, end to end with a mocked AI client (safe for CI).
- * Expectations: {@code docs/e2e/SCRUM-143-expectations.md}, scenarios 1-6.
+ * Recommendation verdict channel, end to end with a mocked AI client (safe for CI).
+ * Expectations: {@code docs/e2e/recommendation-e2e-expectations.md}, scenarios 1-6.
  *
  * <p>Deliberately not re-tested here: the brand/budget filter itself (PR 88,
  * {@code CandidateFilterIntegrationTest}) and the price-drop event/dashboard mechanics (PR 87,
@@ -54,7 +54,7 @@ import tools.jackson.databind.json.JsonMapper;
 })
 @ActiveProfiles("ingestion-demo")
 @DirtiesContext
-class Scrum143VerdictE2EIntegrationTest {
+class RecommendationVerdictE2EIntegrationTest {
 
     private static final String RESULTS = "verdict-runs.jsonl";
 
@@ -69,11 +69,11 @@ class Scrum143VerdictE2EIntegrationTest {
     @MockitoBean private RecommendationEmailSender emailSender;
 
     private final JsonMapper json = JsonMapper.builder().build();
-    private Scrum143Fixture fixture;
+    private RecommendationE2EFixture fixture;
 
     @BeforeEach
     void setUp() throws InterruptedException {
-        fixture = new Scrum143Fixture(db, users, executor);
+        fixture = new RecommendationE2EFixture(db, users, executor);
         fixture.assertTestDatabase();
         fixture.removeAbandonedFixture();
         reset(aiClient, emailSender);
@@ -87,30 +87,30 @@ class Scrum143VerdictE2EIntegrationTest {
 
     @Test
     void scenario1_baseBigBatteryGainOnTheOnlyPriorityIsAStrongUpgrade() {
-        Pair pair = pair(Scrum143Fixture.Device.base());
-        triggers.runForDevice(pair.deviceId(), Scrum143Fixture.CAUSE);
+        Pair pair = pair(RecommendationE2EFixture.Device.base());
+        triggers.runForDevice(pair.deviceId(), RecommendationE2EFixture.CAUSE);
 
         assertVerdict("1", pair, TierMapper.STRONG_UPGRADE_CANDIDATE, 1);
     }
 
     @Test
     void scenario2_topPriorityUnchangedMeansNoMeaningfulChangeAndNoAiCall() {
-        Pair pair = pair(Scrum143Fixture.Device.base().withPriorities("{\"battery\":1,\"performance\":5}"));
-        triggers.runForDevice(pair.deviceId(), Scrum143Fixture.CAUSE);
+        Pair pair = pair(RecommendationE2EFixture.Device.base().withPriorities("{\"battery\":1,\"performance\":5}"));
+        triggers.runForDevice(pair.deviceId(), RecommendationE2EFixture.CAUSE);
 
         assertVerdict("2", pair, TierMapper.NO_MEANINGFUL_CHANGE, 0);
     }
 
     @Test
     void scenario3_brandLockedOwnerGetsNoRowAndNoAiCallForAnotherBrand() {
-        String unique = Scrum143Fixture.unique();
+        String unique = RecommendationE2EFixture.unique();
         User user = fixture.user();
         Long owned = fixture.ownedPhone(unique);
-        Long candidate = fixture.candidatePhone(Scrum143Fixture.OTHER_BRAND, unique, "1000.00");
+        Long candidate = fixture.candidatePhone(RecommendationE2EFixture.OTHER_BRAND, unique, "1000.00");
         Long device = fixture.ownedDevice(user.getId(), owned,
-                Scrum143Fixture.Device.base().withFlexibility("NOT_FLEXIBLE"));
+                RecommendationE2EFixture.Device.base().withFlexibility("NOT_FLEXIBLE"));
 
-        triggers.runForDevice(device, Scrum143Fixture.CAUSE);
+        triggers.runForDevice(device, RecommendationE2EFixture.CAUSE);
 
         int rows = fixture.anyRows(device, candidate);
         record("3", user.getId(), device, candidate, null, rows);
@@ -120,27 +120,27 @@ class Scrum143VerdictE2EIntegrationTest {
 
     @Test
     void scenario4_happyOwnerInExcellentConditionGetsTheSameVerdictAsScenario1() {
-        Pair pair = pair(Scrum143Fixture.Device.base().withOwner("EXCELLENT", 95));
-        triggers.runForDevice(pair.deviceId(), Scrum143Fixture.CAUSE);
+        Pair pair = pair(RecommendationE2EFixture.Device.base().withOwner("EXCELLENT", 95));
+        triggers.runForDevice(pair.deviceId(), RecommendationE2EFixture.CAUSE);
 
         assertVerdict("4", pair, TierMapper.STRONG_UPGRADE_CANDIDATE, 1);
     }
 
     @Test
     void scenario5_priceDropIntoBudgetCreatesAStrongRecommendationWithAFullAuditTrail() throws Exception {
-        String unique = Scrum143Fixture.unique();
+        String unique = RecommendationE2EFixture.unique();
         User user = fixture.user();
         Long owned = fixture.ownedPhone(unique);
-        Long candidate = fixture.candidatePhone(Scrum143Fixture.BRAND, unique, "1300.00");
-        Long device = fixture.ownedDevice(user.getId(), owned, Scrum143Fixture.Device.base());
+        Long candidate = fixture.candidatePhone(RecommendationE2EFixture.BRAND, unique, "1300.00");
+        Long device = fixture.ownedDevice(user.getId(), owned, RecommendationE2EFixture.Device.base());
 
-        triggers.runForDevice(device, Scrum143Fixture.CAUSE);
+        triggers.runForDevice(device, RecommendationE2EFixture.CAUSE);
         assertEquals(0, fixture.anyRows(device, candidate), "before the drop: no recommendation");
         verify(aiClient, never()).assess(forCandidate(candidate));
 
         changes.injectPrice(new SimulatedMarketChangeService.PriceCommand(
-                candidate, new BigDecimal("1100.00"), "scrum143-price-" + unique));
-        Scrum143Fixture.await(() -> fixture.activeRows(device, candidate) == 1,
+                candidate, new BigDecimal("1100.00"), "reco-e2e-price-" + unique));
+        RecommendationE2EFixture.await(() -> fixture.activeRows(device, candidate) == 1,
                 "active recommendation after the price drop", 20);
         fixture.awaitIdle();
 
@@ -158,16 +158,16 @@ class Scrum143VerdictE2EIntegrationTest {
 
     @Test
     void scenario6_oneCandidateTwoDevicesWithDifferentPrioritiesGetDifferentVerdicts() {
-        String unique = Scrum143Fixture.unique();
+        String unique = RecommendationE2EFixture.unique();
         User user = fixture.user();
         Long owned = fixture.ownedPhone(unique);
         Long candidate = fixture.candidatePhone(unique);
-        Long deviceA = fixture.ownedDevice(user.getId(), owned, Scrum143Fixture.Device.base());
+        Long deviceA = fixture.ownedDevice(user.getId(), owned, RecommendationE2EFixture.Device.base());
         Long deviceB = fixture.ownedDevice(user.getId(), owned,
-                Scrum143Fixture.Device.base().withPriorities("{\"battery\":3,\"performance\":1}"));
+                RecommendationE2EFixture.Device.base().withPriorities("{\"battery\":3,\"performance\":1}"));
 
-        triggers.runForDevice(deviceA, Scrum143Fixture.CAUSE);
-        triggers.runForDevice(deviceB, Scrum143Fixture.CAUSE);
+        triggers.runForDevice(deviceA, RecommendationE2EFixture.CAUSE);
+        triggers.runForDevice(deviceB, RecommendationE2EFixture.CAUSE);
 
         String a = (String) fixture.activeRow(deviceA, candidate).get("verdict");
         String b = (String) fixture.activeRow(deviceB, candidate).get("verdict");
@@ -180,8 +180,8 @@ class Scrum143VerdictE2EIntegrationTest {
 
     private record Pair(long userId, long ownedId, long candidateId, long deviceId) {}
 
-    private Pair pair(Scrum143Fixture.Device device) {
-        String unique = Scrum143Fixture.unique();
+    private Pair pair(RecommendationE2EFixture.Device device) {
+        String unique = RecommendationE2EFixture.unique();
         User user = fixture.user();
         Long owned = fixture.ownedPhone(unique);
         Long candidate = fixture.candidatePhone(unique);
@@ -215,7 +215,7 @@ class Scrum143VerdictE2EIntegrationTest {
         run.put("expected_ai_calls", expectedAiCalls);
         run.put("snapshot_non_empty", row != null && !"{}".equals(row.get("input_snapshot")));
         run.put("factor_analysis_non_empty", row != null && !"{}".equals(row.get("factor_analysis")));
-        Scrum143Fixture.record(RESULTS, run);
+        RecommendationE2EFixture.record(RESULTS, run);
     }
 
     /** Same canned success as PR 87: the verdict channel never depends on what the AI says. */
@@ -226,7 +226,7 @@ class Scrum143VerdictE2EIntegrationTest {
                         "battery", "POSITIVE", List.of("P1"), List.of(1L), "Owners report good endurance.")),
                 List.of(), List.of(), "Owners are broadly positive.",
                 new AssessResponse.ResponseMeta(
-                        "scrum143-mock-model", "v2", List.of(1L), 0,
+                        "reco-e2e-mock-model", "v2", List.of(1L), 0,
                         Map.of("k", 12, "chunk_char_cap", 800, "vector_store", "local", "embedding_dim", 512),
                         false, null),
                 null);

@@ -71,7 +71,7 @@ SMARTPHONE exists below the fixture budget before running.
 
 **Brand-lock fixture (#3):** `sameBrandOnly` compares `LOWER(BTRIM(brand))`. The candidate
 needs a different brand from the owned phone, so the fixture uses two brands, e.g.
-`SCRUM143-E2E` and `SCRUM143-E2E-OTHER`. Cleanup must delete `brand LIKE 'SCRUM143-E2E%'`.
+`RECO-E2E` and `RECO-E2E-OTHER`. Cleanup must delete `brand LIKE 'RECO-E2E%'`.
 
 ### C9: existing classification tests (avoid duplicates in Phase 4)
 
@@ -99,7 +99,7 @@ already. Phase 4 should add only fixture-specific cases that differ.
 | **Factor tagging** | **No factor column, no tagger.** Retrieval scoping is purely semantic | `ai/app/retrieval/query.py:3`; AGENTS.md §0.1 marks factor-tagged chunks superseded | **NOT FOUND (by design)** |
 | Chunking | None. **One review → one chunk** at `chunk_index` 0 | `B/ingestion/reviews/ReviewBatchSink.java:80-83` | DIFFERS |
 | Real ingestion path | `SearchApiSource` → `Payload.ReviewBatch(long productId, List<Review>)` → `ReviewBatchSink.accept(runId, payload[, context])`. Embeds via `ReviewEmbeddingClient.embed(List<String>)` → Python `POST /internal/embed` (`ai/app/main.py:127`). Product must be `status='VERIFIED'` and in a configured category | `B/ingestion/searchapi/SearchApiSource.java:24,129`; `B/ingestion/core/Payload.java:14,17,78-95`; `ReviewBatchSink.java:37-83`; `B/ingestion/reviews/ReviewEmbeddingClient.java` | OK |
-| **Sink writes `published_at = NULL`** and `source_name = "Google Shopping reviews via SearchAPI / <domain>"` (domain from `Review.sourceDomain`, so fixtures set `sourceDomain = "SCRUM-143 test fixture"`) | | `ReviewBatchSink.java:70-77` | DIFFERS. Harmless, because no maturity rule reads the date (C5) |
+| **Sink writes `published_at = NULL`** and `source_name = "Google Shopping reviews via SearchAPI / <domain>"` (domain from `Review.sourceDomain`, so fixtures set `sourceDomain = "E2E test fixture"`) | | `ReviewBatchSink.java:70-77` | DIFFERS. Harmless, because no maturity rule reads the date (C5) |
 | Payload validation | fingerprint `[a-f0-9]{64}` (`ReviewNormalizer.fingerprint(...)`, `B/ingestion/searchapi/ReviewNormalizer.java:50`); text ≤ 8000; 1–100 reviews per batch; rating 1–5; non-null title and rawDate | `Payload.java:78-95` | OK |
 | Existing review-seeding tests | `T/ingestion/reviews/ReviewPersistenceTests.java` (mocked embedder; `realEmbeddingSmokeFixture` with real AI when `REVIEW_SMOKE_AI_URL` is set); `T/ingestion/searchapi/SearchApiCategoryIntegrationTest.java:87`; `ai/tests/test_pgvector.py` | | OK |
 | Demo profile reviews | `SimulatedMarketChangeService` only has `injectPrice` / `injectBenchmark`; it **cannot inject reviews** | `SimulatedMarketChangeService.java:46,92` | NOT FOUND (not needed if the sink is used) |

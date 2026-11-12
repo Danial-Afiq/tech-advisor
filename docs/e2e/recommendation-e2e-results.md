@@ -5,7 +5,7 @@ Run on 12 Nov 2026, branch `feat-SCRUM-143-end-to-end-test`, against local `tech
 the same database. Model: **`gpt-5.5-2026-04-23`** (OpenAI, from the root `.env`), embedder
 `minishlab/potion-retrieval-32M`.
 
-Expectations: `SCRUM-143-expectations.md` (commit `30ad590`, written before any run, unchanged).
+Expectations: `recommendation-e2e-expectations.md` (commit `30ad590`, written before any run, unchanged).
 Corrections are recorded here only.
 
 **Real LLM calls: 26** (no validation retries were needed). `/assess` calls: 27 (#7 short-circuited).
@@ -54,7 +54,7 @@ the battery-focused upgrade verdict." A human read shows that **agrees** with th
 phrase `no meaningful` was meant to catch "no meaningful change/upgrade", but as a bare substring
 it also matches "no meaningful disagreement". The rest of #11 passes: 0 contradictions on a real
 read, 0 invented spec numbers (no summary quoted a spec number at all). With the corrected reading,
-#11 passes. Per the rules, the list in `Scrum143Judge.CONTRADICTION` stays as committed; a future
+#11 passes. Per the rules, the list in `AiOutputJudge.CONTRADICTION` stays as committed; a future
 revision should use `no meaningful change` / `no meaningful upgrade` instead.
 
 ### Judge vs human read: no other disagreements
@@ -97,7 +97,7 @@ the user typed in are silently dropped.
 - [ ] Prompt instructs the model to relate owner evidence to the user's condition, satisfaction and pain points, without letting them change the verdict or the evidence grade (CLAUDE.md rule 4)
 - [ ] Summary addresses the user in plain language, without "deterministic system"/"analysis block" wording
 - [ ] `prompt_version` bumped; Python prompt tests updated
-- [ ] `Scrum143AiOutputE2EIntegrationTest` #1, #4, #12 pass (≥3/5) with the grade checks in #4/#8/#9/#10 still passing
+- [ ] `RecommendationAiOutputE2EIntegrationTest` #1, #4, #12 pass (≥3/5) with the grade checks in #4/#8/#9/#10 still passing
 - [ ] AGENTS.md §11 updated
 
 ### BUG-2: Internal passage refs (`P1`…`Pn`) appear in the user-facing summary
@@ -131,13 +131,13 @@ cd backend && ./mvnw test
 cd ai && POSTGRES_DB=techadvisor_test VECTOR_STORE=pgvector EMBEDDER=model2vec \
   ./.venv/Scripts/python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8001
 #    3b. In another shell:
-cd backend && SCRUM143_REAL_AI=true ./mvnw test -Dtest=Scrum143AiOutputE2EIntegrationTest
-#    Optional: SCRUM143_AI_URL=http://host:port to use a different service.
+cd backend && E2E_REAL_AI=true ./mvnw test -Dtest=RecommendationAiOutputE2EIntegrationTest
+#    Optional: E2E_AI_URL=http://host:port to use a different service.
 ```
 
-Run records are written as JSON lines to `backend/target/scrum143/verdict-runs.jsonl` and
+Run records are written as JSON lines to `backend/target/reco-e2e/verdict-runs.jsonl` and
 `ai-runs.jsonl`. The real-AI class is tagged `@Tag("real-ai")` and only runs when
-`SCRUM143_REAL_AI=true`.
+`E2E_REAL_AI=true`.
 
 ## Verdict runs (mocked AI)
 
@@ -195,7 +195,7 @@ Run records are written as JSON lines to `backend/target/scrum143/verdict-runs.j
 
 **#4 run 2** (grade A)
 
-> The deterministic decision is a strong upgrade recommendation, with battery identified as the deciding factor. Owner reports strongly support that decision: multiple users say the SCRUM143 Candidate lasts a full day or working day and makes them less dependent on charging or a power bank. The non-battery reports are also generally positive, but they describe ordinary adequacy rather than major upgrade reasons. There is no clear disagreement between the owner reports and the battery-led recommendation.
+> The deterministic decision is a strong upgrade recommendation, with battery identified as the deciding factor. Owner reports strongly support that decision: multiple users say the E2E Candidate lasts a full day or working day and makes them less dependent on charging or a power bank. The non-battery reports are also generally positive, but they describe ordinary adequacy rather than major upgrade reasons. There is no clear disagreement between the owner reports and the battery-led recommendation.
 
 **#4 run 3** (grade A)
 

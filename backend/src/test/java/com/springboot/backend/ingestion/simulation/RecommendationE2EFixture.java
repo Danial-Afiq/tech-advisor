@@ -22,17 +22,17 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * SCRUM-143 fixture: the base scenario from {@code docs/e2e/SCRUM-143-expectations.md}, written
+ * SCRUM-143 fixture: the base scenario from {@code docs/e2e/recommendation-e2e-expectations.md}, written
  * straight to the {@code _test} database with {@link JdbcTemplate} so no inventory trigger fires
  * during setup (the same approach as {@code SimulatedRecommendationWorkflowIntegrationTest}).
  * Every spec value here is quoted by the expectations file; change both or neither.
  */
-final class Scrum143Fixture {
+final class RecommendationE2EFixture {
 
-    static final String BRAND = "SCRUM143-E2E";
-    static final String OTHER_BRAND = "SCRUM143-E2E-OTHER";
-    static final String EMAIL_PREFIX = "scrum143-e2e-";
-    static final String CAUSE = "SCRUM143_E2E";
+    static final String BRAND = "RECO-E2E";
+    static final String OTHER_BRAND = "RECO-E2E-OTHER";
+    static final String EMAIL_PREFIX = "reco-e2e-";
+    static final String CAUSE = "RECO_E2E";
     static final String BASE_PRIORITIES = "{\"battery\":5}";
 
     static final int OWNED_BATTERY = 3700;
@@ -50,7 +50,7 @@ final class Scrum143Fixture {
     private final UserRepository users;
     private final ThreadPoolTaskExecutor executor;
 
-    Scrum143Fixture(JdbcTemplate db, UserRepository users, ThreadPoolTaskExecutor executor) {
+    RecommendationE2EFixture(JdbcTemplate db, UserRepository users, ThreadPoolTaskExecutor executor) {
         this.db = db;
         this.users = users;
         this.executor = executor;
@@ -58,7 +58,7 @@ final class Scrum143Fixture {
 
     void assertTestDatabase() {
         assertTrue(db.queryForObject("SELECT current_database()", String.class).endsWith("_test"),
-                "SCRUM-143 end-to-end tests require a dedicated _test database");
+                "Recommendation end-to-end tests require a dedicated _test database");
     }
 
     static String unique() {
@@ -70,11 +70,11 @@ final class Scrum143Fixture {
     }
 
     Long ownedPhone(String unique) {
-        return phone(BRAND, "SCRUM143 Old Phone " + unique, LocalDate.of(2021, 1, 15), OWNED_BATTERY, "500.00");
+        return phone(BRAND, "E2E Old Phone " + unique, LocalDate.of(2021, 1, 15), OWNED_BATTERY, "500.00");
     }
 
     Long candidatePhone(String brand, String unique, String price) {
-        return phone(brand, "SCRUM143 Candidate " + unique, LocalDate.of(2025, 3, 1), CANDIDATE_BATTERY, price);
+        return phone(brand, "E2E Candidate " + unique, LocalDate.of(2025, 3, 1), CANDIDATE_BATTERY, price);
     }
 
     Long candidatePhone(String unique) {
@@ -94,11 +94,11 @@ final class Scrum143Fixture {
         db.update("""
                 INSERT INTO benchmark_results
                     (product_id, benchmark_name, score, unit, higher_is_better, source, observed_at)
-                VALUES (?, 'geekbench_multi', 3200, 'points', true, 'scrum143-test', ?)
+                VALUES (?, 'geekbench_multi', 3200, 'points', true, 'reco-e2e-test', ?)
                 """, id, BASELINE_AT);
         db.update("""
                 INSERT INTO price_history (product_id, price, currency, source, observed_at)
-                VALUES (?, CAST(? AS NUMERIC), 'SGD', 'scrum143-test', ?)
+                VALUES (?, CAST(? AS NUMERIC), 'SGD', 'reco-e2e-test', ?)
                 """, id, price, BASELINE_AT);
         return id;
     }
@@ -194,10 +194,10 @@ final class Scrum143Fixture {
         fail("Timed out waiting for " + description);
     }
 
-    /** Appends one run record as a JSON line under {@code target/scrum143/}. */
+    /** Appends one run record as a JSON line under {@code target/reco-e2e/}. */
     static void record(String file, Map<String, ?> run) {
         try {
-            Path path = Path.of("target", "scrum143", file);
+            Path path = Path.of("target", "reco-e2e", file);
             Files.createDirectories(path.getParent());
             Files.writeString(path, JSON.writeValueAsString(run) + System.lineSeparator(), StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);

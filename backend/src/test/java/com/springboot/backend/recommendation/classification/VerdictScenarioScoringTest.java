@@ -15,11 +15,11 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * SCRUM-143 verdict scenarios 1, 2, 4 and 6 as pure in-memory unit tests: no database, no AI.
- * The fixture is the base from {@code docs/e2e/SCRUM-143-expectations.md}; the end-to-end
- * versions live in {@code Scrum143VerdictE2EIntegrationTest}.
+ * Recommendation verdict scenarios 1, 2, 4 and 6 as pure in-memory unit tests: no database, no AI.
+ * The fixture is the base from {@code docs/e2e/recommendation-e2e-expectations.md}; the end-to-end
+ * versions live in {@code RecommendationVerdictE2EIntegrationTest}.
  */
-class Scrum143ScoringTest {
+class VerdictScenarioScoringTest {
 
     private static final ScoringSettings SETTINGS = ShippedScoringSettings.load();
     private final SpecComparisonService comparisons = new SpecComparisonService();
@@ -34,7 +34,7 @@ class Scrum143ScoringTest {
 
     private static List<BenchmarkResult> geekbench(long productId) {
         return List.of(new BenchmarkResult(productId, "geekbench_multi", BigDecimal.valueOf(3200), "points",
-                true, "scrum143-test", OffsetDateTime.parse("2026-09-01T00:00:00Z")));
+                true, "reco-e2e-test", OffsetDateTime.parse("2026-09-01T00:00:00Z")));
     }
 
     private String verdict(Map<String, Integer> priorities) {
