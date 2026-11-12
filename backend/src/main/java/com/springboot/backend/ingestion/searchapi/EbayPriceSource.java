@@ -77,10 +77,10 @@ public class EbayPriceSource implements IngestionSource {
     }
 
     @Override public String sourceId() { return ID; }
+    @Override public Duration cooldown() { return Duration.ZERO; }
     // After MobileAPI's catalogue-creation priority (10) - this only prices products that
     // already exist, same ordering reasoning as SearchApiSource/TechApiBenchmarkSource.
     @Override public int priority() { return 30; }
-    @Override public Duration cooldown() { return Duration.ZERO; }
     // 1 request per product in the common case - no discover-then-fetch-reviews split like
     // Google Shopping's flow - but confirmed live this engine's requests commonly need a retry
     // (SourceContext's own 3-attempt cap on a timeout or 429/503), so budgeting exactly
