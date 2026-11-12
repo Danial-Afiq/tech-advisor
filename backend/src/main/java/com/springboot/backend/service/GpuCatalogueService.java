@@ -2,6 +2,7 @@ package com.springboot.backend.service;
 
 import com.springboot.backend.dto.GpuCatalogueRequest;
 import com.springboot.backend.dto.GpuCatalogueResponse;
+import com.springboot.backend.exception.InvalidCatalogueRequestException;
 import com.springboot.backend.exception.ResourceNotFoundException;
 import com.springboot.backend.model.Gpu;
 import com.springboot.backend.model.Product;
@@ -28,10 +29,13 @@ public class GpuCatalogueService {
 
     private final ProductRepository products;
     private final GpuRepository gpus;
+    private final CatalogueObservationService observations;
 
-    public GpuCatalogueService(ProductRepository products, GpuRepository gpus) {
+    public GpuCatalogueService(
+            ProductRepository products, GpuRepository gpus, CatalogueObservationService observations) {
         this.products = products;
         this.gpus = gpus;
+        this.observations = observations;
     }
 
     @Transactional
@@ -48,7 +52,9 @@ public class GpuCatalogueService {
         applySpecs(gpu, request);
         gpu = gpus.save(gpu);
 
-        return new GpuCatalogueResponse(product, gpu);
+        observations.addPrices(product.getId(), request.prices());
+
+        return withLatestPrice(new GpuCatalogueResponse(product, gpu));
     }
 
     @Transactional(readOnly = true)
@@ -73,6 +79,9 @@ public class GpuCatalogueService {
 
     @Transactional
     public GpuCatalogueResponse update(Long id, GpuCatalogueRequest request) {
+        if (request.prices() != null && !request.prices().isEmpty()) {
+            throw new InvalidCatalogueRequestException("Prices can only be added when the entry is created");
+        }
         Product product = findGpuProduct(id);
         Gpu gpu = findGpu(id);
         String brand = request.brand().trim();

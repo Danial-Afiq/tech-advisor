@@ -1,14 +1,17 @@
 package com.springboot.backend.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
 @Schema(description = "Common product fields and smartphone specifications.")
 public record SmartphoneCatalogueRequest(
@@ -30,5 +33,11 @@ public record SmartphoneCatalogueRequest(
         @Positive Integer pixelDensity,
         @Size(max = 50) String ipRating,
         @Size(max = 100) String os,
-        @Positive @Digits(integer = 3, fraction = 2) BigDecimal softwareSupportYears
+        @Positive @Digits(integer = 3, fraction = 2) BigDecimal softwareSupportYears,
+        @Schema(description = "Price observations to record with a new entry (create only; "
+                + "a non-empty list on update is rejected with 400).")
+        @Size(max = 50) List<@Valid @NotNull SmartphonePriceRequest> prices,
+        @Schema(description = "Benchmark results to record with a new entry (create only; "
+                + "a non-empty list on update is rejected with 400).")
+        @Size(max = 50) List<@Valid @NotNull CatalogueBenchmarkRequest> benchmarks
 ) {}
