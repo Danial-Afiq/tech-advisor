@@ -6,15 +6,17 @@ import { Field, FormError, FormGrid, Input, Select } from "../ui/Form";
 import { Modal, ModalActions } from "../ui/Modal";
 import type { SpecFormValues } from "../devices/catalogue";
 import { CatalogueHistorySection } from "./CatalogueHistorySection";
-import { CATALOGUE_STATUSES } from "./catalogueAdmin";
+import { CatalogueObservationFields } from "./CatalogueObservationFields";
+import { CATALOGUE_STATUSES, observationError } from "./catalogueAdmin";
 import type { CatalogueFormValues, CatalogueItemBase, CatalogueKind, GpuSpecFormValues } from "./catalogueAdmin";
 import { GpuSpecFields } from "./GpuSpecFields";
 
 /**
  * Add or edit one catalogue entry of the given kind: the `products` fields
  * plus every spec (`PhoneSpecFields` for smartphones, `GpuSpecFields` for
- * GPUs). An emptied spec is saved as null, i.e. unknown. Editing a smartphone
- * also shows its read-only price and benchmark history.
+ * GPUs). An emptied spec is saved as null, i.e. unknown. Adding an entry can
+ * also record its first prices (and, for a smartphone, benchmarks); editing a
+ * smartphone shows its read-only price and benchmark history instead.
  */
 export function CatalogueEntryModal({
   kind,
@@ -40,6 +42,11 @@ export function CatalogueEntryModal({
     event.preventDefault();
     if (!values.brand.trim() || !values.modelName.trim()) {
       setError("Brand and model are required.");
+      return;
+    }
+    const observationProblem = item ? null : observationError(values);
+    if (observationProblem) {
+      setError(observationProblem);
       return;
     }
     setSaving(true);
@@ -107,6 +114,16 @@ export function CatalogueEntryModal({
         )}
 
         {item && kind.hasHistory && <CatalogueHistorySection productId={item.id} />}
+
+        {!item && (
+          <CatalogueObservationFields
+            prices={values.prices}
+            benchmarks={values.benchmarks}
+            priceVariants={kind.priceVariants}
+            benchmarkEntry={kind.benchmarkEntry}
+            onChange={set}
+          />
+        )}
 
         <FormError message={error} />
         <ModalActions>

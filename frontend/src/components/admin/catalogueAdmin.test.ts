@@ -11,6 +11,7 @@ import {
   gpuFormToRequest,
   itemToForm,
   missingSpecCount,
+  observationError,
   osFamily,
   pageButtons,
   pageCount,
@@ -18,6 +19,7 @@ import {
   priceRangeValue,
   sortItems,
 } from "./catalogueAdmin";
+import type { PriceRow } from "./catalogueAdmin";
 
 const phone = (patch: Partial<SmartphoneCatalogueItem>): SmartphoneCatalogueItem => ({
   id: 1,
@@ -143,6 +145,33 @@ describe("catalogue form", () => {
     expect(body.cpuGhz).toBe(3.46);
     expect(body.os).toBe("Android 14, One UI 6.1");
     expect("id" in body).toBe(false);
+  });
+
+  it("starts a new entry with one empty price and benchmark row, and an edit with none", () => {
+    const fresh = itemToForm();
+    expect(fresh.prices).toHaveLength(1);
+    expect(fresh.prices[0]).toMatchObject({ price: "", currency: "SGD" });
+    expect(fresh.benchmarks).toHaveLength(1);
+    expect(itemToForm(galaxy).prices).toEqual([]);
+    expect(formToRequest(itemToForm(galaxy))).not.toHaveProperty("prices");
+  });
+
+  it("validates only the rows the admin started", () => {
+    const values = { ...itemToForm(), brand: "Nothing", modelName: "Phone (3)" };
+    expect(observationError(values)).toBeNull();
+
+    const row = (patch: Partial<PriceRow>) => ({ ...values, prices: [{ ...values.prices[0], ...patch }] });
+    expect(observationError(row({ price: "0" }))).toBe("Price 1: enter a price above 0.");
+    expect(observationError(row({ price: "10", storageGb: "12.5" }))).toBe(
+      "Price 1: Storage must be a whole number of GB."
+    );
+    expect(observationError(row({ price: "10", observedOn: "2999-01-01" }))).toBe(
+      "Price 1: the observed date cannot be in the future."
+    );
+    expect(observationError(row({ price: "10" }))).toBeNull();
+
+    const bench = { ...values, benchmarks: [{ ...values.benchmarks[0], score: "500" }] };
+    expect(observationError(bench)).toBe("Benchmark 1: enter the benchmark name.");
   });
 
   it("starts a new entry as VERIFIED with no release date", () => {

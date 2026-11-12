@@ -191,7 +191,67 @@ describe("AdminCatalogue", () => {
     expect(mocks.createSmartphone).toHaveBeenCalledWith(
       expect.objectContaining({ brand: "Nothing", modelName: "Phone 3", status: "VERIFIED", ramGb: null })
     );
+    // The untouched price and benchmark rows are skipped, not sent.
+    expect(mocks.createSmartphone.mock.calls[0][0]).not.toHaveProperty("prices");
+    expect(mocks.createSmartphone.mock.calls[0][0]).not.toHaveProperty("benchmarks");
     expect(screen.getByText("Showing 1–25 of 31")).toBeInTheDocument();
+  });
+
+  it("adds a smartphone with a variant price and a benchmark", async () => {
+    const user = userEvent.setup();
+    mocks.createSmartphone.mockResolvedValue(phone(31, "Nothing", "Phone 3"));
+    renderPage();
+    await screen.findByText("Showing 1–25 of 30");
+
+    await user.click(screen.getByRole("button", { name: "+ Add smartphone" }));
+    const dialog = screen.getByRole("dialog", { name: "Add smartphone" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Brand" }), "Nothing");
+    await user.type(within(dialog).getByRole("textbox", { name: "Model" }), "Phone 3");
+
+    const price = within(dialog).getByRole("group", { name: "Price 1" });
+    const observed = within(price).getByLabelText("Observed date") as HTMLInputElement;
+    expect(observed.value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    await user.clear(observed);
+    await user.type(observed, "2026-03-01");
+    await user.type(within(price).getByRole("spinbutton", { name: "Price" }), "1099");
+    await user.selectOptions(within(price).getByRole("combobox", { name: "Currency" }), "USD");
+    await user.type(within(price).getByRole("spinbutton", { name: "Variant storage (GB)" }), "256");
+    await user.type(within(price).getByRole("spinbutton", { name: "Variant RAM (GB)" }), "8");
+    await user.type(within(price).getByRole("textbox", { name: "Source" }), "Shopee");
+
+    const bench = within(dialog).getByRole("group", { name: "Benchmark 1" });
+    await user.type(within(bench).getByRole("textbox", { name: "Benchmark name" }), "Geekbench 6 CPU Multi-Core");
+    await user.type(within(bench).getByRole("spinbutton", { name: "Score" }), "6800");
+    await user.click(within(dialog).getByRole("button", { name: "+ Add benchmark" }));
+    expect(within(dialog).getByRole("group", { name: "Benchmark 2" })).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "Add smartphone" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    const body = mocks.createSmartphone.mock.calls[0][0];
+    expect(body.prices).toEqual([
+      { observedOn: "2026-03-01", price: 1099, currency: "USD", storageGb: 256, ramGb: 8, source: "Shopee" },
+    ]);
+    expect(body.benchmarks).toEqual([
+      { benchmarkName: "Geekbench 6 CPU Multi-Core", score: 6800, observedOn: expect.any(String), source: null },
+    ]);
+  });
+
+  it("keeps the Add form open when a started price row has no price", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Showing 1–25 of 30");
+
+    await user.click(screen.getByRole("button", { name: "+ Add smartphone" }));
+    const dialog = screen.getByRole("dialog", { name: "Add smartphone" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Brand" }), "Nothing");
+    await user.type(within(dialog).getByRole("textbox", { name: "Model" }), "Phone 3");
+    const price = within(dialog).getByRole("group", { name: "Price 1" });
+    await user.type(within(price).getByRole("textbox", { name: "Source" }), "Shopee");
+    await user.click(within(dialog).getByRole("button", { name: "Add smartphone" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Price 1: enter a price above 0.");
+    expect(mocks.createSmartphone).not.toHaveBeenCalled();
   });
 
   it("keeps the form open with the server's message when a save fails", async () => {
@@ -346,6 +406,29 @@ describe("AdminCatalogue GPUs", () => {
       expect.objectContaining({ brand: "Intel", modelName: "Arc B580", vramGb: 12, tdpWatts: null, memoryType: null })
     );
     expect(screen.getByText("Showing 1–3 of 3")).toBeInTheDocument();
+  });
+
+  it("adds a GPU with a model-level price and no benchmark fields", async () => {
+    const user = userEvent.setup();
+    mocks.createGpu.mockResolvedValue(gpu(3, "Intel", "Arc B580"));
+    renderPage("/admin/catalogue?type=gpus");
+    await screen.findByText("Showing 1–2 of 2");
+
+    await user.click(screen.getByRole("button", { name: "+ Add GPU" }));
+    const dialog = screen.getByRole("dialog", { name: "Add GPU" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Brand" }), "Intel");
+    await user.type(within(dialog).getByRole("textbox", { name: "Model" }), "Arc B580");
+
+    const price = within(dialog).getByRole("group", { name: "Price 1" });
+    expect(within(price).queryByRole("spinbutton", { name: "Variant storage (GB)" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "+ Add benchmark" })).not.toBeInTheDocument();
+    await user.type(within(price).getByRole("spinbutton", { name: "Price" }), "549.90");
+    await user.click(within(dialog).getByRole("button", { name: "Add GPU" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mocks.createGpu.mock.calls[0][0].prices).toEqual([
+      { observedOn: expect.any(String), price: 549.9, currency: "SGD", source: null },
+    ]);
   });
 
   it("edits a GPU and shows where its values came from", async () => {

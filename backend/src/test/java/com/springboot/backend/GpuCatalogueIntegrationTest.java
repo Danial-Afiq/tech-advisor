@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
@@ -45,6 +46,7 @@ class GpuCatalogueIntegrationTest {
     @Autowired UserRepository users;
     @Autowired ProductRepository products;
     @Autowired GpuRepository gpus;
+    @Autowired JdbcTemplate jdbc;
 
     private MockMvc mvc;
     private String adminToken;
@@ -193,6 +195,37 @@ class GpuCatalogueIntegrationTest {
         mvc.perform(MockMvcRequestBuilders.delete(ADMIN_GPUS + "/{id}", product.getId())
                         .header("Authorization", "Bearer " + userToken))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void createRecordsModelLevelPricesAndUpdateRejectsThem() throws Exception {
+        String model = "Priced GPU " + UUID.randomUUID();
+        String body = """
+                {"brand":"Test Brand","modelName":"%s","status":"VERIFIED",
+                 "prices":[
+                   {"observedOn":"2026-01-01","price":549,"currency":"USD","source":"Newegg"},
+                   {"observedOn":"2026-02-01","price":499.90,"currency":"USD"}
+                 ]}
+                """.formatted(model);
+
+        mvc.perform(MockMvcRequestBuilders.post(ADMIN_GPUS)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.latestPrice").value(499.9))
+                .andExpect(jsonPath("$.currency").value("USD"));
+
+        long id = products.findByBrandAndModelName("Test Brand", model).orElseThrow().getId();
+        assertEquals(2, jdbc.queryForObject(
+                "SELECT count(*) FROM price_history WHERE product_id = ? AND phone_variant_id IS NULL",
+                Integer.class, id));
+        assertEquals("admin", jdbc.queryForObject(
+                "SELECT source FROM price_history WHERE product_id = ? AND price = 499.90", String.class, id));
+
+        mvc.perform(MockMvcRequestBuilders.put(ADMIN_GPUS + "/{id}", id)
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType("application/json").content(body))
+                .andExpect(status().isBadRequest());
     }
 
     private String token(String role) {
