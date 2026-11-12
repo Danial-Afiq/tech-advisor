@@ -9,11 +9,14 @@ import {
   updateSmartphone,
 } from "../../api/catalogue";
 import type {
+  CatalogueBenchmarkRequest,
   GpuCatalogueItem,
   GpuCatalogueRequest,
   SmartphoneCatalogueItem,
   SmartphoneCatalogueRequest,
+  SmartphonePriceRequest,
 } from "../../api/catalogue";
+import { DEFAULT_CURRENCY } from "../currency/currency";
 import { catalogueSpecs, formToSpecs, specsToForm } from "../devices/catalogue";
 import type { SpecFormValues } from "../devices/catalogue";
 import { PHONE_SPEC_KEYS } from "../devices/phoneSpecs";
@@ -323,6 +326,112 @@ export const GPU_SPEC_FIELDS = [
 export type GpuSpecKey = (typeof GPU_SPEC_FIELDS)[number]["key"];
 export type GpuSpecFormValues = Record<GpuSpecKey, string>;
 
+/** One price row of the Add form; storage/RAM are only offered for smartphones. */
+export type PriceRow = {
+  observedOn: string;
+  price: string;
+  currency: string;
+  storageGb: string;
+  ramGb: string;
+  source: string;
+};
+
+/** One benchmark row of the Add form (smartphones only). */
+export type BenchmarkRow = {
+  benchmarkName: string;
+  score: string;
+  observedOn: string;
+  source: string;
+};
+
+/** Today in the admin's own time zone, as `YYYY-MM-DD`. */
+export function todayIso(now = new Date()) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+export const emptyPriceRow = (): PriceRow => ({
+  observedOn: todayIso(),
+  price: "",
+  currency: DEFAULT_CURRENCY,
+  storageGb: "",
+  ramGb: "",
+  source: "",
+});
+
+export const emptyBenchmarkRow = (): BenchmarkRow => ({
+  benchmarkName: "",
+  score: "",
+  observedOn: todayIso(),
+  source: "",
+});
+
+/** A row the admin never typed into; the prefilled date and currency don't count. */
+const untouchedPrice = (r: PriceRow) =>
+  ![r.price, r.storageGb, r.ramGb, r.source].some((v) => v.trim());
+const untouchedBenchmark = (r: BenchmarkRow) =>
+  ![r.benchmarkName, r.score, r.source].some((v) => v.trim());
+
+const positive = (text: string) => {
+  const n = Number(text.trim());
+  return text.trim() !== "" && Number.isFinite(n) && n > 0;
+};
+const wholePositive = (text: string) => positive(text) && Number.isInteger(Number(text.trim()));
+
+/**
+ * The first problem with the price and benchmark rows, or null. Untouched
+ * rows are ignored; a started row needs every required field.
+ */
+export function observationError(values: CatalogueFormValues): string | null {
+  const latest = todayIso(new Date(Date.now() + 86400000));
+  for (const [i, row] of values.prices.entries()) {
+    if (untouchedPrice(row)) continue;
+    const at = `Price ${i + 1}`;
+    if (!row.observedOn) return `${at}: enter the observed date.`;
+    if (row.observedOn > latest) return `${at}: the observed date cannot be in the future.`;
+    if (!positive(row.price)) return `${at}: enter a price above 0.`;
+    for (const [label, text] of [["Storage", row.storageGb], ["RAM", row.ramGb]] as const) {
+      if (text.trim() && !wholePositive(text)) return `${at}: ${label} must be a whole number of GB.`;
+    }
+  }
+  for (const [i, row] of values.benchmarks.entries()) {
+    if (untouchedBenchmark(row)) continue;
+    const at = `Benchmark ${i + 1}`;
+    if (!row.benchmarkName.trim()) return `${at}: enter the benchmark name.`;
+    if (!positive(row.score)) return `${at}: enter a score above 0.`;
+    if (!row.observedOn) return `${at}: enter the observed date.`;
+    if (row.observedOn > latest) return `${at}: the observed date cannot be in the future.`;
+  }
+  return null;
+}
+
+const blankToNull = (text: string) => text.trim() || null;
+const intOrNull = (text: string) => (text.trim() ? Number(text.trim()) : null);
+
+function priceRequests(rows: PriceRow[]): SmartphonePriceRequest[] {
+  return rows.filter((r) => !untouchedPrice(r)).map((r) => ({
+    observedOn: r.observedOn,
+    price: Number(r.price.trim()),
+    currency: r.currency,
+    storageGb: intOrNull(r.storageGb),
+    ramGb: intOrNull(r.ramGb),
+    source: blankToNull(r.source),
+  }));
+}
+
+function benchmarkRequests(rows: BenchmarkRow[]): CatalogueBenchmarkRequest[] {
+  return rows.filter((r) => !untouchedBenchmark(r)).map((r) => ({
+    benchmarkName: r.benchmarkName.trim(),
+    score: Number(r.score.trim()),
+    observedOn: r.observedOn,
+    source: blankToNull(r.source),
+  }));
+}
+
+/** `{ [key]: list }` when the list has rows, else nothing, so updates never send observations. */
+const ifAny = <K extends string, V>(key: K, list: V[]) =>
+  (list.length > 0 ? { [key]: list } : {}) as Partial<Record<K, V[]>>;
+
 /** What the add/edit form holds; inputs work in strings. `specs` is keyed by the kind's spec fields. */
 export type CatalogueFormValues = {
   brand: string;
@@ -331,6 +440,10 @@ export type CatalogueFormValues = {
   status: string;
   /** `SpecFormValues` for smartphones, `GpuSpecFormValues` for GPUs. */
   specs: Record<string, string>;
+  /** Prices to record with a new entry; always empty when editing. */
+  prices: PriceRow[];
+  /** Benchmarks to record with a new smartphone; always empty otherwise. */
+  benchmarks: BenchmarkRow[];
 };
 
 export function itemToForm(item?: SmartphoneCatalogueItem): CatalogueFormValues {
@@ -340,6 +453,8 @@ export function itemToForm(item?: SmartphoneCatalogueItem): CatalogueFormValues 
     releaseDate: item?.releaseDate ?? "",
     status: item?.status ?? "VERIFIED",
     specs: specsToForm(item ? catalogueSpecs(item) : undefined),
+    prices: item ? [] : [emptyPriceRow()],
+    benchmarks: item ? [] : [emptyBenchmarkRow()],
   };
 }
 
@@ -355,6 +470,8 @@ export function formToRequest(values: CatalogueFormValues): SmartphoneCatalogueR
     releaseDate: values.releaseDate || null,
     status: values.status,
     ...specs,
+    ...ifAny("prices", priceRequests(values.prices)),
+    ...ifAny("benchmarks", benchmarkRequests(values.benchmarks)),
   };
 }
 
@@ -367,6 +484,8 @@ function gpuItemToForm(item?: GpuCatalogueItem): CatalogueFormValues {
     specs: Object.fromEntries(
       GPU_SPEC_FIELDS.map(({ key }) => [key, item?.[key] == null ? "" : String(item[key])])
     ) as GpuSpecFormValues,
+    prices: item ? [] : [emptyPriceRow()],
+    benchmarks: [],
   };
 }
 
@@ -378,12 +497,20 @@ export function gpuFormToRequest(values: CatalogueFormValues): GpuCatalogueReque
     if (!raw) return null;
     return numeric ? Number(raw) : raw;
   };
+  // GPU prices are model-level: the form offers no variant, so none is sent.
+  const prices = priceRequests(values.prices).map((p) => ({
+    observedOn: p.observedOn,
+    price: p.price,
+    currency: p.currency,
+    source: p.source,
+  }));
   return {
     brand: values.brand.trim(),
     modelName: values.modelName.trim(),
     releaseDate: values.releaseDate || null,
     status: values.status,
     ...Object.fromEntries(GPU_SPEC_FIELDS.map(({ key, numeric }) => [key, field(key, numeric)])),
+    ...ifAny("prices", prices),
   } as GpuCatalogueRequest;
 }
 
@@ -402,6 +529,10 @@ export type CatalogueKind<T extends CatalogueItemBase> = {
   emptyHint: string;
   /** Read-only price and benchmark history exists only for smartphones. */
   hasHistory: boolean;
+  /** The Add form's price rows offer a storage/RAM variant (smartphones). */
+  priceVariants: boolean;
+  /** The Add form offers benchmark rows (smartphones). */
+  benchmarkEntry: boolean;
   /** Columns counted by the "Specifications" filter and the "n specs missing" note. */
   specKeys: readonly string[];
   sortOptions: SortOption<T>[];
@@ -426,6 +557,8 @@ export const PHONE_KIND: CatalogueKind<SmartphoneCatalogueItem> = {
   anyFamily: "Any OS",
   emptyHint: "Add a smartphone, or run MobileAPI ingestion to populate it.",
   hasHistory: true,
+  priceVariants: true,
+  benchmarkEntry: true,
   specKeys: PHONE_SPEC_KEYS,
   sortOptions: SORT_OPTIONS,
   columns: [
@@ -454,6 +587,8 @@ export const GPU_KIND: CatalogueKind<GpuCatalogueItem> = {
   anyFamily: "Any architecture",
   emptyHint: "Add a GPU, or run the GPU seed or TechSpot ingestion to populate it.",
   hasHistory: false,
+  priceVariants: false,
+  benchmarkEntry: false,
   specKeys: GPU_SPEC_FIELDS.map((f) => f.key),
   sortOptions: GPU_SORT_OPTIONS,
   columns: [

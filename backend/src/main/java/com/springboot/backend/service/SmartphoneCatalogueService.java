@@ -2,6 +2,7 @@ package com.springboot.backend.service;
 
 import com.springboot.backend.dto.SmartphoneCatalogueRequest;
 import com.springboot.backend.dto.SmartphoneCatalogueResponse;
+import com.springboot.backend.exception.InvalidCatalogueRequestException;
 import com.springboot.backend.exception.ResourceNotFoundException;
 import com.springboot.backend.model.Phone;
 import com.springboot.backend.model.Product;
@@ -21,10 +22,13 @@ public class SmartphoneCatalogueService {
 
     private final ProductRepository products;
     private final PhoneRepository phones;
+    private final CatalogueObservationService observations;
 
-    public SmartphoneCatalogueService(ProductRepository products, PhoneRepository phones) {
+    public SmartphoneCatalogueService(
+            ProductRepository products, PhoneRepository phones, CatalogueObservationService observations) {
         this.products = products;
         this.phones = phones;
+        this.observations = observations;
     }
 
     @Transactional
@@ -46,7 +50,10 @@ public class SmartphoneCatalogueService {
         applySpecs(phone, request);
         phone = phones.save(phone);
 
-        return new SmartphoneCatalogueResponse(product, phone);
+        observations.addSmartphonePrices(product.getId(), request.prices());
+        observations.addBenchmarks(product.getId(), request.benchmarks());
+
+        return withLatestPrice(new SmartphoneCatalogueResponse(product, phone));
     }
 
     @Transactional(readOnly = true)
@@ -72,6 +79,10 @@ public class SmartphoneCatalogueService {
 
     @Transactional
     public SmartphoneCatalogueResponse update(Long id, SmartphoneCatalogueRequest request) {
+        if (hasItems(request.prices()) || hasItems(request.benchmarks())) {
+            throw new InvalidCatalogueRequestException(
+                    "Prices and benchmarks can only be added when the entry is created");
+        }
         Product product = findSmartphone(id);
         Phone phone = findPhone(id);
         String brand = request.brand().trim();
@@ -133,6 +144,10 @@ public class SmartphoneCatalogueService {
         phone.setIpRating(clean(request.ipRating()));
         phone.setOs(clean(request.os()));
         phone.setSoftwareSupportYears(request.softwareSupportYears());
+    }
+
+    private static boolean hasItems(List<?> list) {
+        return list != null && !list.isEmpty();
     }
 
     private String clean(String value) {

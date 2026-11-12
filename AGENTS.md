@@ -2186,12 +2186,35 @@ catalogue read/update responses also carry read-only `latestPrice` and `currency
 candidate shortlisting and the dashboard (`observed_at DESC, id DESC`); the admin
 table shows them in a Price column with price sorts, a has/no-price filter and an
 inclusive price range (presets that fill editable min/max bounds; prices compared
-as stored, whatever the currency). Prices cannot be edited through this API.
+as stored, whatever the currency). Existing price rows cannot be edited or deleted.
 The Edit modal also shows read-only history from two ADMIN-only routes,
 `GET /api/admin/catalogue/smartphones/{id}/prices` (with the variant label when
 the observation is SKU-level) and `.../{id}/benchmarks`, newest first and capped
 at 50 rows (`AdminCatalogueHistoryController`/`CatalogueHistoryService`); 404 for
-a non-smartphone id. Manual price/benchmark corrections are not implemented yet.
+a non-smartphone id.
+
+**Initial prices and benchmarks on Add.** The ADMIN create routes
+(`POST /api/admin/catalogue/smartphones` and `.../gpus`) accept optional
+`prices` (smartphone and GPU) and `benchmarks` (smartphone only) lists, at most 50
+each. `CatalogueObservationService` appends them to `price_history` /
+`benchmark_results` in the same transaction as the product, so a bad row rolls
+back the whole create. Each row has an `observedOn` day (stored as midnight UTC;
+more than one day after today in UTC → 400), and a blank `source` is stored as
+`admin`. A price needs a value > 0 and a 3-letter currency (the Add modal offers
+SGD/USD/MYR/GBP). A smartphone price may name `storageGb`/`ramGb`; that
+find-or-creates a `phone_variants` row (other identity columns null) and sets
+`phone_variant_id`. With both blank the price is model-level, and GPU prices are
+always model-level. A benchmark row is name + score (> 0). Its `unit` and
+`higher_is_better` are never entered by the admin: they are copied from the latest
+stored row with the same name (case-insensitive, also adopting that row's spelling)
+so manual rows compare with ingested ones. A name not seen before is stored with no
+unit, higher-is-better. History is append-only, so the PUT routes reject a
+non-empty `prices`/`benchmarks` with 400; adding observations to an existing entry
+is not implemented. The create response's `latestPrice` reflects the new rows.
+In the frontend Add modal (`CatalogueObservationFields`), price and benchmark rows
+are prefilled with today's date and SGD. Untouched rows are skipped, a partly
+filled row is validated before any request is sent, and the Edit modal does not
+show these fields.
 
 **GPU catalogue (SCRUM-136).** ADMIN-only `GET/POST /api/admin/catalogue/gpus` and
 `GET/PUT/DELETE /api/admin/catalogue/gpus/{id}` (`AdminGpuCatalogueController`/
@@ -2208,8 +2231,9 @@ overwrites any value it publishes. Responses carry the same read-only
 `latestPrice`/`currency` as smartphones, plus `imageUrl` (`products.image_url`; no
 GPU source fills it yet). Signed-in USER and ADMIN accounts can read GPUs through
 `GET /api/catalogue/gpus` and `GET /api/catalogue/gpus/{id}` (`GpuCatalogueController`,
-SCRUM-137), which the device form searches; mutations stay ADMIN-only. There is no
-GPU price/benchmark history route yet. No migration was needed.
+SCRUM-137), which the device form searches; mutations stay ADMIN-only. GPU prices
+can be entered on Add (see above). There is no GPU price/benchmark history route,
+and GPU benchmarks cannot be entered yet. No migration was needed.
 `GpuCatalogueIntegrationTest` covers CRUD, null handling, duplicates, category,
 authorisation and the USER read routes; `OpenApiDocumentationTests` covers the routes.
 
