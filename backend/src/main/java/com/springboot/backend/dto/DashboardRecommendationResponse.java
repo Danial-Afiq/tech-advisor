@@ -6,6 +6,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Schema(
         description =
@@ -31,6 +32,18 @@ public record DashboardRecommendationResponse(
 
         @Schema(example = "Galaxy S26")
         String candidateModelName,
+
+        @Schema(
+                description = "Candidate products.category value used to select the specification schema",
+                example = "SMARTPHONE"
+        )
+        String candidateCategory,
+
+        @Schema(
+                description = "Candidate specification values from the persisted recommendation snapshot, "
+                        + "keyed by canonical database spec name. Missing or null values are omitted."
+        )
+        Map<String, Object> candidateSpecifications,
 
         @Schema(
                 description =
@@ -104,6 +117,8 @@ public record DashboardRecommendationResponse(
                 candidateProductId,
                 candidateBrand,
                 candidateModelName,
+                candidateCategory,
+                candidateSpecifications,
                 price,
                 displayCurrency,
                 listingUrl,
