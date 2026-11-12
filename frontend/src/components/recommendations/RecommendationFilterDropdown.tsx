@@ -166,7 +166,11 @@ export function RecommendationFilterDropdown({
               </fieldset>
 
               <div className="flex flex-wrap justify-between gap-2 border-t border-white/[0.09] pt-[14px]">
-                <Button size="sm" variant="ghost" disabled={count === 0} onClick={() => onChange({ ...emptyRecommendationFilters(), savedOnly: filters.savedOnly })}>
+                <Button size="sm" variant="ghost" disabled={count === 0} onClick={() => onChange({
+                  ...emptyRecommendationFilters(),
+                  savedOnly: filters.savedOnly,
+                  specificationsByDevice: filters.specificationsByDevice,
+                })}>
                   Clear filters
                 </Button>
                 <Button size="sm" variant="primary" onClick={close}>Done</Button>
