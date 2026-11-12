@@ -71,7 +71,7 @@ export function RecommendationCard({
         <div className="flex flex-wrap items-start justify-between gap-3">
           {!showDevice && (
             <DeviceThumb
-              size="sm"
+              size="lg"
               device={{
                 type: "Phone",
                 brand: recommendation.candidateBrand,
@@ -97,27 +97,57 @@ export function RecommendationCard({
             )}
           </div>
 
-          <div className="flex shrink-0 items-center gap-2">
-            <span
-              className={`badge rounded-full px-3 py-[14px] text-[11px] font-semibold ${verdict.badgeClass}`}
-            >
-              {verdict.label}
-            </span>
-
-            {onToggleStar && (
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-pressed={recommendation.starred}
-                aria-label={`${recommendation.starred ? "Remove" : "Save"} ${candidateName} for ${recommendation.currentDeviceName}`}
-                title={recommendation.starred ? "Remove from saved" : "Save recommendation"}
-                loading={starPending}
-                className={`text-[16px] leading-none ${recommendation.starred ? "text-[#f6b84b]" : ""}`}
-                onClick={() => onToggleStar(recommendation)}
+          <div className="flex shrink-0 flex-col items-end gap-3">
+            <div className="flex items-center gap-2">
+              <span
+                className={`badge rounded-full px-3 py-[14px] text-[11px] font-semibold ${verdict.badgeClass}`}
               >
-                {!starPending && (
-                  <span aria-hidden="true">{recommendation.starred ? "★" : "☆"}</span>
-                )}
+                {verdict.label}
+              </span>
+
+              {onToggleStar && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-pressed={recommendation.starred}
+                  aria-label={`${recommendation.starred ? "Remove" : "Save"} ${candidateName} for ${recommendation.currentDeviceName}`}
+                  title={recommendation.starred ? "Remove from saved" : "Save recommendation"}
+                  loading={starPending}
+                  className={`text-[16px] leading-none ${recommendation.starred ? "text-[#f6b84b]" : ""}`}
+                  onClick={() => onToggleStar(recommendation)}
+                >
+                  {!starPending && (
+                    <span aria-hidden="true">{recommendation.starred ? "★" : "☆"}</span>
+                  )}
+                </Button>
+              )}
+            </div>
+
+            {recommendation.listingUrl && (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="gap-1.5"
+                onClick={() =>
+                  window.open(
+                    recommendation.listingUrl ?? undefined,
+                    "_blank",
+                    "noopener,noreferrer",
+                  )
+                }
+              >
+                View listing
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                  className="size-[14px] fill-none stroke-current stroke-2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M14 5h5v5" />
+                  <path d="m19 5-9 9" />
+                  <path d="M19 14v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4" />
+                </svg>
               </Button>
             )}
           </div>

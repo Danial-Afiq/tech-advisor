@@ -402,6 +402,11 @@ sticky sidebar and top bar stick to.
   that it is no longer active or is hidden by the current filters.
   Cards are grouped per owned device and show that device's top 3, with a
   per-device Show all; each card has a Compare specs button that opens a dialog (root §23.4).
+  When the source of the exact displayed latest-price observation contains a
+  validated HTTP(S) URL, a View listing button with the external-link icon
+  appears in the card's upper-right action stack beneath the verdict/star row
+  and opens that URL in a new tab; source identifiers and invalid or missing
+  URLs add no button.
   Paragraphs placed directly in a `card-body` need `grow-0`: daisyUI gives
   `.card-body p` `flex-grow: 1`, which spreads them down a stretched card.
   On phones the three overview cards become compact full-width rows (label

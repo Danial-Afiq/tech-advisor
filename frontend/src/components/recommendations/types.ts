@@ -25,6 +25,8 @@ export type DashboardRecommendation = {
   candidateModelName: string;
   latestPrice: number | null;
   currency: string | null;
+  /** HTTP(S) listing URL from the exact price observation displayed, when available. */
+  listingUrl?: string | null;
   priceConversionStatus?: "ORIGINAL" | "CONVERTED" | "STALE" | "UNAVAILABLE";
   exchangeRateDate?: string | null;
   verdict: RecommendationVerdict;

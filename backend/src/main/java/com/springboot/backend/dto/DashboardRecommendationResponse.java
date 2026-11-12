@@ -42,6 +42,15 @@ public record DashboardRecommendationResponse(
         @Schema(example = "SGD")
         String currency,
 
+        @Schema(
+                description =
+                        "HTTP(S) product listing URL extracted from the source "
+                                + "of the displayed price observation, when available",
+                nullable = true,
+                example = "https://example.com/product"
+        )
+        String listingUrl,
+
         @Schema(example = "STRONG_UPGRADE_CANDIDATE")
         String verdict,
 
@@ -97,6 +106,7 @@ public record DashboardRecommendationResponse(
                 candidateModelName,
                 price,
                 displayCurrency,
+                listingUrl,
                 verdict,
                 confidence,
                 reasoning,
