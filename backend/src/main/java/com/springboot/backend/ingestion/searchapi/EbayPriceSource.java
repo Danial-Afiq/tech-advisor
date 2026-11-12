@@ -55,7 +55,16 @@ import tools.jackson.databind.JsonNode;
 @EnableConfigurationProperties(EbayPriceSettings.class)
 public class EbayPriceSource implements IngestionSource {
     public static final String ID = "searchapi-ebay-prices";
-    private static final int NETWORK_OVERHEAD_SECONDS = 30;
+    // Confirmed live against SearchAPI.io's ebay_search engine: it's live eBay scraping, not a
+    // fixed-latency API - individual requests routinely take several seconds and sometimes over
+    // 30s (observed range 2.3-30.9s across many real calls). A per-request allowance budgets
+    // each request with headroom above that observed worst case, matching SourceContext's own
+    // 45s per-request HTTP timeout (REQUEST_TIMEOUT) - every configured product is assumed able
+    // to need close to that worst case, not the fast common case. NETWORK_OVERHEAD_SECONDS
+    // remains a small fixed allowance on top for connection setup/JSON parsing outside the
+    // per-request calls.
+    private static final int PER_REQUEST_SECONDS = 50;
+    private static final int NETWORK_OVERHEAD_SECONDS = 10;
 
     private final EbayPriceRepository repository;
     private final EbayPriceSettings settings;
@@ -68,15 +77,21 @@ public class EbayPriceSource implements IngestionSource {
     }
 
     @Override public String sourceId() { return ID; }
+    @Override public Duration cooldown() { return Duration.ZERO; }
     // After MobileAPI's catalogue-creation priority (10) - this only prices products that
     // already exist, same ordering reasoning as SearchApiSource/TechApiBenchmarkSource.
     @Override public int priority() { return 30; }
-    @Override public Duration cooldown() { return Duration.ZERO; }
-    // Exactly 1 request per product - no discover-then-fetch-reviews split like Google
-    // Shopping's flow, so the per-run budget is simply the product count itself.
-    @Override public int requestLimit() { return settings.maxProductsPerRun(); }
+    // 1 request per product in the common case - no discover-then-fetch-reviews split like
+    // Google Shopping's flow - but confirmed live this engine's requests commonly need a retry
+    // (SourceContext's own 3-attempt cap on a timeout or 429/503), so budgeting exactly
+    // maxProductsPerRun HTTP requests left zero slack for that: a single retry anywhere in the
+    // run silently starved the last configured product(s) of their own first attempt
+    // ("Source request limit exceeded"), confirmed live. x3 matches SourceContext's own
+    // per-request retry cap, so every configured product gets its full fair chance even if
+    // every one of them needs the maximum number of retries.
+    @Override public int requestLimit() { return settings.maxProductsPerRun() * 3; }
     @Override public Duration executionBudget() {
-        return Duration.ofSeconds(requestLimit() + NETWORK_OVERHEAD_SECONDS);
+        return Duration.ofSeconds((long) requestLimit() * PER_REQUEST_SECONDS + NETWORK_OVERHEAD_SECONDS);
     }
     // Deliberately conservative default, independent of the shared scheduler cadence - see
     // class Javadoc for the request-budget math and why this needs to run more often than
