@@ -1,11 +1,14 @@
 package com.springboot.backend.recommendation;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -37,6 +40,9 @@ public class RecommendationRepository {
     private final ApplicationEventPublisher events;
     private final Map<String, Boolean> higherIsBetter;
     private static final JsonMapper json = JsonMapper.builder().findAndAddModules().build();
+    private static final Pattern HTTP_URL = Pattern.compile(
+            "(?i)https?://[^\\s|\\]\\[()<>]+"
+    );
 
     public RecommendationRepository(
             JdbcTemplate db,
@@ -135,6 +141,7 @@ public class RecommendationRepository {
                 latest_price.price AS latest_price,
                 BTRIM(latest_price.currency)
                     AS price_currency,
+                latest_price.source AS price_source,
                 r.verdict,
                 r.confidence,
                 r.reasoning,
@@ -154,7 +161,8 @@ public class RecommendationRepository {
             LEFT JOIN LATERAL (
                 SELECT
                     ph.price,
-                    ph.currency
+                    ph.currency,
+                    ph.source
                 FROM price_history ph
                 WHERE ph.product_id =
                     r.candidate_product_id
@@ -195,6 +203,9 @@ public class RecommendationRepository {
                             resultSet.getString(
                                     "price_currency"
                             ),
+                            listingUrl(resultSet.getString(
+                                    "price_source"
+                            )),
                             resultSet.getString(
                                     "verdict"
                             ),
@@ -220,6 +231,37 @@ public class RecommendationRepository {
             userId
     );
 }
+
+    /**
+     * Extracts the first syntactically valid HTTP(S) URL from a price source.
+     * Sources without a URL (for example {@code searchapi-ebay-prices}) remain
+     * identifiers only. Delimiters used by Markdown and ingestion metadata are
+     * deliberately excluded so they never become part of the returned URL.
+     */
+    static String listingUrl(String source) {
+        if (source == null || source.isBlank()) {
+            return null;
+        }
+        Matcher matches = HTTP_URL.matcher(source);
+        while (matches.find()) {
+            String candidate = matches.group();
+            while (!candidate.isEmpty()
+                    && ".,;:!?".indexOf(candidate.charAt(candidate.length() - 1)) >= 0) {
+                candidate = candidate.substring(0, candidate.length() - 1);
+            }
+            try {
+                URI uri = URI.create(candidate);
+                String scheme = uri.getScheme();
+                if (("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                        && uri.getHost() != null) {
+                    return candidate;
+                }
+            } catch (IllegalArgumentException ignored) {
+                // Continue in case a later URL in the same source is valid.
+            }
+        }
+        return null;
+    }
 
     /**
      * Numeric spec changes from {@code input_snapshot.computed.spec_deltas}
