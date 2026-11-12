@@ -2138,6 +2138,11 @@ catalogue is saved as a custom name with its entered specs as overrides; as with
 phones, the backend stores no device type, so an unlinked device is shown as a GPU
 only when its overrides hold GPU specs. GPU cards show the catalogue specs and,
 until GPU images exist, a bundled placeholder drawing (`assets/placeholders/gpu.svg`).
+A GPU's upgrade preferences offer only the factors `GpuSpecMapping` treats as
+applicable (value, performance, longevity, thermals; `prioritiesFor` in
+`deviceOptions.ts`), and saving drops any other saved priority. The device form
+offers the types Phone, GPU and Other (Laptop was removed); a device saved with an older type
+keeps it as an option.
 The page's "Show visualisation of all tables" button opens a side panel of cards, one per table, from `GET /api/admin/database/tables`
 (ADMIN-only, `AdminDatabaseController`/`DatabaseSchemaService`): table names,
 columns, types, primary keys, foreign-key targets and exact row counts read from
