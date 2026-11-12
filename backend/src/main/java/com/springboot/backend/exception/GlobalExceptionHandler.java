@@ -77,6 +77,19 @@ public class GlobalExceptionHandler {
                 .status(HttpStatus.BAD_REQUEST)
                 .body(response);
     }
+
+    @ExceptionHandler(InvalidCatalogueRequestException.class)
+    public ResponseEntity<Map<String, String>> handleInvalidCatalogueRequest(
+            InvalidCatalogueRequestException exception) {
+
+        Map<String, String> response = new HashMap<>();
+        response.put("error", exception.getMessage());
+
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(response);
+    }
+
     @ExceptionHandler(BadCredentialsException.class)
         public ResponseEntity<Map<String, String>> handleBadCredentials(
                 BadCredentialsException exception) {

@@ -39,15 +39,52 @@ export const listSmartphones = () =>
   apiFetch<SmartphoneCatalogueItem[]>("/api/catalogue/smartphones");
 
 /**
+ * A price observation sent with a new catalogue entry (backend
+ * `dto/CataloguePriceRequest.java`). `observedOn` is a `YYYY-MM-DD` day, at
+ * most one day ahead of today (UTC); a blank `source` is stored as "admin".
+ */
+export type CataloguePriceRequest = {
+  observedOn: string;
+  price: number;
+  currency: string;
+  source: string | null;
+};
+
+/**
+ * A smartphone price (`dto/SmartphonePriceRequest.java`). Storage and/or RAM
+ * record it against that variant; both null is a model-level price.
+ */
+export type SmartphonePriceRequest = CataloguePriceRequest & {
+  storageGb: number | null;
+  ramGb: number | null;
+};
+
+/**
+ * A benchmark result sent with a new smartphone
+ * (`dto/CatalogueBenchmarkRequest.java`). The backend copies the unit and
+ * higher-is-better direction from stored results with the same name.
+ */
+export type CatalogueBenchmarkRequest = {
+  benchmarkName: string;
+  score: number;
+  observedOn: string;
+  source: string | null;
+};
+
+/**
  * Body of the ADMIN create/replace routes (backend
  * `dto/SmartphoneCatalogueRequest.java`). Every spec is optional; `status`
- * must be VERIFIED or UNVERIFIED and `category` is always SMARTPHONE. Prices
- * are read-only here; they come from `price_history`.
+ * must be VERIFIED or UNVERIFIED and `category` is always SMARTPHONE.
+ * `prices` and `benchmarks` are appended on create only (history is
+ * append-only); a non-empty list on update is rejected with 400.
  */
 export type SmartphoneCatalogueRequest = Omit<
   SmartphoneCatalogueItem,
   "id" | "latestPrice" | "currency"
->;
+> & {
+  prices?: SmartphonePriceRequest[];
+  benchmarks?: CatalogueBenchmarkRequest[];
+};
 
 /** `POST /api/admin/catalogue/smartphones` — ADMIN only; 409 on a duplicate brand + model. */
 export const createSmartphone = (body: SmartphoneCatalogueRequest) =>
@@ -127,11 +164,16 @@ export type GpuCatalogueItem = {
   imageUrl?: string | null;
 };
 
-/** Body of the GPU create/replace routes; blank specs are sent as null. */
+/**
+ * Body of the GPU create/replace routes; blank specs are sent as null.
+ * `prices` (model-level) are appended on create only, as for smartphones.
+ */
 export type GpuCatalogueRequest = Omit<
   GpuCatalogueItem,
   "id" | "latestPrice" | "currency" | "source" | "sourceUrl" | "fetchedAt" | "imageUrl"
->;
+> & {
+  prices?: CataloguePriceRequest[];
+};
 
 /** `GET /api/catalogue/gpus` — any signed-in user; read-only, for the device form. */
 export const listCatalogueGpus = () => apiFetch<GpuCatalogueItem[]>("/api/catalogue/gpus");
