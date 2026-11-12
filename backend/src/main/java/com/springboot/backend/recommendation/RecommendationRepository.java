@@ -138,6 +138,7 @@ public class RecommendationRepository {
                 r.candidate_product_id,
                 candidate.brand AS candidate_brand,
                 candidate.model_name AS candidate_model_name,
+                candidate.category AS candidate_category,
                 latest_price.price AS latest_price,
                 BTRIM(latest_price.currency)
                     AS price_currency,
@@ -197,6 +198,12 @@ public class RecommendationRepository {
                             resultSet.getString(
                                     "candidate_model_name"
                             ),
+                            resultSet.getString(
+                                    "candidate_category"
+                            ),
+                            candidateSpecifications(resultSet.getString(
+                                    "spec_deltas"
+                            )),
                             resultSet.getBigDecimal(
                                     "latest_price"
                             ),
@@ -295,6 +302,44 @@ public class RecommendationRepository {
         changes.sort(java.util.Comparator.comparingDouble(
                 (DashboardRecommendationResponse.SpecChange change) -> -Math.abs(change.deltaPct())));
         return List.copyOf(changes);
+    }
+
+    /**
+     * Candidate values from {@code input_snapshot.computed.spec_deltas}.
+     *
+     * <p>The dashboard filters the same immutable values that produced the
+     * persisted verdict rather than today's catalogue row. Only scalar numbers
+     * and strings are returned; null, structured, older or malformed values are
+     * treated as unknown so an active specification constraint fails closed.
+     */
+    static Map<String, Object> candidateSpecifications(String specDeltasJson) {
+        if (specDeltasJson == null) {
+            return Map.of();
+        }
+        Map<String, Object> specifications = new LinkedHashMap<>();
+        try {
+            JsonNode deltas = json.readTree(specDeltasJson);
+            if (deltas == null || !deltas.isObject()) {
+                return Map.of();
+            }
+            deltas.properties().forEach(entry -> {
+                if (SpecFactorCatalog.PRICE_SPEC.equals(entry.getKey())
+                        || SpecFactorCatalog.BENCHMARK_SPEC.equals(entry.getKey())) {
+                    return;
+                }
+                JsonNode candidate = entry.getValue().get("candidate");
+                if (candidate != null && !candidate.isNull()
+                        && (candidate.isNumber() || candidate.isTextual())) {
+                    specifications.put(
+                            entry.getKey(),
+                            json.convertValue(candidate, Object.class)
+                    );
+                }
+            });
+        } catch (RuntimeException malformed) {
+            return Map.of();
+        }
+        return Map.copyOf(specifications);
     }
 
     /**

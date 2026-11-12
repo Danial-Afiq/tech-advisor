@@ -60,4 +60,32 @@ class DashboardSpecChangesTest {
         assertEquals(List.of(), RecommendationRepository.specChanges("[1, \"x\"]", DIRECTIONS));
         assertEquals(List.of(), RecommendationRepository.specChanges("not json", DIRECTIONS));
     }
+
+    @Test
+    void exposesScalarCandidateValuesFromThePersistedSnapshot() {
+        String stored = """
+                {"ram_gb": {"current": 8, "candidate": 12, "delta_pct": 50.0},
+                 "display_size_inches": {"current": 6.1, "candidate": 6.7, "delta_pct": 9.8},
+                 "os": {"current": "Android", "candidate": "Android 16", "delta_pct": null},
+                 "price": {"current": 1200, "candidate": 1000, "delta_pct": 16.7},
+                 "benchmark_score": {"current": 1000, "candidate": 1500, "delta_pct": 50.0},
+                 "unknown": {"current": 1, "candidate": null, "delta_pct": null},
+                 "structured": {"current": null, "candidate": {"value": 2}, "delta_pct": null}}""";
+
+        assertEquals(
+                Map.of(
+                        "ram_gb", 12,
+                        "display_size_inches", 6.7,
+                        "os", "Android 16"
+                ),
+                RecommendationRepository.candidateSpecifications(stored)
+        );
+    }
+
+    @Test
+    void malformedCandidateSpecificationSnapshotsYieldAnEmptyMap() {
+        assertEquals(Map.of(), RecommendationRepository.candidateSpecifications(null));
+        assertEquals(Map.of(), RecommendationRepository.candidateSpecifications("[]"));
+        assertEquals(Map.of(), RecommendationRepository.candidateSpecifications("not json"));
+    }
 }

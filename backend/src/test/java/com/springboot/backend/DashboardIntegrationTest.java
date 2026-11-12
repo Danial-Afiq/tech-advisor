@@ -234,16 +234,25 @@ class DashboardIntegrationTest {
                         verdict,
                         confidence,
                         reasoning,
+                        input_snapshot,
                         status
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')
+                    VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, 'ACTIVE')
                     """,
                     owner.getId(),
                     currentDeviceId,
                     candidateProductId,
                     "WORTH_CONSIDERING",
                     "A",
-                    "Meaningful upgrade"
+                    "Meaningful upgrade",
+                    """
+                    {"computed":{"spec_deltas":{
+                      "ram_gb":{"current":8,"candidate":12,"delta_pct":50.0},
+                      "display_size_inches":{"current":6.1,"candidate":6.7,"delta_pct":9.8},
+                      "os":{"current":"Android 14","candidate":"Android 16","delta_pct":null},
+                      "weight_g":{"current":200,"candidate":null,"delta_pct":null}
+                    }}}
+                    """
             );
 
             db.update(
@@ -323,6 +332,26 @@ class DashboardIntegrationTest {
                     .andExpect(
                             jsonPath("$[0].candidateModelName")
                                     .value("Candidate Model")
+                    )
+                    .andExpect(
+                            jsonPath("$[0].candidateCategory")
+                                    .value("SMARTPHONE")
+                    )
+                    .andExpect(
+                            jsonPath("$[0].candidateSpecifications.ram_gb")
+                                    .value(12)
+                    )
+                    .andExpect(
+                            jsonPath("$[0].candidateSpecifications.display_size_inches")
+                                    .value(6.7)
+                    )
+                    .andExpect(
+                            jsonPath("$[0].candidateSpecifications.os")
+                                    .value("Android 16")
+                    )
+                    .andExpect(
+                            jsonPath("$[0].candidateSpecifications.weight_g")
+                                    .doesNotExist()
                     )
                     .andExpect(
                             jsonPath("$[0].latestPrice")

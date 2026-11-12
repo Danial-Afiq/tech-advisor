@@ -2,6 +2,7 @@ import type {
   DashboardRecommendation,
   FilterEvidenceGrade,
   RecommendationFilters,
+  SpecificationConstraint,
 } from "./types";
 import {
   RECOMMENDATION_VERDICTS,
@@ -26,7 +27,59 @@ export const EVIDENCE_GRADE_OPTIONS = [
 }[];
 
 export function emptyRecommendationFilters(): RecommendationFilters {
-  return { deviceId: null, verdicts: [], evidenceGrades: [], savedOnly: false };
+  return {
+    deviceId: null,
+    verdicts: [],
+    evidenceGrades: [],
+    savedOnly: false,
+    specificationsByDevice: {},
+  };
+}
+
+function numericValue(value: string | number | undefined): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function matchesSpecificationConstraint(
+  recommendation: DashboardRecommendation,
+  constraint: SpecificationConstraint,
+) {
+  const value = recommendation.candidateSpecifications?.[constraint.spec];
+  if (constraint.kind === "numeric") {
+    const numeric = numericValue(value);
+    if (numeric === null) return false;
+    return (constraint.min === null || numeric >= constraint.min)
+      && (constraint.max === null || numeric <= constraint.max);
+  }
+
+  if (typeof value !== "string") return false;
+  const normalised = value.trim().toLowerCase();
+  return constraint.values.some(
+    (choice) => choice.trim().toLowerCase() === normalised,
+  );
+}
+
+/** Empty constraints are drafts/no-ops; active rules for the device combine with AND. */
+export function activeSpecificationConstraints(
+  constraints: readonly SpecificationConstraint[] = [],
+) {
+  return constraints.filter((constraint) => constraint.kind === "numeric"
+    ? constraint.min !== null || constraint.max !== null
+    : constraint.values.length > 0);
+}
+
+export function matchesSpecificationFilters(
+  recommendation: DashboardRecommendation,
+  filters: RecommendationFilters,
+) {
+  const constraints = activeSpecificationConstraints(
+    filters.specificationsByDevice[String(recommendation.currentDeviceId)],
+  );
+  return constraints.every((constraint) =>
+    matchesSpecificationConstraint(recommendation, constraint));
 }
 
 export function filterRecommendations(
@@ -40,7 +93,8 @@ export function filterRecommendations(
       || (recommendation.confidence !== null
         && recommendation.confidence !== "-"
         && filters.evidenceGrades.includes(recommendation.confidence)))
-    && (!filters.savedOnly || recommendation.starred),
+    && (!filters.savedOnly || recommendation.starred)
+    && matchesSpecificationFilters(recommendation, filters),
   );
 }
 
