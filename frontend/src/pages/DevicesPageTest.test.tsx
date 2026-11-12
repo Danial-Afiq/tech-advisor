@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -115,7 +115,7 @@ describe("DevicesPageTest", () => {
     await screen.findByText("No devices yet");
     await user.click(screen.getByRole("button", { name: "Add device" }));
 
-    await user.selectOptions(screen.getByLabelText("Device type"), "Laptop");
+    await user.selectOptions(screen.getByLabelText("Device type"), "Other");
     await user.type(screen.getByLabelText("Brand"), "Dell");
     await user.type(screen.getByLabelText("Model / configuration"), "XPS 13");
     fireEvent.change(screen.getByLabelText(/Current satisfaction/), { target: { value: "85" } });
@@ -578,6 +578,28 @@ describe("DevicesPageTest GPUs", () => {
     await user.click(screen.getByRole("button", { name: "Edit device" }));
     expect(screen.getByLabelText("Device type")).toHaveValue("GPU");
     expect(screen.getByLabelText("Boost clock (MHz)")).toHaveValue(2475);
+  });
+
+  it("offers only the device types and GPU priorities that apply", async () => {
+    const user = userEvent.setup();
+    mocks.listDevices.mockResolvedValue([linkedGpu]);
+    mocks.listCatalogueGpus.mockResolvedValue([rtx]);
+    renderPage();
+
+    await screen.findByRole("heading", { name: /NVIDIA GeForce RTX 4070/ });
+    await user.click(screen.getByRole("button", { name: /Add device/ }));
+    const types = within(screen.getByLabelText("Device type")).getAllByRole("option");
+    expect(types.map((o) => o.textContent)).toEqual(["Phone", "GPU", "Other"]);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await user.click(screen.getByRole("button", { name: "Upgrade preferences" }));
+    const dialog = screen.getByRole("dialog");
+    for (const name of ["Value for money", "Performance", "Longevity", "Thermal management"]) {
+      expect(within(dialog).getByRole("button", { name })).toBeInTheDocument();
+    }
+    for (const name of ["Battery life", "Camera", "Display quality", "Audio", "Portability"]) {
+      expect(within(dialog).queryByRole("button", { name })).not.toBeInTheDocument();
+    }
   });
 });
 
