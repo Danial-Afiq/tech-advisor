@@ -71,7 +71,7 @@ export function RecommendationCard({
         <div className="flex flex-wrap items-start justify-between gap-3">
           {!showDevice && (
             <DeviceThumb
-              size="sm"
+              size="lg"
               device={{
                 type: "Phone",
                 brand: recommendation.candidateBrand,

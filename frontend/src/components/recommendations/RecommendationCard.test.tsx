@@ -50,6 +50,21 @@ describe("RecommendationCard", () => {
     expect(screen.getByText("📱")).toBeInTheDocument();
   });
 
+  it("uses the same large product thumbnail as the My devices card", () => {
+    render(
+      <RecommendationCard
+        recommendation={recommendation()}
+        showDevice={false}
+        image="https://img.example/galaxy-s26.png"
+      />
+    );
+
+    const image = screen.getByRole("img", {
+      name: "Samsung Galaxy S26 product image",
+    });
+    expect(image.parentElement).toHaveClass("h-[92px]", "w-[92px]");
+  });
+
   it("shows the owned device and suggested product", () => {
     render(
       <RecommendationCard
