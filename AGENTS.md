@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 11 November 2026
+> **Last consolidated:** 12 November 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -355,12 +355,16 @@ tech-advisor/
 
 Notable current docs:
 - `docs/ingestion.md`
+- `docs/backfill-product-images.md`
 - `docs/1.1-ingestion-task-orchestration-plan.md`
 - `docs/ingestion-openapi.yaml`
 - `docs/git-cheatsheet.md`
 
 Notable demo script:
 - `scripts/ingestion-demo.ps1`
+
+Notable one-time maintenance script:
+- `scripts/backfill_product_images.py`
 
 ## 4.2 Hosted environments
 
@@ -2333,6 +2337,20 @@ never being provisioned, not a missing sink anymore.
   a missing/unusable link instead of losing the device. No extra HTTP request: the
   list response already carries it. The sink writes `products.image_url` with
   `COALESCE(EXCLUDED.image_url, products.image_url)`.
+- **Legacy image backfill (updated 12 Nov 2026):** `scripts/backfill_product_images.py` is a
+  standalone, dry-run-first maintenance utility for existing smartphone rows whose
+  `products.image_url` is null. It uses `MOBILEAPI_API_KEY` plus the dedicated,
+  required `BACKFILL_DATABASE_URL`, matches conservatively, verifies public HTTPS
+  image responses, and updates only the null image column. Its Pro-oriented run is
+  bounded to 1,000 authenticated requests by default with a one-second request
+  delay. Atomic local caching preserves manufacturer pages, successful anonymous
+  image checks and verified matches across interrupted runs; the apply path
+  revalidates database/catalogue identity and current product fields and performs
+  zero MobileAPI requests. Cache-only recovery can explicitly acknowledge a
+  catalogue-only manufacturer that MobileAPI cannot serve; the named products
+  remain unmatched and unwritable, while all previously verified matches are
+  retained. Remote writes require both `--apply` and
+  `--confirm-production`; it is not part of scheduled ingestion.
 - **Bugfix (ingestion_cursors, V12, bugfix/smartphone-ingestion):** the
   default/automatic mode (`sources.mobileapi.year` unset) used to call the
   exact same URL on every single run — no `page` parameter existed
@@ -3911,7 +3929,13 @@ handler — the generic `IllegalArgumentException` mapping in
   lookup as the card's `latestPrice`; missing prices are `NULLS LAST` in
   **both** directions. The API field remains `latestPrice`, but the card labels
   it **Indicative price** and the page shows one visible disclaimer that prices
-  may vary by storage configuration, retailer, region and availability.
+  may vary by storage configuration, retailer, region and availability. That
+  exact observation's `source` is also inspected for the first syntactically
+  valid HTTP(S) URL and exposed as nullable `listingUrl`; source identifiers
+  without a URL remain null. The dashboard shows **View listing** in the card's
+  upper-right action stack, beneath the verdict/star row, only when this field
+  is present, so review links and prices from other observations are never
+  substituted.
 - Every option ends `created_at DESC, id DESC` so ties are reproducible.
 - Dashboard price sorts use converted display amounts. Recommendation
   shortlisting separately normalizes candidate prices into the device budget
