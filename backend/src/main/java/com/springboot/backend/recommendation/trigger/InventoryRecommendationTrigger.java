@@ -4,6 +4,7 @@ import com.springboot.backend.service.DeviceInventoryChanged;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -15,14 +16,8 @@ import org.springframework.transaction.event.TransactionalEventListener;
  *
  * <p>After commit, because the run reads the device and its preferences back
  * from the database on another thread: before commit they are not visible there,
- * and a rolled-back save must not produce recommendations.
- *
- * <p>The listener itself is synchronous and only queues the run
- * ({@link RecommendationTriggerService#queueDeviceRun}), so the inventory request
- * still returns without waiting on the pipeline or the AI service. Queuing here,
- * rather than via {@code @Async}, is what stamps the run with the device's
- * generation in save order, so a newer save supersedes an older run still in
- * the queue.
+ * and a rolled-back save must not produce recommendations. Async, so the
+ * inventory request returns without waiting on the pipeline or the AI service.
  *
  * <p>Any failure is logged and swallowed: the inventory change has already
  * committed and must not look failed because its recommendations did.
@@ -39,12 +34,13 @@ public class InventoryRecommendationTrigger {
         this.service = service;
     }
 
+    @Async(RecommendationTriggerConfiguration.EXECUTOR)
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onInventoryChanged(DeviceInventoryChanged event) {
         try {
-            service.queueDeviceRun(event.userDeviceId(), "DEVICE_" + event.change());
+            service.runForDevice(event.userDeviceId(), "DEVICE_" + event.change());
         } catch (RuntimeException e) {
-            LOG.error("Could not queue the inventory-triggered evaluation for device {}", event.userDeviceId(), e);
+            LOG.error("Inventory-triggered evaluation failed for device {}", event.userDeviceId(), e);
         }
     }
 }
