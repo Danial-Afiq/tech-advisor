@@ -10,7 +10,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-/** Both listeners only translate their event into a (queued) trigger run, and never let a failure escape. */
+/** Both listeners only translate their event into a trigger run, and never let a failure escape. */
 @ExtendWith(MockitoExtension.class)
 class InventoryRecommendationTriggerTest {
 
@@ -21,7 +21,7 @@ class InventoryRecommendationTriggerTest {
         new InventoryRecommendationTrigger(service)
                 .onInventoryChanged(new DeviceInventoryChanged(42L, DeviceInventoryChanged.Change.ADDED));
 
-        verify(service).queueDeviceRun(42L, "DEVICE_ADDED");
+        verify(service).runForDevice(42L, "DEVICE_ADDED");
     }
 
     @Test
@@ -29,7 +29,7 @@ class InventoryRecommendationTriggerTest {
         new InventoryRecommendationTrigger(service)
                 .onInventoryChanged(new DeviceInventoryChanged(42L, DeviceInventoryChanged.Change.UPDATED));
 
-        verify(service).queueDeviceRun(42L, "DEVICE_UPDATED");
+        verify(service).runForDevice(42L, "DEVICE_UPDATED");
     }
 
     @Test
@@ -41,7 +41,7 @@ class InventoryRecommendationTriggerTest {
 
     @Test
     void failuresDoNotEscapeEitherListener() {
-        doThrow(new IllegalStateException("boom")).when(service).queueDeviceRun(anyLong(), anyString());
+        when(service.runForDevice(anyLong(), anyString())).thenThrow(new IllegalStateException("boom"));
         when(service.runForMarketEvent(anyLong(), anyString())).thenThrow(new IllegalStateException("boom"));
 
         assertDoesNotThrow(() -> new InventoryRecommendationTrigger(service)
