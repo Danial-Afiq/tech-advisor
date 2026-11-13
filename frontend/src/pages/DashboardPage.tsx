@@ -39,6 +39,7 @@ import {
 } from "../components/recommendations/recommendationOptions";
 import { SpecComparison } from "../components/recommendations/SpecComparison";
 import { useComparisonSpecs } from "../components/recommendations/useComparisonSpecs";
+import { RefreshProgress } from "../components/recommendations/RefreshProgress";
 import {
   REFRESH_POLL_MS,
   recommendationsRefreshingUntil,
@@ -471,14 +472,7 @@ export default function DashboardPage() {
         )}
 
       {refreshUntil !== null && !error && (
-        <p
-          role="status"
-          className="mb-[14px] mt-0 text-[13px] text-[#8fa0b8]"
-        >
-          Updating recommendations after your recent device change. New
-          results appear here automatically; explanations can take a few
-          minutes longer.
-        </p>
+        <RefreshProgress until={refreshUntil} />
       )}
 
       {loading && (

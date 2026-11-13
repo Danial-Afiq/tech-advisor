@@ -1291,7 +1291,7 @@ describe("DashboardPage", () => {
 
         renderPage();
 
-        expect(await screen.findByText(/Updating recommendations after your recent device change/)).toBeInTheDocument();
+        expect(await screen.findByRole("progressbar", { name: "Updating recommendations" })).toBeInTheDocument();
         expect(mocks.listDashboardRecommendations).toHaveBeenCalledOnce();
 
         await act(async () => {
@@ -1304,7 +1304,7 @@ describe("DashboardPage", () => {
           await vi.advanceTimersByTimeAsync(REFRESH_WINDOW_MS);
         });
         await waitFor(() =>
-          expect(screen.queryByText(/Updating recommendations after your recent device change/)).not.toBeInTheDocument()
+          expect(screen.queryByRole("progressbar")).not.toBeInTheDocument()
         );
         const calls = mocks.listDashboardRecommendations.mock.calls.length;
         await act(async () => {
@@ -1319,7 +1319,7 @@ describe("DashboardPage", () => {
     it("does not poll when nothing changed", async () => {
       renderPage();
       await screen.findByText("No active recommendations yet");
-      expect(screen.queryByText(/Updating recommendations/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     });
   });
 });

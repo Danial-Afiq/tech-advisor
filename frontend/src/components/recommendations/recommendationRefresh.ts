@@ -12,7 +12,7 @@
 const STORAGE_KEY = "tech-advisor.recommendationsRefreshingUntil";
 
 /** How long the dashboard keeps re-fetching after a device change. */
-export const REFRESH_WINDOW_MS = 2 * 60 * 1000;
+export const REFRESH_WINDOW_MS = 60 * 1000;
 
 /** How often the dashboard re-fetches inside that window. */
 export const REFRESH_POLL_MS = 5 * 1000;

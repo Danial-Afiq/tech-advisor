@@ -3546,8 +3546,9 @@ The add-device form still sends no budget until step 2 is saved. There is no
 currency picker: the saved currency is retained, otherwise SGD is sent (§27.9).
 After a successful device edit or upgrade-profile save, the devices page marks
 the tab (`recommendationRefresh.ts`, sessionStorage, best effort). While that mark
-is younger than two minutes the dashboard shows an "Updating recommendations"
-status and re-fetches every 5 s, so the regenerated rows replace the old ones
+is younger than one minute the dashboard shows an "Updating recommendations"
+time-based loading bar (`RefreshProgress`; an estimate, not a completion signal) and
+re-fetches every 5 s, so the regenerated rows replace the old ones
 without a manual reload (the PUT returns before the async re-run finishes).
 Tests: `DashboardPage.test.tsx`, `DevicesPageTest.test.tsx`.
 The existing `DeviceInventoryChanged(UPDATED)` event re-evaluates recommendations
