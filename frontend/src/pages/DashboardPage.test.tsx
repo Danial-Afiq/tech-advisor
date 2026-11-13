@@ -12,6 +12,11 @@ import { ApiError } from "../api/client";
 import type { DashboardRecommendation, SortOption } from "../api/dashboard";
 import { CURRENCY_STORAGE_KEY } from "../components/currency/currency";
 import { CurrencyProvider } from "../components/currency/CurrencyContext";
+import {
+  REFRESH_POLL_MS,
+  REFRESH_WINDOW_MS,
+  markRecommendationsRefreshing,
+} from "../components/recommendations/recommendationRefresh";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -196,6 +201,7 @@ function deferred<T>() {
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.removeItem(CURRENCY_STORAGE_KEY);
+  window.sessionStorage.clear();
 
   mocks.getSession.mockReturnValue({
     token: "user-token",
@@ -1280,6 +1286,48 @@ describe("DashboardPage", () => {
       expect(await within(card).findByText(/not available/)).toBeInTheDocument();
       // A failed comparison is not a page error.
       expect(screen.queryByText(/couldn’t load your dashboard/)).not.toBeInTheDocument();
+    });
+  });
+  describe("after a device or preference change", () => {
+    it("says it is updating and re-fetches until the regenerated rows arrive", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        markRecommendationsRefreshing();
+        mocks.listDashboardRecommendations
+          .mockResolvedValueOnce([recommended])
+          .mockResolvedValue([worthWatching]);
+
+        renderPage();
+
+        expect(await screen.findByRole("progressbar", { name: "Updating recommendations" })).toBeInTheDocument();
+        expect(mocks.listDashboardRecommendations).toHaveBeenCalledOnce();
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(REFRESH_POLL_MS);
+        });
+        await waitFor(() => expect(mocks.listDashboardRecommendations).toHaveBeenCalledTimes(2));
+
+        // Past the window, the page stops polling and drops the notice.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(REFRESH_WINDOW_MS);
+        });
+        await waitFor(() =>
+          expect(screen.queryByRole("progressbar")).not.toBeInTheDocument()
+        );
+        const calls = mocks.listDashboardRecommendations.mock.calls.length;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(REFRESH_POLL_MS * 3);
+        });
+        expect(mocks.listDashboardRecommendations).toHaveBeenCalledTimes(calls);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not poll when nothing changed", async () => {
+      renderPage();
+      await screen.findByText("No active recommendations yet");
+      expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     });
   });
 });
