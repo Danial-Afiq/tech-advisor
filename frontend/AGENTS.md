@@ -192,6 +192,18 @@ When `onDismiss` is supplied, the card also shows **Not interested**. The
 dashboard owns the reason/comment modal, calls the dismissal API, and removes
 the card only after the request succeeds (root §26.4).
 
+`SpecificationFilterControl` is the separate dashboard toolbar button and modal
+for optional per-owned-device specification rules. It reuses
+`PHONE_SPEC_SCHEMA`/`GPU_SPEC_SCHEMA` labels and units, exposes inclusive numeric
+minimum/maximum inputs plus exact choices for selected text fields, and keeps a
+draft until Apply filters. `specificationFilterOptions.ts` maps the schemas'
+camelCase keys to the dashboard snapshot's canonical snake_case names and owns
+choice/count/clone helpers. `recommendationOptions.ts` performs the pure matching:
+all active rules for the row's device must match, unknown values fail closed, and
+the backend order is never changed. The API row's `candidateCategory` and
+`candidateSpecifications` come from its persisted evaluation snapshot; filtering
+does not rescore or call the AI service.
+
 ---
 
 ### `components/notifications/` — in-app notifications (ticket 4.4.2)
@@ -391,7 +403,10 @@ sticky sidebar and top bar stick to.
   sort; price ascending, price descending and newest-first are also available.
   Sort is URL-backed, survives refreshes and does not reset the local filters;
   filters preserve the server order. The result count, Filters and Sort controls
-  share one responsive toolbar. Recommendation cards label the representative
+  share one responsive toolbar with a separate Specifications button. Its modal
+  keeps optional numeric ranges and categorical choices per owned device; blank
+  rules do nothing, unknown candidate values fail an active rule, and invalid
+  ranges cannot be applied. Recommendation cards label the representative
   model-level amount "Indicative price", preserve "Price unavailable", and the
   toolbar displays the pricing disclaimer once per populated page. Overview
   cards retain totals for all active recommendations. Users

@@ -15,6 +15,8 @@ const baseRecommendation: DashboardRecommendation = {
   candidateProductId: 20,
   candidateBrand: "Samsung",
   candidateModelName: "Galaxy S26",
+  candidateCategory: "SMARTPHONE",
+  candidateSpecifications: { ram_gb: 12 },
   latestPrice: 1299,
   currency: "SGD",
   verdict: "STRONG_UPGRADE_CANDIDATE",

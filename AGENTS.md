@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 12 November 2026
+> **Last consolidated:** 13 November 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -1405,10 +1405,14 @@ locks in that `UpgradeClassificationService.OwnedSide` carries no condition or s
 How to run, expectations, results and drafted bugs: `docs/e2e/SCRUM-143-*.md`.
 Findings from the first run (`gpt-5.5`): the verdict channel matched 6/6 scenarios;
 grades followed review tone (negative D–F 10/10, positive A 5/5); the injected
-instruction was ignored 5/5. **Summaries never mention the user's condition,
-satisfaction or pain points** (0/11), because `prompt.py` never asks for it. They also
-narrate internals and sometimes cite `P*` refs in prose. Both are open bugs, not
-intended behaviour.
+instruction was ignored 5/5. Summaries never mentioned the user's condition,
+satisfaction or pain points (0/11) and narrated internals / `P*` refs (BUG-1, BUG-2).
+**Fixed on `fix/llm-sys-prompt`:** `INSTRUCTION_BLOCK` in `ai/app/prompt.py` now tells the model
+to personalise the summary from all of `user_context` (device condition, satisfaction, priorities,
+pain points, notes, budget, urgency, brand flexibility) and forbids internals (passage refs,
+"analysis block", enum values). Re-run (26 real calls): all 8 tests pass, scenario 11 found 0
+failures in 26 summaries. Remaining cosmetic issues: fixture names leak ("your My old phone") and
+enums are occasionally echoed in caps ("EXCELLENT").
 
 ---
 
@@ -3002,7 +3006,8 @@ Known files include:
   the all-tables visualisation panel (§16.7).
 - `pages/DashboardPage.tsx` (`/dashboard`): the authenticated USER's single
   recommendation overview/browsing page, using reusable cards, server-side sort
-  and device/verdict/evidence-grade filters (§23.4, §26.4).
+  and device/verdict/evidence-grade/per-device specification filters (§23.4,
+  §26.4).
 - `config.ts`
 - Vite setup
 - CSS
@@ -4095,6 +4100,15 @@ handler — the generic `IllegalArgumentException` mapping in
   arrow are green when better or red when worse, so a lighter phone is a green ▼.
   Differing text specs (no judgement) are only bolded. This is a
   display of what the verdict already computed, not a second judgement.
+- The same response also carries `candidateCategory` and
+  `candidateSpecifications`. The latter is the non-null scalar `candidate` value
+  from each persisted `input_snapshot.computed.spec_deltas` entry, keyed by the
+  canonical database spec name (`ram_gb`, `display_size_inches`, `vram`, etc.).
+  It deliberately uses the generation-time snapshot rather than today's catalogue
+  row, so a dashboard specification filter evaluates the same facts that produced
+  the stored verdict. Older/malformed snapshots return an empty object and active
+  constraints fail closed; no catalogue request, database migration, rescoring or
+  model call is involved.
 - Device cards with no saved budget say that one is needed for recommendations
   (§27.10) and highlight Upgrade preferences.
 
@@ -4231,7 +4245,28 @@ to that card or explains that it is no longer active or is hidden by the filters
 while opening/closing the dropdown and reset when the page unmounts. The dropdown
 supports keyboard opening, Escape, focus return, and outside-click dismissal.
 
-The result count, Filters button and Sort by select share one responsive toolbar.
+The separate **Specifications** toolbar button opens a shared modal for optional,
+deterministic candidate-spec filters. Rules are stored in React state per owned
+device. The modal derives phone/GPU fields, labels and units from the existing
+`PHONE_SPEC_SCHEMA` / `GPU_SPEC_SCHEMA`: numeric fields accept an inclusive minimum,
+maximum or both, while OS, IP rating, GPU architecture and memory type use exact
+multi-select choices discovered from the returned candidates. Blank numeric bounds
+and empty choices are no-ops; minimum greater than maximum cannot be applied. All
+active rules for one device combine with AND, then combine with the other filter
+groups by AND. A missing/unknown candidate value fails an active rule instead of
+being read as zero. Rules for one device never affect another device's group, and
+the server's selected order is preserved. Clear filters at page level removes them;
+the original Filters dropdown's Clear action leaves them and the Saved toggle alone.
+These are presentation filters over active rows only: they do not change candidate
+pruning, verdicts, persistence, or AI work.
+
+`GET /api/dashboard/recommendations` supplies `candidateCategory` and
+`candidateSpecifications` for this UI. Specifications come from the persisted
+recommendation snapshot, not a live catalogue join (§23.4), so the filter remains
+auditable and consistent with the displayed verdict.
+
+The result count, Saved toggle, Filters and Specifications buttons, and Sort by
+select share one responsive toolbar.
 The overview continues to describe the full active set. `RecommendationCard`
 owns the standard card presentation: owned device, suggested product, Latest
 price, deterministic verdict, explanation and the separate owner evidence grade,

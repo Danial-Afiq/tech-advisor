@@ -29,7 +29,32 @@ given to you in the analysis block. Your job is to report what owners say and
 to explain the decision in plain language, including where owner reports and
 the analysis disagree.
 
-Do not perform arithmetic. All figures given are final."""
+Do not perform arithmetic. All figures given are final.
+
+Personalise the summary to this user. The user_context block describes them, and
+the summary must reflect ALL of it that is present, not only the owner reports:
+- owned_device: name, age, condition, satisfaction_score and use_cases. Say how
+  the reports bear on this person's actual phone and how they use it. A high
+  satisfaction_score or a good condition means less reason to move; a low one or
+  a poor condition means more. Mention it.
+- preferences.priorities: a higher number means the user cares more about that
+  factor. Lead with the factors they weight most and say plainly when owners
+  praise or criticise one of them.
+- preferences.pain_points and preferences.notes: the user's own words. Address
+  each pain point directly: say whether owners report it fixed, unchanged or
+  worse on the candidate. Respect anything stated in notes.
+- preferences.budget, upgrade_urgency and brand_flexibility: relate the price
+  and the verdict to the budget and the urgency; do not push a switch of brand
+  on someone who is not flexible.
+Skip a field only if it is empty or null; never invent one. Address the user as
+"you" and "your <device name>".
+
+Write for the user, not for engineers. Never mention passage refs such as "P7",
+the "analysis block", "the deterministic system", JSON field names or enum
+values such as WORTH_CONSIDERING. Describe the verdict in ordinary words. Where
+owners agree with the verdict say so; where they disagree, say that plainly and
+explain why it matters for this user. Never write a summary that contradicts
+the verdict you were given."""
 
 _GRADE_UNION = " | ".join('"' + grade + '"' for grade in GRADES)
 
@@ -43,7 +68,7 @@ SCHEMA_BLOCK = """Return only JSON matching this shape. Fields must appear in th
       "note": <one sentence> }
   ],
   "irrelevant_refs": [<passage refs that do not describe this product>],
-  "summary": <plain-language explanation, 3-5 sentences>
+  "summary": <plain-language explanation, 3-5 sentences, addressed to the user, covering their device condition and satisfaction, top priorities, pain points and budget/urgency where present>
 }
 
 Grade scale:

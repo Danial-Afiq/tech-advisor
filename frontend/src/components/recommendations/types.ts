@@ -23,6 +23,9 @@ export type DashboardRecommendation = {
   candidateProductId: number;
   candidateBrand: string;
   candidateModelName: string;
+  candidateCategory: string;
+  /** Snapshot values keyed by canonical backend spec names such as `ram_gb`. */
+  candidateSpecifications: Record<string, string | number>;
   latestPrice: number | null;
   currency: string | null;
   /** HTTP(S) listing URL from the exact price observation displayed, when available. */
@@ -54,4 +57,23 @@ export type RecommendationFilters = {
   evidenceGrades: FilterEvidenceGrade[];
   /** Show only starred (saved) recommendations. Set by the toolbar toggle, not the dropdown. */
   savedOnly: boolean;
+  /** Optional deterministic candidate-spec constraints, scoped to each owned device. */
+  specificationsByDevice: Record<string, SpecificationConstraint[]>;
 };
+
+export type NumericSpecificationConstraint = {
+  kind: "numeric";
+  spec: string;
+  min: number | null;
+  max: number | null;
+};
+
+export type CategoricalSpecificationConstraint = {
+  kind: "categorical";
+  spec: string;
+  values: string[];
+};
+
+export type SpecificationConstraint =
+  | NumericSpecificationConstraint
+  | CategoricalSpecificationConstraint;

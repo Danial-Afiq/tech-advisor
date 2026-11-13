@@ -31,6 +31,7 @@ import { useToasts } from "../components/ui/useToasts";
 import { PageHeader } from "../components/ui/PageHeader";
 import { EmptyState } from "../components/ui/EmptyState";
 import { RecommendationFilterDropdown } from "../components/recommendations/RecommendationFilterDropdown";
+import { SpecificationFilterControl } from "../components/recommendations/SpecificationFilterControl";
 import {
   TOP_RECOMMENDATIONS_PER_DEVICE,
   emptyRecommendationFilters,
@@ -540,6 +541,12 @@ export default function DashboardPage() {
               onChange={setFilters}
             />
 
+            <SpecificationFilterControl
+              recommendations={recommendations}
+              filters={filters}
+              onChange={setFilters}
+            />
+
             <label className="flex items-center gap-[8px] text-[13px] font-semibold text-[#c6d1df] max-[620px]:w-full">
               <span className="shrink-0">Sort by</span>
               <Select
@@ -596,7 +603,7 @@ export default function DashboardPage() {
         <EmptyState
           icon="✦"
           title="No recommendations match your filters"
-          description="Try another device, verdict or evidence grade, or clear your filters to see all recommendations."
+          description="Try another device, verdict, evidence grade or specification range, or clear your filters to see all recommendations."
           action={
             <Button variant="primary" onClick={() => setFilters(emptyRecommendationFilters())}>
               Clear filters
