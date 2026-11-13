@@ -40,6 +40,10 @@ import {
 import { SpecComparison } from "../components/recommendations/SpecComparison";
 import { useComparisonSpecs } from "../components/recommendations/useComparisonSpecs";
 import {
+  REFRESH_POLL_MS,
+  recommendationsRefreshingUntil,
+} from "../components/recommendations/recommendationRefresh";
+import {
   DASHBOARD_PATH,
   DEVICES_PATH,
   LOGIN_PATH,
@@ -100,6 +104,22 @@ export default function DashboardPage() {
   const { toasts, pushToast } = useToasts();
   // Bumped to refetch the current sort, e.g. after a row was replaced server-side.
   const [reloadCount, setReloadCount] = useState(0);
+  // Set after a device/preference save: its rows are being regenerated server-side.
+  const [refreshUntil, setRefreshUntil] = useState(() =>
+    recommendationsRefreshingUntil()
+  );
+
+  useEffect(() => {
+    if (refreshUntil === null) return;
+    const poll = window.setInterval(() => {
+      if (Date.now() >= refreshUntil) {
+        setRefreshUntil(recommendationsRefreshingUntil());
+        return;
+      }
+      setReloadCount((count) => count + 1);
+    }, REFRESH_POLL_MS);
+    return () => window.clearInterval(poll);
+  }, [refreshUntil]);
 
   useEffect(() => {
     if (loading || highlightId === null) return;
@@ -449,6 +469,17 @@ export default function DashboardPage() {
             </Card>
           </section>
         )}
+
+      {refreshUntil !== null && !error && (
+        <p
+          role="status"
+          className="mb-[14px] mt-0 text-[13px] text-[#8fa0b8]"
+        >
+          Updating recommendations after your recent device change. New
+          results appear here automatically; explanations can take a few
+          minutes longer.
+        </p>
+      )}
 
       {loading && (
         <LoadingBlock label="Loading your recommendations…" />

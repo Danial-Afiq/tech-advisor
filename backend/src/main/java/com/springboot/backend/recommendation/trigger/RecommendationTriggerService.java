@@ -11,7 +11,10 @@ import com.springboot.backend.recommendation.DeterministicRecommendationService.
 import com.springboot.backend.recommendation.classification.TierMapper;
 import com.springboot.backend.repository.ProductRepository;
 import com.springboot.backend.repository.UserDeviceRepository;
+import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -38,12 +41,21 @@ import org.springframework.stereotype.Service;
  * <p>Not {@code @Transactional}. Every pair commits on its own and every
  * failure is caught per pair or per device, so one bad pair neither rolls back
  * nor stops the rest. Each run ends with exactly one {@code system_log} row.
+ *
+ * <p><b>Newest device change wins.</b> Runs share one trigger thread, and a
+ * device run makes up to one model call per shortlisted candidate, so an older
+ * run can hold the thread for minutes. Every device run is therefore stamped
+ * with that device's generation when it is queued; a run whose generation is no
+ * longer the latest is skipped before it starts and stops before its next model
+ * call. A preference save then reaches the dashboard after at most the one model
+ * call already in flight, not after the whole older run.
  */
 @Service
 public class RecommendationTriggerService {
 
     static final String CAUSE_MARKET_EVENT = "MARKET_EVENT_RECORDED";
     static final String CAUSE_ADMIN = "ADMIN_REFIRE";
+    static final String SUPERSEDED = "superseded by a newer change to this device";
 
     private static final Logger LOG = LoggerFactory.getLogger(RecommendationTriggerService.class);
 
@@ -55,6 +67,8 @@ public class RecommendationTriggerService {
     private final AiAssessmentStep aiStep;
     private final TriggerRunLog runLog;
     private final TaskExecutor executor;
+    /** Latest queued run per owned device; see the class comment. */
+    private final ConcurrentMap<Long, Long> deviceGenerations = new ConcurrentHashMap<>();
 
     public RecommendationTriggerService(
             MarketEventService marketEvents,
@@ -144,13 +158,37 @@ public class RecommendationTriggerService {
     }
 
     /**
-     * Trigger 2. A device that is not evaluable yet (no catalogue link, no
-     * budget, no longer current) is skipped and logged.
+     * Trigger 2, run now on the calling thread. A device that is not evaluable
+     * yet (no catalogue link, no budget, no longer current) is skipped and
+     * logged. Becomes this device's latest run, so any older one still queued or
+     * running for it stops early.
      */
     public TriggerRun runForDevice(long userDeviceId, String cause) {
+        return runForDevice(userDeviceId, cause, nextGeneration(userDeviceId));
+    }
+
+    /**
+     * Trigger 2, queued on the trigger thread. Takes this device's next
+     * generation now, at queue time, so every run queued or running before it
+     * for the same device is superseded. Never throws.
+     */
+    public void queueDeviceRun(long userDeviceId, String cause) {
+        long generation = nextGeneration(userDeviceId);
+        executor.execute(() -> {
+            try {
+                runForDevice(userDeviceId, cause, generation);
+            } catch (RuntimeException e) {
+                LOG.error("Inventory-triggered evaluation failed for device {}", userDeviceId, e);
+            }
+        });
+    }
+
+    TriggerRun runForDevice(long userDeviceId, String cause, long generation) {
         TriggerRun run = new TriggerRun(TriggerRun.Kind.DEVICE_INVENTORY, cause).context("user_device_id", userDeviceId);
         try {
-            if (!devices.isEvaluable(userDeviceId)) {
+            if (!isLatest(userDeviceId, generation)) {
+                run.skip(SUPERSEDED);
+            } else if (!devices.isEvaluable(userDeviceId)) {
                 run.skip("device not evaluable (needs to be current, linked to a catalogue product, and have a budget)");
             } else {
                 PersistedEvaluation persisted = deterministic.evaluateAndPersist(userDeviceId);
@@ -159,8 +197,13 @@ public class RecommendationTriggerService {
                 run.selected(evaluation.ranked().size() + evaluation.skipped().size());
 
                 evaluation.skipped().forEach(s -> run.record(TriggerRun.PairOutcome.UNCLASSIFIABLE));
-                for (CandidateEvaluation.Classified classified : evaluation.ranked()) {
-                    afterClassification(run, evaluation, classified, null, null);
+                List<CandidateEvaluation.Classified> ranked = evaluation.ranked();
+                for (int i = 0; i < ranked.size(); i++) {
+                    if (!isLatest(userDeviceId, generation)) {
+                        run.supersede(ranked.size() - i);
+                        break;
+                    }
+                    afterClassification(run, evaluation, ranked.get(i), null, null);
                 }
             }
         } catch (RuntimeException e) {
@@ -197,6 +240,14 @@ public class RecommendationTriggerService {
         }
     }
 
+    private long nextGeneration(long userDeviceId) {
+        return deviceGenerations.merge(userDeviceId, 1L, Long::sum);
+    }
+
+    private boolean isLatest(long userDeviceId, long generation) {
+        return deviceGenerations.getOrDefault(userDeviceId, 0L) == generation;
+    }
+
     private TriggerRun finish(TriggerRun run) {
         try {
             runLog.write(run);
@@ -229,6 +280,6 @@ public class RecommendationTriggerService {
         if (!devices.existsById(userDeviceId)) {
             throw new ResourceNotFoundException("Owned device " + userDeviceId + " not found");
         }
-        executor.execute(() -> runForDevice(userDeviceId, CAUSE_ADMIN));
+        queueDeviceRun(userDeviceId, CAUSE_ADMIN);
     }
 }
