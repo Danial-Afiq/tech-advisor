@@ -102,6 +102,12 @@ public class DeterministicRecommendationService {
      * left alone rather than deleted.
      */
     public PersistedEvaluation evaluateAndPersist(Long userDeviceId) {
+        return evaluateAndPersist(userDeviceId, RecommendationEmailMode.INDIVIDUAL);
+    }
+
+    public PersistedEvaluation evaluateAndPersist(
+            Long userDeviceId,
+            RecommendationEmailMode emailMode) {
         CandidateEvaluation evaluation = evaluationService.evaluate(userDeviceId);
 
         Set<Long> shortlisted = new LinkedHashSet<>();
@@ -110,7 +116,7 @@ public class DeterministicRecommendationService {
 
         List<RecommendationRecord> records = toRecords(evaluation, null);
 
-        int deleted = repository.replaceForDevice(userDeviceId, shortlisted, records);
+        int deleted = repository.replaceForDevice(userDeviceId, shortlisted, records, emailMode);
         return new PersistedEvaluation(evaluation, records.size(), deleted);
     }
 

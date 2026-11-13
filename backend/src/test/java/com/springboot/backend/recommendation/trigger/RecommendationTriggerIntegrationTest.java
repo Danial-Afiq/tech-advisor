@@ -68,6 +68,8 @@ class RecommendationTriggerIntegrationTest {
     @Autowired private RecommendationTriggerService triggers;
     @Autowired private JdbcTemplate db;
     @Autowired @Qualifier(RecommendationTriggerConfiguration.EXECUTOR) private ThreadPoolTaskExecutor executor;
+    @Autowired @Qualifier(com.springboot.backend.email.RecommendationEmailConfiguration.EXECUTOR)
+    private ThreadPoolTaskExecutor emailExecutor;
 
     @MockitoBean private AiAssessmentClient aiClient;
     @MockitoBean private RecommendationEmailSender emailSender;
@@ -108,6 +110,7 @@ class RecommendationTriggerIntegrationTest {
     @AfterEach
     void cleanUp() throws InterruptedException {
         awaitIdle();
+        awaitEmailIdle();
         db.update("DELETE FROM recommendations");
         db.update("DELETE FROM system_log WHERE component LIKE 'TRIGGER_%'");
         db.update("DELETE FROM system_log WHERE component = 'RECOMMENDATION_EMAIL'");
@@ -183,7 +186,9 @@ class RecommendationTriggerIntegrationTest {
         triggers.runForDevice(sibling, RecommendationTriggerService.CAUSE_ADMIN);
         assertEquals(2, rowCount(upgrader1, "ACTIVE"));
         List<Map<String, Object>> siblingBefore = db.queryForList(
-                "SELECT * FROM recommendations WHERE current_device_id = ? ORDER BY id", sibling);
+                "SELECT id, status, verdict, confidence, reasoning, ai_model, prompt_version, starred "
+                        + "FROM recommendations WHERE current_device_id = ? ORDER BY id",
+                sibling);
         assertEquals(2, rowCount(sibling, "ACTIVE"));
 
         DeviceRequest request = new DeviceRequest();
@@ -225,7 +230,9 @@ class RecommendationTriggerIntegrationTest {
         assertEquals("FLEXIBLE", db.queryForObject(
                 "SELECT brand_flexibility FROM device_preferences WHERE user_device_id = ?", String.class, sibling));
         assertEquals(siblingBefore, db.queryForList(
-                "SELECT * FROM recommendations WHERE current_device_id = ? ORDER BY id", sibling));
+                "SELECT id, status, verdict, confidence, reasoning, ai_model, prompt_version, starred "
+                        + "FROM recommendations WHERE current_device_id = ? ORDER BY id",
+                sibling));
     }
 
     // AC6
@@ -233,6 +240,7 @@ class RecommendationTriggerIntegrationTest {
     void reFiringTheSameEventLeavesExactlyOneActiveRowPerPair() throws InterruptedException {
         MarketEvent event = priceDrop(flagship);
         awaitMarketEventLog(event.id());
+        awaitEmailIdle();
 
         triggers.runForMarketEvent(event.id(), RecommendationTriggerService.CAUSE_ADMIN);
 
@@ -339,6 +347,61 @@ class RecommendationTriggerIntegrationTest {
     }
 
     @Test
+    void slowSmtpDoesNotBlockTheRecommendationWorkerOrTheNextDevice() throws InterruptedException {
+        CountDownLatch smtpEntered = new CountDownLatch(1);
+        CountDownLatch releaseSmtp = new CountDownLatch(1);
+        doAnswer(call -> {
+            smtpEntered.countDown();
+            releaseSmtp.await(30, TimeUnit.SECONDS);
+            return null;
+        }).when(emailSender).send(anyString(), anyString(), anyString());
+
+        try {
+            MarketEvent event = priceDrop(flagship);
+            assertTrue(smtpEntered.await(10, TimeUnit.SECONDS), "email delivery never started");
+
+            Map<String, Object> log = awaitMarketEventLog(event.id());
+            assertEquals("SUCCESS", log.get("status"));
+            assertNotNull(activeRow(upgrader1, flagship).get("ai_model"));
+            assertNotNull(activeRow(upgrader2, flagship).get("ai_model"));
+            assertEquals(1, releaseSmtp.getCount(), "trigger completed while SMTP was still blocked");
+        } finally {
+            releaseSmtp.countDown();
+        }
+    }
+
+    @Test
+    void removingADeviceDuringAiStopsRemainingCandidatesAndDiscardsTheInFlightResponse()
+            throws InterruptedException {
+        CountDownLatch aiEntered = new CountDownLatch(1);
+        CountDownLatch releaseAi = new CountDownLatch(1);
+        doAnswer(call -> {
+            aiEntered.countDown();
+            releaseAi.await(30, TimeUnit.SECONDS);
+            return success(call.getArgument(0));
+        }).when(aiClient).assess(any());
+
+        try {
+            executor.execute(() -> triggers.runForDevice(upgrader1, RecommendationTriggerService.CAUSE_ADMIN));
+            assertTrue(aiEntered.await(10, TimeUnit.SECONDS), "AI assessment never started");
+
+            db.update("UPDATE user_devices SET is_current = FALSE WHERE id = ?", upgrader1);
+            releaseAi.countDown();
+            Map<String, Object> log = awaitDeviceLog(upgrader1);
+
+            verify(aiClient, times(1)).assess(any());
+            assertEquals("SUCCESS", log.get("status"));
+            assertEquals(0, db.queryForObject(
+                    "SELECT COUNT(*) FROM recommendations WHERE current_device_id = ? AND ai_model IS NOT NULL",
+                    Integer.class,
+                    upgrader1));
+            verify(emailSender, never()).send(anyString(), anyString(), anyString());
+        } finally {
+            releaseAi.countDown();
+        }
+    }
+
+    @Test
     void aiEnrichmentTriggersEmailWithoutDuplicatingInAppNotification()
             throws InterruptedException {
 
@@ -356,6 +419,7 @@ class RecommendationTriggerIntegrationTest {
 
         MarketEvent event = priceDrop(flagship);
         awaitMarketEventLog(event.id());
+        awaitEmailIdle();
 
         List<Map<String, Object>> versions = db.queryForList(
                 """
@@ -477,6 +541,12 @@ class RecommendationTriggerIntegrationTest {
     private void awaitIdle() throws InterruptedException {
         await(() -> executor.getActiveCount() == 0 && executor.getThreadPoolExecutor().getQueue().isEmpty(),
                 "trigger executor to drain");
+    }
+
+    private void awaitEmailIdle() throws InterruptedException {
+        await(() -> emailExecutor.getActiveCount() == 0
+                        && emailExecutor.getThreadPoolExecutor().getQueue().isEmpty(),
+                "recommendation email executor to drain");
     }
 
     private static void await(BooleanSupplier condition, String what) throws InterruptedException {

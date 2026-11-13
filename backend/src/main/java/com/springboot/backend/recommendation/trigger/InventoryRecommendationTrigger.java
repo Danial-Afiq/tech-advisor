@@ -38,7 +38,11 @@ public class InventoryRecommendationTrigger {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onInventoryChanged(DeviceInventoryChanged event) {
         try {
-            service.runForDevice(event.userDeviceId(), "DEVICE_" + event.change());
+            String cause = switch (event.change()) {
+                case ADDED -> RecommendationTriggerService.CAUSE_DEVICE_ADDED;
+                case UPDATED -> RecommendationTriggerService.CAUSE_DEVICE_UPDATED;
+            };
+            service.runForDevice(event.userDeviceId(), cause);
         } catch (RuntimeException e) {
             LOG.error("Inventory-triggered evaluation failed for device {}", event.userDeviceId(), e);
         }

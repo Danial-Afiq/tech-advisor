@@ -5,6 +5,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.BiFunction;
+import java.util.function.BooleanSupplier;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -27,10 +29,35 @@ public class RecommendationService {
     }
 
     public long assessAndPersist(RecommendationInput input) {
+        return assessAndPersist(
+                input,
+                () -> true,
+                repository::save);
+    }
+
+    public long assessAndPersist(
+            RecommendationInput input,
+            RecommendationEmailMode emailMode,
+            BooleanSupplier stillRelevant) {
+
+        return assessAndPersist(
+                input,
+                stillRelevant,
+                (record, degradedLog) -> repository.save(record, degradedLog, emailMode));
+    }
+
+    private long assessAndPersist(
+            RecommendationInput input,
+            BooleanSupplier stillRelevant,
+            BiFunction<RecommendationRecord, Map<String, Object>, Long> persist) {
         AssessRequest request = withRequestId(input.request());
         AssessmentValidation.validateAnalysis(request.analysis());
         AssessResponse response = aiClient.assess(request);
         AssessmentValidation.validateResponse(response);
+
+        if (!stillRelevant.getAsBoolean()) {
+            throw new RecommendationEvaluationCancelledException(input.currentDeviceId());
+        }
 
         Map<String, Object> degradedLog = null;
         if (response.meta().degraded()) {
@@ -50,7 +77,7 @@ public class RecommendationService {
                 response.meta().aiModel(),
                 response.meta().promptVersion());
 
-        return repository.save(record, degradedLog);
+        return persist.apply(record, degradedLog);
     }
 
     private AssessRequest withRequestId(AssessRequest request) {

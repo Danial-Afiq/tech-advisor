@@ -3,7 +3,10 @@ package com.springboot.backend.recommendation.trigger;
 import com.springboot.backend.recommendation.AssessRequest;
 import com.springboot.backend.recommendation.CandidateEvaluation;
 import com.springboot.backend.recommendation.RecommendationInput;
+import com.springboot.backend.recommendation.RecommendationEmailMode;
+import com.springboot.backend.recommendation.RecommendationEvaluationCancelledException;
 import com.springboot.backend.recommendation.RecommendationService;
+import com.springboot.backend.repository.UserDeviceRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -26,15 +29,18 @@ public class AiAssessmentStep {
 
     private final AssessRequestFactory requests;
     private final RecommendationService recommendations;
+    private final UserDeviceRepository devices;
     private final boolean enabled;
 
     public AiAssessmentStep(
             AssessRequestFactory requests,
             RecommendationService recommendations,
+            UserDeviceRepository devices,
             @Value("${recommendation.triggers.ai-assessment-enabled:true}") boolean enabled) {
 
         this.requests = requests;
         this.recommendations = recommendations;
+        this.devices = devices;
         this.enabled = enabled;
     }
 
@@ -48,23 +54,47 @@ public class AiAssessmentStep {
             Long triggerEventId,
             AssessRequest.TriggerEvent triggerEvent) {
 
+        return assess(
+                evaluation,
+                classified,
+                triggerEventId,
+                triggerEvent,
+                RecommendationEmailMode.INDIVIDUAL);
+    }
+
+    public Outcome assess(
+            CandidateEvaluation evaluation,
+            CandidateEvaluation.Classified classified,
+            Long triggerEventId,
+            AssessRequest.TriggerEvent triggerEvent,
+            RecommendationEmailMode emailMode) {
+
         if (!enabled) {
             return Outcome.skipped("AI assessment disabled (recommendation.triggers.ai-assessment-enabled=false)");
         }
 
         try {
+            if (!devices.isEvaluable(evaluation.userDeviceId())) {
+                return Outcome.skipped("device no longer evaluable");
+            }
+
             AssessRequestFactory.Built built = requests.build(evaluation.userDeviceId(), classified, triggerEvent);
             if (!built.complete()) {
                 return Outcome.skipped("missing " + String.join(", ", built.missing()));
             }
 
-            long id = recommendations.assessAndPersist(new RecommendationInput(
-                    evaluation.userId(),
-                    evaluation.userDeviceId(),
-                    triggerEventId,
-                    built.request(),
-                    classified.classification().toDeterministicFactors()));
+            long id = recommendations.assessAndPersist(
+                    new RecommendationInput(
+                            evaluation.userId(),
+                            evaluation.userDeviceId(),
+                            triggerEventId,
+                            built.request(),
+                            classified.classification().toDeterministicFactors()),
+                    emailMode,
+                    () -> devices.isEvaluable(evaluation.userDeviceId()));
             return Outcome.assessed(id);
+        } catch (RecommendationEvaluationCancelledException cancelled) {
+            return Outcome.skipped("device no longer evaluable");
         } catch (RuntimeException e) {
             return Outcome.failed(e);
         }

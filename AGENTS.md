@@ -1,6 +1,6 @@
 # AGENTS.md — Tech Advisor Shared Project Context
 
-> **Last consolidated:** 13 November 2026
+> **Last consolidated:** 14 November 2026
 >
 > **Project:** CS203 Human-AI Collaborative Software Development — Tech Advisor
 >
@@ -3447,7 +3447,9 @@ Shared behaviour (`RecommendationTriggerService`):
 - **One thread** (`RecommendationTriggerConfiguration`). Runs queue and execute one at a
   time, so two runs cannot race on the `ACTIVE` unique index and AI calls go out one
   at a time. Named because the ingestion `ThreadPoolTaskScheduler` would otherwise
-  catch `@Async`. A long market-event run delays device runs queued behind it.
+  catch `@Async`. A long market-event or AI request delays device runs queued behind
+  it, but SMTP delivery does not: recommendation email events run on the separate
+  single-threaded `recommendationEmailExecutor` (§27.7).
 - **Early exit.** A pair whose Channel A verdict is `NO_MEANINGFUL_CHANGE` keeps its
   deterministic row and makes **no** AI call (§7.1).
 - **AI step** (`AiAssessmentStep`) for every other pair: `AssessRequestFactory` builds
@@ -3467,6 +3469,12 @@ Shared behaviour (`RecommendationTriggerService`):
 - **Isolation.** Every pair commits on its own; any exception is caught per pair (or
   per device for Trigger 2), so one AI or data failure never rolls back or stops the
   rest. A failed pair keeps its deterministic row.
+- **Removed-device cancellation.** Trigger 2 re-checks `UserDeviceRepository.isEvaluable`
+  before every subsequent AI assessment. An already-running external request is not
+  forcibly cancelled, but its response is discarded before persistence if the device
+  became inactive; the remaining candidates stop. A queued run for an inactive device
+  exits at its initial evaluability check. Email delivery independently re-checks that
+  the device is current immediately before SMTP hand-off.
 - **Duplicates.** Supersede-and-insert uses the V14 partial unique index
   `(user_id, current_device_id, candidate_product_id) NULLS NOT DISTINCT WHERE
   status='ACTIVE'`. Re-running a device/candidate pair leaves one `ACTIVE` row and
@@ -3493,7 +3501,9 @@ Known limits, deliberately not addressed here:
 - Trigger 2 costs up to one model call per shortlisted candidate past the gate, on
   add *and* on edit; there is no per-device cap.
 - The Java maturity gate (§8.3) is still not implemented.
-- Removing a device, or unlinking its product, leaves its `ACTIVE` rows in place.
+- Removing a device, or unlinking its product, leaves its historical/`ACTIVE` rows in
+  place, but dashboard queries exclude non-current devices and ongoing Trigger 2 work
+  stops as described above.
 
 **Device preference persistence — IMPLEMENTED (21 Oct, SCRUM-38).** The existing
 `POST /api/devices` and `PUT /api/devices/{id}` accept optional `budget` (>= 0,
@@ -3684,6 +3694,9 @@ MAIL_USERNAME
 MAIL_PASSWORD
 MAIL_SMTP_AUTH
 MAIL_STARTTLS_ENABLED
+MAIL_SMTP_CONNECTION_TIMEOUT_MS # optional; default 5000
+MAIL_SMTP_READ_TIMEOUT_MS       # optional; default 10000
+MAIL_SMTP_WRITE_TIMEOUT_MS      # optional; default 10000
 MAIL_HEALTH_ENABLED # optional; default false
 NOTIFICATIONS_MAX_PER_USER # optional, commented out; default 10 (§14.14)
 ```
@@ -4399,20 +4412,38 @@ Because the current “confidence” concept has become an evidence grade, notif
 
 Do not blindly reuse old “confidence > x” wording.
 
-**Current state:** `TierMapper.isEmailEligible(verdict)` returns true only for
-`STRONG_UPGRADE_CANDIDATE`. That is deliberately narrower than the policy above
-and is **not** the finished rule - it considers the verdict alone, not evidence
-maturity or the user's settings. It is also only *eligibility*: nothing sends
-anything. There is no mail dependency, no template, no delivery and no
-deduplication anywhere in the backend, and the only Telegram in the repository is
-`.github/workflows/telegram-notifications.yml`, which alerts on CI/CD and has
-nothing to do with product notifications.
+**Current state — IMPLEMENTED:** recommendation email eligibility combines the
+configured verdict (default `STRONG_UPGRADE_CANDIDATE`), minimum owner-evidence
+grade (default B, therefore A/B), an enabled account and the user's
+`recommendation_emails_enabled` preference. The existing per-recommendation
+`email_status` / attempts / timestamps / error fields provide claiming,
+deduplication, retries and audit logging.
+
+`RecommendationEmailEventListener` preserves `AFTER_COMMIT` for saved-row events
+and dispatches all SMTP work to the isolated single-threaded
+`recommendationEmailExecutor`. SMTP connection/read/write defaults are 5/10/10
+seconds and are configurable with the `MAIL_SMTP_*_TIMEOUT_MS` variables. Delivery
+and its configured retries never occupy `recommendationExecutor`; failures leave
+the saved recommendation/dashboard result intact.
+
+Market-event and other ordinary recommendation saves retain their existing
+per-recommendation email behaviour. A `DEVICE_ADDED` run is different: every row is
+tagged `DEVICE_SUMMARY`, so individual saved-row events do not send. After all
+sequential AI enrichment has finished and committed, the trigger publishes
+`DeviceRecommendationEvaluationCompleted`. The email processor then reads the
+final `ACTIVE`, AI-graded rows, applies the same eligibility policy, ranks by the
+persisted deterministic `upgrade_score` descending with candidate product id and
+recommendation id as stable tie-breakers, and sends one summary containing at most
+the top three. All dashboard recommendations remain available. Zero qualifying
+rows sends nothing; reprocessing the completion event cannot duplicate delivery.
+The processor re-checks device/account/preference state immediately before every
+SMTP attempt, so removed devices and newly opted-out/disabled users are abandoned.
 
 **In-app notifications are implemented (§14.14)** and deliberately use none of
 this policy: they fire for any new or changed upgrade option and carry no
-confidence tier. Email remains unbuilt. If a tier is added later it must be computed
-by code from verdict + evidence grade with config cut-offs, and its HIGH tier must be
-the same rule as email eligibility.
+confidence tier. If a separate notification tier is added later, it must be
+computed by code from verdict + evidence grade with configuration cut-offs, and
+its HIGH tier must use the same rule as email eligibility.
 
 ## 27.8 PC/GPU expansion
 The canonical V6 includes the generic `products` table and a `gpu` subtype table alongside `phone`; V16 extends `gpu` (§14.6).

@@ -58,6 +58,47 @@ public class RecommendationEmailContentBuilder {
         return new RecommendationEmailContent(subject, body);
     }
 
+    public RecommendationEmailContent buildSummary(List<EmailRecommendation> recommendations) {
+        if (recommendations.isEmpty()) {
+            throw new IllegalArgumentException("A recommendation summary cannot be empty");
+        }
+
+        StringBuilder entries = new StringBuilder();
+        for (int index = 0; index < recommendations.size(); index++) {
+            EmailRecommendation recommendation = recommendations.get(index);
+            String reasoning = recommendation.reasoning() == null || recommendation.reasoning().isBlank()
+                    ? "No additional explanation was provided."
+                    : recommendation.reasoning().trim();
+
+            if (index > 0) {
+                entries.append(System.lineSeparator()).append(System.lineSeparator());
+            }
+            entries.append("%d. %s%n".formatted(index + 1, recommendation.productName()))
+                    .append("   Verdict: ").append(readable(recommendation.verdict())).append(System.lineSeparator())
+                    .append("   Owner-evidence grade: ").append(recommendation.grade()).append(System.lineSeparator())
+                    .append("   Upgrade score: ").append(formatScore(recommendation.upgradeScore()))
+                    .append(System.lineSeparator())
+                    .append("   Latest observed price: ")
+                    .append(formatPrice(recommendation.price(), recommendation.currency()))
+                    .append(System.lineSeparator())
+                    .append("   Top contributing factors:").append(System.lineSeparator())
+                    .append(indent(topFactors(recommendation.factorAnalysis()))).append(System.lineSeparator())
+                    .append("   Why this was recommended: ").append(reasoning).append(System.lineSeparator())
+                    .append("   Review or dismiss: ")
+                    .append(recommendationUrl(recommendation.recommendationId()));
+        }
+
+        String body = """
+                Tech Advisor found these strongest upgrade candidates for your newly added device.
+
+                %s
+
+                This is an assessment based on available specifications and owner evidence, not an instruction to buy.
+                """.formatted(entries);
+
+        return new RecommendationEmailContent("Tech Advisor: your top upgrade recommendations", body);
+    }
+
     @SuppressWarnings("unchecked")
     private String topFactors(String factorAnalysis) {
         if (factorAnalysis == null || factorAnalysis.isBlank()) {
@@ -118,6 +159,15 @@ public class RecommendationEmailContentBuilder {
 
         String code = currency == null || currency.isBlank() ? "" : currency.trim() + " ";
         return code + price.stripTrailingZeros().toPlainString();
+    }
+
+    private String formatScore(BigDecimal score) {
+        return score == null ? "Not available" : score.stripTrailingZeros().toPlainString();
+    }
+
+    private String indent(String value) {
+        return value.lines().map(line -> "   " + line).collect(java.util.stream.Collectors.joining(
+                System.lineSeparator()));
     }
 
     private String recommendationUrl(long recommendationId) {

@@ -1,6 +1,7 @@
 package com.springboot.backend.email;
 
 import com.springboot.backend.model.User;
+import com.springboot.backend.recommendation.DeviceRecommendationEvaluationCompleted;
 import com.springboot.backend.recommendation.RecommendationSaved;
 import com.springboot.backend.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -12,6 +13,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -46,10 +50,12 @@ class RecommendationEmailIntegrationTest {
 
     private User owner;
     private long productId;
+    private final List<Long> extraProductIds = new ArrayList<>();
 
     @BeforeEach
     void seed() {
         reset(sender);
+        extraProductIds.clear();
 
         String unique = UUID.randomUUID().toString();
         owner = userRepository.save(new User(
@@ -95,6 +101,7 @@ class RecommendationEmailIntegrationTest {
         );
 
         userRepository.deleteById(owner.getId());
+        extraProductIds.forEach(id -> db.update("DELETE FROM products WHERE id = ?", id));
         db.update("DELETE FROM products WHERE id = ?", productId);
     }
 
@@ -283,6 +290,75 @@ class RecommendationEmailIntegrationTest {
         assertThat(logCount(recommendationId, "FAILURE")).isEqualTo(1);
     }
 
+    @Test
+    void deviceAdditionSendsOneSummaryContainingOnlyTheTopThreeOfTwenty() {
+        long deviceId = currentDevice();
+        for (int index = 1; index <= 20; index++) {
+            long candidateId = candidate("Candidate " + index);
+            recommendation(
+                    deviceId,
+                    candidateId,
+                    "STRONG_UPGRADE_CANDIDATE",
+                    "B",
+                    new BigDecimal(index).movePointLeft(2));
+        }
+
+        emailService.onDeviceEvaluationCompleted(new DeviceRecommendationEvaluationCompleted(deviceId));
+
+        verify(sender, times(1)).send(
+                eq(owner.getEmail()),
+                eq("Tech Advisor: your top upgrade recommendations"),
+                org.mockito.ArgumentMatchers.argThat(body ->
+                        body.contains("Candidate 20")
+                                && body.contains("Candidate 19")
+                                && body.contains("Candidate 18")
+                                && !body.contains("Candidate 17")));
+        assertThat(statusCount(deviceId, "SENT")).isEqualTo(3);
+        assertThat(statusCount(deviceId, "NOT_ELIGIBLE")).isEqualTo(17);
+
+        emailService.onDeviceEvaluationCompleted(new DeviceRecommendationEvaluationCompleted(deviceId));
+        verify(sender, times(1)).send(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void deviceAdditionWithTwoEligibleCandidatesSendsBothInOneSummary() {
+        long deviceId = currentDevice();
+        recommendation(deviceId, candidate("First candidate"), "STRONG_UPGRADE_CANDIDATE", "A", new BigDecimal("0.91"));
+        recommendation(deviceId, candidate("Second candidate"), "STRONG_UPGRADE_CANDIDATE", "B", new BigDecimal("0.88"));
+
+        emailService.onDeviceEvaluationCompleted(new DeviceRecommendationEvaluationCompleted(deviceId));
+
+        verify(sender).send(
+                eq(owner.getEmail()),
+                anyString(),
+                org.mockito.ArgumentMatchers.argThat(body ->
+                        body.contains("First candidate") && body.contains("Second candidate")));
+        assertThat(statusCount(deviceId, "SENT")).isEqualTo(2);
+    }
+
+    @Test
+    void deviceAdditionWithNoEligibleCandidatesSendsNoEmail() {
+        long deviceId = currentDevice();
+        recommendation(deviceId, candidate("Mixed evidence"), "STRONG_UPGRADE_CANDIDATE", "C", new BigDecimal("0.95"));
+        recommendation(deviceId, candidate("Lower verdict"), "WORTH_CONSIDERING", "A", new BigDecimal("0.94"));
+
+        emailService.onDeviceEvaluationCompleted(new DeviceRecommendationEvaluationCompleted(deviceId));
+
+        verify(sender, never()).send(anyString(), anyString(), anyString());
+        assertThat(statusCount(deviceId, "NOT_ELIGIBLE")).isEqualTo(2);
+    }
+
+    @Test
+    void removedDeviceDoesNotReceiveAStaleSummary() {
+        long deviceId = currentDevice();
+        recommendation(deviceId, candidate("Removed device candidate"), "STRONG_UPGRADE_CANDIDATE", "A", new BigDecimal("0.99"));
+        db.update("UPDATE user_devices SET is_current = FALSE WHERE id = ?", deviceId);
+
+        emailService.onDeviceEvaluationCompleted(new DeviceRecommendationEvaluationCompleted(deviceId));
+
+        verify(sender, never()).send(anyString(), anyString(), anyString());
+    }
+
     private long recommendation(String verdict, String grade) {
         return db.queryForObject(
                 """
@@ -332,6 +408,63 @@ class RecommendationEmailIntegrationTest {
                 """,
                 "A meaningful improvement for the user."
         );
+    }
+
+    private long currentDevice() {
+        return db.queryForObject(
+                "INSERT INTO user_devices (user_id, product_id, custom_name) VALUES (?, ?, 'Email test device') RETURNING id",
+                Long.class,
+                owner.getId(),
+                productId);
+    }
+
+    private long candidate(String name) {
+        long id = db.queryForObject(
+                "INSERT INTO products (brand, model_name) VALUES ('SummaryTest', ?) RETURNING id",
+                Long.class,
+                name);
+        extraProductIds.add(id);
+        return id;
+    }
+
+    private long recommendation(
+            long deviceId,
+            long candidateId,
+            String verdict,
+            String grade,
+            BigDecimal score) {
+        return db.queryForObject(
+                """
+                INSERT INTO recommendations (
+                    user_id, current_device_id, candidate_product_id, verdict, confidence,
+                    factor_analysis, reasoning, status
+                )
+                VALUES (
+                    ?, ?, ?, ?, ?,
+                    jsonb_build_object(
+                        'deterministic',
+                        jsonb_build_object('upgrade_score', ?, 'factors', jsonb_build_object())
+                    ),
+                    'Summary recommendation reasoning.',
+                    'ACTIVE'
+                )
+                RETURNING id
+                """,
+                Long.class,
+                owner.getId(),
+                deviceId,
+                candidateId,
+                verdict,
+                grade,
+                score);
+    }
+
+    private long statusCount(long deviceId, String status) {
+        return db.queryForObject(
+                "SELECT COUNT(*) FROM recommendations WHERE current_device_id = ? AND email_status = ?",
+                Long.class,
+                deviceId,
+                status);
     }
 
     private void process(long recommendationId) {
