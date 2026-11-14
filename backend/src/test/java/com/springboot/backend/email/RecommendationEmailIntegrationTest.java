@@ -66,13 +66,14 @@ class RecommendationEmailIntegrationTest {
 
         productId = db.queryForObject(
                 """
-                INSERT INTO products (brand, model_name)
-                VALUES (?, ?)
+                INSERT INTO products (brand, model_name, image_url)
+                VALUES (?, ?, ?)
                 RETURNING id
                 """,
                 Long.class,
                 "TestBrand-" + unique,
-                "Upgrade Phone"
+                "Upgrade Phone",
+                "https://images.example/upgrade-phone.png"
         );
 
         db.update(
@@ -121,7 +122,8 @@ class RecommendationEmailIntegrationTest {
                             + brandSuffix()
                             + " Upgrade Phone"
             ),
-            emailBodyContainingRequiredContent()
+            emailBodyContainingRequiredContent(),
+            emailHtmlContainingRequiredContent()
         );
 
         Map<String, Object> row = emailState(recommendationId);
@@ -155,6 +157,7 @@ class RecommendationEmailIntegrationTest {
         verify(sender, never()).send(
                 anyString(),
                 anyString(),
+                anyString(),
                 anyString()
         );
 
@@ -183,6 +186,7 @@ class RecommendationEmailIntegrationTest {
         verify(sender, never()).send(
                 anyString(),
                 anyString(),
+                anyString(),
                 anyString()
         );
 
@@ -202,6 +206,7 @@ class RecommendationEmailIntegrationTest {
         verify(sender, never()).send(
                 anyString(),
                 anyString(),
+                anyString(),
                 anyString()
         );
 
@@ -219,6 +224,7 @@ class RecommendationEmailIntegrationTest {
         process(recommendationId);
 
         verify(sender, never()).send(
+                anyString(),
                 anyString(),
                 anyString(),
                 anyString()
@@ -241,6 +247,7 @@ class RecommendationEmailIntegrationTest {
         verify(sender, times(1)).send(
                 anyString(),
                 anyString(),
+                anyString(),
                 anyString()
         );
 
@@ -252,7 +259,7 @@ class RecommendationEmailIntegrationTest {
     void deliveryFailureRetriesWithoutDeletingRecommendation() {
         doThrow(new IllegalStateException("simulated SMTP outage"))
                 .when(sender)
-                .send(anyString(), anyString(), anyString());
+                .send(anyString(), anyString(), anyString(), anyString());
 
         long recommendationId = recommendation(
                 "STRONG_UPGRADE_CANDIDATE",
@@ -262,6 +269,7 @@ class RecommendationEmailIntegrationTest {
         process(recommendationId);
 
         verify(sender, times(3)).send(
+                anyString(),
                 anyString(),
                 anyString(),
                 anyString()
@@ -295,6 +303,12 @@ class RecommendationEmailIntegrationTest {
         long deviceId = currentDevice();
         for (int index = 1; index <= 20; index++) {
             long candidateId = candidate("Candidate " + index);
+            if (index == 20) {
+                db.update(
+                        "UPDATE products SET image_url = ? WHERE id = ?",
+                        "https://images.example/candidate-20.png",
+                        candidateId);
+            }
             recommendation(
                     deviceId,
                     candidateId,
@@ -312,12 +326,19 @@ class RecommendationEmailIntegrationTest {
                         body.contains("Candidate 20")
                                 && body.contains("Candidate 19")
                                 && body.contains("Candidate 18")
-                                && !body.contains("Candidate 17")));
+                                && !body.contains("Candidate 17")),
+                org.mockito.ArgumentMatchers.argThat(html ->
+                        html.contains("<!doctype html>")
+                                && html.contains("https://images.example/candidate-20.png")
+                                && html.contains("Candidate 20")
+                                && html.contains("Candidate 19")
+                                && html.contains("Candidate 18")
+                                && !html.contains("Candidate 17")));
         assertThat(statusCount(deviceId, "SENT")).isEqualTo(3);
         assertThat(statusCount(deviceId, "NOT_ELIGIBLE")).isEqualTo(17);
 
         emailService.onDeviceEvaluationCompleted(new DeviceRecommendationEvaluationCompleted(deviceId));
-        verify(sender, times(1)).send(anyString(), anyString(), anyString());
+        verify(sender, times(1)).send(anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -332,7 +353,9 @@ class RecommendationEmailIntegrationTest {
                 eq(owner.getEmail()),
                 anyString(),
                 org.mockito.ArgumentMatchers.argThat(body ->
-                        body.contains("First candidate") && body.contains("Second candidate")));
+                        body.contains("First candidate") && body.contains("Second candidate")),
+                org.mockito.ArgumentMatchers.argThat(html ->
+                        html.contains("First candidate") && html.contains("Second candidate")));
         assertThat(statusCount(deviceId, "SENT")).isEqualTo(2);
     }
 
@@ -344,7 +367,7 @@ class RecommendationEmailIntegrationTest {
 
         emailService.onDeviceEvaluationCompleted(new DeviceRecommendationEvaluationCompleted(deviceId));
 
-        verify(sender, never()).send(anyString(), anyString(), anyString());
+        verify(sender, never()).send(anyString(), anyString(), anyString(), anyString());
         assertThat(statusCount(deviceId, "NOT_ELIGIBLE")).isEqualTo(2);
     }
 
@@ -356,7 +379,7 @@ class RecommendationEmailIntegrationTest {
 
         emailService.onDeviceEvaluationCompleted(new DeviceRecommendationEvaluationCompleted(deviceId));
 
-        verify(sender, never()).send(anyString(), anyString(), anyString());
+        verify(sender, never()).send(anyString(), anyString(), anyString(), anyString());
     }
 
     private long recommendation(String verdict, String grade) {
@@ -523,5 +546,19 @@ class RecommendationEmailIntegrationTest {
                         && body.contains("not an instruction to buy")
                         && body.contains("http://localhost:5173/dashboard?recommendation=")
         );
+    }
+
+    private String emailHtmlContainingRequiredContent() {
+        return org.mockito.ArgumentMatchers.argThat(html ->
+                html.contains("<!doctype html>")
+                        && html.contains("https://images.example/upgrade-phone.png")
+                        && html.contains("Upgrade Phone product image")
+                        && html.contains("Strong upgrade candidate")
+                        && html.contains("Owner evidence B")
+                        && html.contains("INDICATIVE PRICE")
+                        && html.contains("Battery: High positive")
+                        && html.contains("A meaningful improvement for the user.")
+                        && html.contains("Review recommendation")
+                        && html.contains("http://localhost:5173/dashboard?recommendation="));
     }
 }

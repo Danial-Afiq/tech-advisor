@@ -199,9 +199,7 @@ public class RecommendationTriggerService {
 
     TriggerRun runForDevice(long userDeviceId, String cause, long generation) {
         TriggerRun run = new TriggerRun(TriggerRun.Kind.DEVICE_INVENTORY, cause).context("user_device_id", userDeviceId);
-        RecommendationEmailMode emailMode = CAUSE_DEVICE_ADDED.equals(cause)
-                ? RecommendationEmailMode.DEVICE_SUMMARY
-                : RecommendationEmailMode.INDIVIDUAL;
+        RecommendationEmailMode emailMode = RecommendationEmailMode.DEVICE_SUMMARY;
         try {
             if (!isLatest(userDeviceId, generation)) {
                 run.skip(SUPERSEDED);

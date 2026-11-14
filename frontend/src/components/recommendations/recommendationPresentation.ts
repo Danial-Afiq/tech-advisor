@@ -1,4 +1,5 @@
 import type {
+  DashboardRecommendation,
   EvidenceGrade,
   RecommendationVerdict,
 } from "./types";
@@ -64,6 +65,25 @@ export function evidenceGradeText(
   }
 
   return `Owner evidence: ${grade}`;
+}
+
+export function recommendationExplanation(
+  recommendation: Pick<DashboardRecommendation, "confidence" | "reasoning">
+): string {
+  const explanation = recommendation.reasoning?.trim();
+  if (explanation) {
+    return explanation;
+  }
+
+  if (recommendation.confidence === "-") {
+    return "No AI explanation is available because there are not enough relevant owner reviews for this product yet.";
+  }
+
+  if (recommendation.confidence === null) {
+    return "No AI explanation is available because owner-review evidence has not been assessed for this product.";
+  }
+
+  return "The AI assessment did not provide an explanation for this recommendation.";
 }
 
 export function formatRecommendationPrice(

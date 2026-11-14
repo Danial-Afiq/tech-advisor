@@ -94,7 +94,11 @@ public class RecommendationEmailService {
                 return;
             }
             try {
-                sender.send(recommendation.recipient(), content.subject(), content.body());
+                sender.send(
+                        recommendation.recipient(),
+                        content.subject(),
+                        content.plainText(),
+                        content.html());
                 repository.recordSuccess(recommendationId, recommendation.userId());
                 return;
             } catch (RuntimeException failure) {
@@ -168,7 +172,11 @@ public class RecommendationEmailService {
                 return;
             }
             try {
-                sender.send(first.recipient(), content.subject(), content.body());
+                sender.send(
+                        first.recipient(),
+                        content.subject(),
+                        content.plainText(),
+                        content.html());
                 repository.recordSummarySuccess(claimedIds, first.userId());
                 return;
             } catch (RuntimeException failure) {

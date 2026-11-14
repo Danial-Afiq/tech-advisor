@@ -4449,20 +4449,25 @@ and dispatches all SMTP work to the isolated single-threaded
 `recommendationEmailExecutor`. SMTP connection/read/write defaults are 5/10/10
 seconds and are configurable with the `MAIL_SMTP_*_TIMEOUT_MS` variables. Delivery
 and its configured retries never occupy `recommendationExecutor`; failures leave
-the saved recommendation/dashboard result intact.
+the saved recommendation/dashboard result intact. Delivery is multipart with a
+plain-text fallback and a responsive HTML card layout. Each card uses the current
+catalogue `products.image_url` when it is a valid HTTP(S) URL, otherwise it shows a
+phone placeholder; remote-image blocking never hides the product name or assessment.
+All catalogue and model-produced text is HTML-escaped before it reaches the message.
 
-Market-event and other ordinary recommendation saves retain their existing
-per-recommendation email behaviour. A `DEVICE_ADDED` run is different: every row is
-tagged `DEVICE_SUMMARY`, so individual saved-row events do not send. After all
-sequential AI enrichment has finished and committed, the trigger publishes
-`DeviceRecommendationEvaluationCompleted`. The email processor then reads the
-final `ACTIVE`, AI-graded rows, applies the same eligibility policy, ranks by the
-persisted deterministic `upgrade_score` descending with candidate product id and
-recommendation id as stable tie-breakers, and sends one summary containing at most
-the top three. All dashboard recommendations remain available. Zero qualifying
-rows sends nothing; reprocessing the completion event cannot duplicate delivery.
-The processor re-checks device/account/preference state immediately before every
-SMTP attempt, so removed devices and newly opted-out/disabled users are abandoned.
+Market-event and other single-product recommendation saves retain their existing
+per-recommendation email behaviour. Whole-device runs (`DEVICE_ADDED`,
+`DEVICE_UPDATED`, and admin device re-fires) tag every row `DEVICE_SUMMARY`, so
+individual saved-row events do not send. After all sequential AI enrichment has
+finished and committed, the trigger publishes `DeviceRecommendationEvaluationCompleted`.
+The email processor then reads the final `ACTIVE`, AI-graded rows, applies the same
+eligibility policy, ranks by the persisted deterministic `upgrade_score` descending
+with candidate product id and recommendation id as stable tie-breakers, and sends
+one summary containing at most the top three. All dashboard recommendations remain
+available. A superseded device run does not publish a stale completion event. Zero
+qualifying rows sends nothing; reprocessing the completion event cannot duplicate
+delivery. The processor re-checks device/account/preference state immediately before
+every SMTP attempt, so removed devices and newly opted-out/disabled users are abandoned.
 
 **In-app notifications are implemented (§14.14)** and deliberately use none of
 this policy: they fire for any new or changed upgrade option and carry no

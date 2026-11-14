@@ -1,5 +1,5 @@
 package com.springboot.backend.recommendation;
 
-/** Published after a newly added device's complete recommendation run finishes. */
+/** Published after a complete whole-device recommendation run finishes. */
 public record DeviceRecommendationEvaluationCompleted(long userDeviceId) {
 }
