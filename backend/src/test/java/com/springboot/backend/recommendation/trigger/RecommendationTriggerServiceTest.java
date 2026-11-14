@@ -214,7 +214,7 @@ class RecommendationTriggerServiceTest {
     void aDeviceThatCannotBeEvaluatedIsSkipped() {
         when(devices.isEvaluable(42L)).thenReturn(false);
 
-        TriggerRun run = service.runForDevice(42L, "DEVICE_ADDED");
+        TriggerRun run = service.runForDevice(42L, "DEVICE_UPDATED");
 
         assertEquals(Status.SKIPPED, run.status());
         verifyNoInteractions(deterministic, aiStep);
@@ -232,7 +232,7 @@ class RecommendationTriggerServiceTest {
         when(aiStep.assess(any(), any(), isNull(), isNull(), eq(RecommendationEmailMode.DEVICE_SUMMARY)))
                 .thenReturn(AiAssessmentStep.Outcome.assessed(300L));
 
-        TriggerRun run = service.runForDevice(42L, "DEVICE_ADDED");
+        TriggerRun run = service.runForDevice(42L, "DEVICE_UPDATED");
 
         assertEquals(Status.SUCCESS, run.status());
         assertEquals(3, run.metadata().get("pairs_selected"));
@@ -252,7 +252,7 @@ class RecommendationTriggerServiceTest {
     @Test
     void aDeviceWhoseEvaluationFailsIsLoggedAsAFailure() {
         when(devices.isEvaluable(42L)).thenReturn(true);
-        when(deterministic.evaluateAndPersist(42L, RecommendationEmailMode.INDIVIDUAL))
+        when(deterministic.evaluateAndPersist(42L, RecommendationEmailMode.DEVICE_SUMMARY))
                 .thenThrow(new ResourceNotFoundException("no specs"));
 
         TriggerRun run = service.runForDevice(42L, "DEVICE_UPDATED");
@@ -268,6 +268,82 @@ class RecommendationTriggerServiceTest {
         doThrow(new IllegalStateException("system_log unavailable")).when(runLog).write(any());
 
         assertDoesNotThrow(() -> service.runForDevice(42L, "DEVICE_ADDED"));
+    }
+
+    // --- Trigger 2: newest change wins -------------------------------------
+
+    @Test
+    void aRunQueuedBeforeANewerChangeIsSkippedWithoutEvaluating() {
+        List<Runnable> queued = new java.util.ArrayList<>();
+        service = new RecommendationTriggerService(
+                marketEvents, products, devices, selector, deterministic, aiStep, runLog, queued::add, events);
+        when(devices.isEvaluable(42L)).thenReturn(true);
+        when(deterministic.evaluateAndPersist(42L, RecommendationEmailMode.DEVICE_SUMMARY)).thenReturn(new PersistedEvaluation(
+                new CandidateEvaluation(42L, USER_ID, List.of(), List.of()), 0, 0));
+
+        service.queueDeviceRun(42L, "DEVICE_UPDATED"); // old preferences
+        service.queueDeviceRun(42L, "DEVICE_UPDATED"); // newer preferences
+        queued.forEach(Runnable::run);
+
+        ArgumentCaptor<TriggerRun> runs = ArgumentCaptor.forClass(TriggerRun.class);
+        verify(runLog, times(2)).write(runs.capture());
+        assertEquals(RecommendationTriggerService.SUPERSEDED, runs.getAllValues().get(0).metadata().get("skipped_reason"));
+        assertEquals(Status.SUCCESS, runs.getAllValues().get(1).status());
+        verify(deterministic, times(1)).evaluateAndPersist(42L, RecommendationEmailMode.DEVICE_SUMMARY);
+        verify(events).publishEvent(new DeviceRecommendationEvaluationCompleted(42L));
+    }
+
+    @Test
+    void aRunningDeviceRunStopsBeforeItsNextModelCallOnceANewerChangeIsQueued() {
+        List<Runnable> queued = new java.util.ArrayList<>();
+        service = new RecommendationTriggerService(
+                marketEvents, products, devices, selector, deterministic, aiStep, runLog, queued::add, events);
+        when(devices.isEvaluable(42L)).thenReturn(true);
+        CandidateEvaluation evaluation = new CandidateEvaluation(42L, USER_ID,
+                List.of(candidate(30L, TierMapper.STRONG_UPGRADE_CANDIDATE),
+                        candidate(31L, TierMapper.STRONG_UPGRADE_CANDIDATE),
+                        candidate(32L, TierMapper.STRONG_UPGRADE_CANDIDATE)),
+                List.of());
+        when(deterministic.evaluateAndPersist(42L, RecommendationEmailMode.DEVICE_SUMMARY))
+                .thenReturn(new PersistedEvaluation(evaluation, 3, 0));
+        // The user saves new preferences while the first model call is in flight.
+        when(aiStep.assess(any(), any(), isNull(), isNull(), eq(RecommendationEmailMode.DEVICE_SUMMARY))).thenAnswer(call -> {
+            service.queueDeviceRun(42L, "DEVICE_UPDATED");
+            return AiAssessmentStep.Outcome.assessed(300L);
+        });
+
+        service.queueDeviceRun(42L, "DEVICE_UPDATED");
+        queued.removeFirst().run();
+
+        ArgumentCaptor<TriggerRun> first = ArgumentCaptor.forClass(TriggerRun.class);
+        verify(runLog).write(first.capture());
+        assertEquals(1, first.getValue().count(PairOutcome.ASSESSED));
+        assertEquals(true, first.getValue().metadata().get("superseded"));
+        assertEquals(2, first.getValue().metadata().get("pairs_left_for_newer_run"));
+        verify(aiStep, times(1)).assess(
+                any(), any(), isNull(), isNull(), eq(RecommendationEmailMode.DEVICE_SUMMARY));
+        verify(events, never()).publishEvent(any(DeviceRecommendationEvaluationCompleted.class));
+        assertEquals(1, queued.size(), "the newer run is still queued and will re-evaluate the device");
+    }
+
+    @Test
+    void anotherDevicesChangeDoesNotSupersedeThisOne() {
+        List<Runnable> queued = new java.util.ArrayList<>();
+        service = new RecommendationTriggerService(
+                marketEvents, products, devices, selector, deterministic, aiStep, runLog, queued::add, events);
+        when(devices.isEvaluable(anyLong())).thenReturn(true);
+        when(deterministic.evaluateAndPersist(anyLong(), eq(RecommendationEmailMode.DEVICE_SUMMARY)))
+                .thenAnswer(call -> new PersistedEvaluation(
+                new CandidateEvaluation(call.getArgument(0), USER_ID, List.of(), List.of()), 0, 0));
+
+        service.queueDeviceRun(42L, "DEVICE_UPDATED");
+        service.queueDeviceRun(43L, "DEVICE_UPDATED");
+        queued.forEach(Runnable::run);
+
+        verify(deterministic).evaluateAndPersist(42L, RecommendationEmailMode.DEVICE_SUMMARY);
+        verify(deterministic).evaluateAndPersist(43L, RecommendationEmailMode.DEVICE_SUMMARY);
+        verify(events).publishEvent(new DeviceRecommendationEvaluationCompleted(42L));
+        verify(events).publishEvent(new DeviceRecommendationEvaluationCompleted(43L));
     }
 
     // --- Manual re-fire ----------------------------------------------------

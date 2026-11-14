@@ -2,5 +2,5 @@ package com.springboot.backend.email;
 
 public interface RecommendationEmailSender {
 
-    void send(String recipient, String subject, String body);
+    void send(String recipient, String subject, String plainText, String html);
 }

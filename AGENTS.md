@@ -3441,15 +3441,33 @@ Package `recommendation/trigger/`. Two triggers decide *when* the pipeline runs 
 
 Shared behaviour (`RecommendationTriggerService`):
 
-- **After commit + async.** `@TransactionalEventListener(AFTER_COMMIT)` +
-  `@Async("recommendationExecutor")`: the run must see the committed row and a
-  rolled-back save produces nothing; the HTTP request / ingestion run never waits.
+- **After commit + async.** `@TransactionalEventListener(AFTER_COMMIT)`: the run must
+  see the committed row and a rolled-back save produces nothing; the HTTP request /
+  ingestion run never waits. Trigger 1 runs via `@Async("recommendationExecutor")`.
+  Trigger 2's listener is synchronous and only calls
+  `RecommendationTriggerService.queueDeviceRun`, which puts the run on the same executor
+  (so it is still async) - see "newest device change wins" below.
 - **One thread** (`RecommendationTriggerConfiguration`). Runs queue and execute one at a
   time, so two runs cannot race on the `ACTIVE` unique index and AI calls go out one
   at a time. Named because the ingestion `ThreadPoolTaskScheduler` would otherwise
   catch `@Async`. A long market-event or AI request delays device runs queued behind
   it, but SMTP delivery does not: recommendation email events run on the separate
   single-threaded `recommendationEmailExecutor` (§27.7).
+- **Newest device change wins** (`claude/upgrade-prefs-recommendations-refresh-pa1s3y`). A Trigger 2 run makes
+  up to one model call per shortlisted candidate (up to `ai.timeout` each), so on the
+  one thread an older run could hold a preference save back for many minutes.
+  `queueDeviceRun` stamps every device run with that device's in-memory generation at
+  queue time (`DEVICE_ADDED`/`DEVICE_UPDATED` and admin re-fire alike; a direct
+  `runForDevice` call takes a new generation too). A run whose generation is no longer
+  the latest is skipped before it starts (`skipped_reason` "superseded by a newer
+  change to this device") and stops before its next model call (`system_log` metadata
+  `superseded=true`, `pairs_left_for_newer_run`). The newer run then replaces the rows
+  with the current preferences. At most the one in-flight model call finishes first;
+  the single thread guarantees its write lands before the newer run supersedes it.
+  Generations live in memory only: after a restart nothing is queued, so nothing is
+  stale. Market-event runs are not affected. Tests: `RecommendationTriggerServiceTest`
+  (`aRunQueuedBeforeANewerChange...`, `aRunningDeviceRunStops...`,
+  `anotherDevicesChange...`), `InventoryRecommendationTriggerTest`.
 - **Early exit.** A pair whose Channel A verdict is `NO_MEANINGFUL_CHANGE` keeps its
   deterministic row and makes **no** AI call (§7.1).
 - **AI step** (`AiAssessmentStep`) for every other pair: `AssessRequestFactory` builds
@@ -3541,6 +3559,13 @@ and JSON null into JSON-encoded empty text before saving, so budget-only profile
 can be completed without violating the new string/array request validation.
 The add-device form still sends no budget until step 2 is saved. There is no
 currency picker: the saved currency is retained, otherwise SGD is sent (§27.9).
+After a successful device edit or upgrade-profile save, the devices page marks
+the tab (`recommendationRefresh.ts`, sessionStorage, best effort). While that mark
+is younger than one minute the dashboard shows an "Updating recommendations"
+time-based loading bar (`RefreshProgress`; an estimate, not a completion signal) and
+re-fetches every 5 s, so the regenerated rows replace the old ones
+without a manual reload (the PUT returns before the async re-run finishes).
+Tests: `DashboardPage.test.tsx`, `DevicesPageTest.test.tsx`.
 The existing `DeviceInventoryChanged(UPDATED)` event re-evaluates recommendations
 after the full profile commits. `DevicePreferencesIntegrationTest` also verifies
 that API-saved values reach `AssessRequestFactory` without a live AI call. Tests:
@@ -4424,20 +4449,25 @@ and dispatches all SMTP work to the isolated single-threaded
 `recommendationEmailExecutor`. SMTP connection/read/write defaults are 5/10/10
 seconds and are configurable with the `MAIL_SMTP_*_TIMEOUT_MS` variables. Delivery
 and its configured retries never occupy `recommendationExecutor`; failures leave
-the saved recommendation/dashboard result intact.
+the saved recommendation/dashboard result intact. Delivery is multipart with a
+plain-text fallback and a responsive HTML card layout. Each card uses the current
+catalogue `products.image_url` when it is a valid HTTP(S) URL, otherwise it shows a
+phone placeholder; remote-image blocking never hides the product name or assessment.
+All catalogue and model-produced text is HTML-escaped before it reaches the message.
 
-Market-event and other ordinary recommendation saves retain their existing
-per-recommendation email behaviour. A `DEVICE_ADDED` run is different: every row is
-tagged `DEVICE_SUMMARY`, so individual saved-row events do not send. After all
-sequential AI enrichment has finished and committed, the trigger publishes
-`DeviceRecommendationEvaluationCompleted`. The email processor then reads the
-final `ACTIVE`, AI-graded rows, applies the same eligibility policy, ranks by the
-persisted deterministic `upgrade_score` descending with candidate product id and
-recommendation id as stable tie-breakers, and sends one summary containing at most
-the top three. All dashboard recommendations remain available. Zero qualifying
-rows sends nothing; reprocessing the completion event cannot duplicate delivery.
-The processor re-checks device/account/preference state immediately before every
-SMTP attempt, so removed devices and newly opted-out/disabled users are abandoned.
+Market-event and other single-product recommendation saves retain their existing
+per-recommendation email behaviour. Whole-device runs (`DEVICE_ADDED`,
+`DEVICE_UPDATED`, and admin device re-fires) tag every row `DEVICE_SUMMARY`, so
+individual saved-row events do not send. After all sequential AI enrichment has
+finished and committed, the trigger publishes `DeviceRecommendationEvaluationCompleted`.
+The email processor then reads the final `ACTIVE`, AI-graded rows, applies the same
+eligibility policy, ranks by the persisted deterministic `upgrade_score` descending
+with candidate product id and recommendation id as stable tie-breakers, and sends
+one summary containing at most the top three. All dashboard recommendations remain
+available. A superseded device run does not publish a stale completion event. Zero
+qualifying rows sends nothing; reprocessing the completion event cannot duplicate
+delivery. The processor re-checks device/account/preference state immediately before
+every SMTP attempt, so removed devices and newly opted-out/disabled users are abandoned.
 
 **In-app notifications are implemented (§14.14)** and deliberately use none of
 this policy: they fire for any new or changed upgrade option and carry no

@@ -168,7 +168,9 @@ describe("DevicesPageTest", () => {
         })
       )
     );
-    expect(await screen.findByText(/upgrade preferences for Test Laptop were saved to your account/)).toBeInTheDocument();
+    expect(await screen.findByText(/upgrade preferences for Test Laptop were saved\. Its recommendations are being updated/)).toBeInTheDocument();
+    // The dashboard picks this up and keeps re-fetching until the new rows land.
+    expect(window.sessionStorage.getItem("tech-advisor.recommendationsRefreshingUntil")).not.toBeNull();
     expect(screen.getByText("S$3,000")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });

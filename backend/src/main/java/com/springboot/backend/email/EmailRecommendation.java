@@ -10,6 +10,7 @@ public record EmailRecommendation(
         boolean accountEnabled,
         boolean recommendationEmailsEnabled,
         String productName,
+        String imageUrl,
         String verdict,
         String grade,
         BigDecimal price,

@@ -205,10 +205,11 @@ describe("RecommendationCard", () => {
     ).toBeInTheDocument();
   });
 
-  it("handles a missing explanation without inventing one", () => {
+  it("explains that insufficient owner reviews prevented an AI explanation", () => {
     render(
       <RecommendationCard
         recommendation={recommendation({
+          confidence: "-",
           reasoning: null,
         })}
       />
@@ -216,7 +217,41 @@ describe("RecommendationCard", () => {
 
     expect(
       screen.getByText(
-        "No explanation is available for this recommendation."
+        "No AI explanation is available because there are not enough relevant owner reviews for this product yet."
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("distinguishes owner evidence that was not assessed", () => {
+    render(
+      <RecommendationCard
+        recommendation={recommendation({
+          confidence: null,
+          reasoning: null,
+        })}
+      />
+    );
+
+    expect(
+      screen.getByText(
+        "No AI explanation is available because owner-review evidence has not been assessed for this product."
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("does not blame missing reviews when a graded assessment lacks explanation text", () => {
+    render(
+      <RecommendationCard
+        recommendation={recommendation({
+          confidence: "A",
+          reasoning: "   ",
+        })}
+      />
+    );
+
+    expect(
+      screen.getByText(
+        "The AI assessment did not provide an explanation for this recommendation."
       )
     ).toBeInTheDocument();
   });

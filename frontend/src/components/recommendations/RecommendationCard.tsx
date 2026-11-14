@@ -7,6 +7,7 @@ import {
   formatRecommendationPrice,
   priceConversionNote,
   recommendationCardId,
+  recommendationExplanation,
   verdictPresentation,
 } from "./recommendationPresentation";
 import type { DashboardRecommendation } from "./types";
@@ -192,8 +193,7 @@ export function RecommendationCard({
           </p>
 
           <p className="mt-1 mb-0 text-[14px] leading-[1.6] text-[#9eacc0]">
-            {recommendation.reasoning ??
-              "No explanation is available for this recommendation."}
+            {recommendationExplanation(recommendation)}
           </p>
         </div>
 

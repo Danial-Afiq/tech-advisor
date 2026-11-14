@@ -354,7 +354,7 @@ class RecommendationTriggerIntegrationTest {
             smtpEntered.countDown();
             releaseSmtp.await(30, TimeUnit.SECONDS);
             return null;
-        }).when(emailSender).send(anyString(), anyString(), anyString());
+        }).when(emailSender).send(anyString(), anyString(), anyString(), anyString());
 
         try {
             MarketEvent event = priceDrop(flagship);
@@ -395,7 +395,7 @@ class RecommendationTriggerIntegrationTest {
                     "SELECT COUNT(*) FROM recommendations WHERE current_device_id = ? AND ai_model IS NOT NULL",
                     Integer.class,
                     upgrader1));
-            verify(emailSender, never()).send(anyString(), anyString(), anyString());
+            verify(emailSender, never()).send(anyString(), anyString(), anyString(), anyString());
         } finally {
             releaseAi.countDown();
         }
@@ -463,6 +463,7 @@ class RecommendationTriggerIntegrationTest {
 
         verify(emailSender, times(1)).send(
                 eq(email),
+                anyString(),
                 anyString(),
                 anyString()
         );
