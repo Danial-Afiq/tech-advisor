@@ -8,6 +8,8 @@ import com.springboot.backend.recommendation.AssessRequest;
 import com.springboot.backend.recommendation.CandidateEvaluation;
 import com.springboot.backend.recommendation.DeterministicRecommendationService;
 import com.springboot.backend.recommendation.DeterministicRecommendationService.PersistedEvaluation;
+import com.springboot.backend.recommendation.DeviceRecommendationEvaluationCompleted;
+import com.springboot.backend.recommendation.RecommendationEmailMode;
 import com.springboot.backend.recommendation.classification.TierMapper;
 import com.springboot.backend.repository.ProductRepository;
 import com.springboot.backend.repository.UserDeviceRepository;
@@ -16,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 /**
@@ -44,6 +47,8 @@ public class RecommendationTriggerService {
 
     static final String CAUSE_MARKET_EVENT = "MARKET_EVENT_RECORDED";
     static final String CAUSE_ADMIN = "ADMIN_REFIRE";
+    static final String CAUSE_DEVICE_ADDED = "DEVICE_ADDED";
+    static final String CAUSE_DEVICE_UPDATED = "DEVICE_UPDATED";
 
     private static final Logger LOG = LoggerFactory.getLogger(RecommendationTriggerService.class);
 
@@ -55,6 +60,7 @@ public class RecommendationTriggerService {
     private final AiAssessmentStep aiStep;
     private final TriggerRunLog runLog;
     private final TaskExecutor executor;
+    private final ApplicationEventPublisher events;
 
     public RecommendationTriggerService(
             MarketEventService marketEvents,
@@ -64,7 +70,8 @@ public class RecommendationTriggerService {
             DeterministicRecommendationService deterministic,
             AiAssessmentStep aiStep,
             TriggerRunLog runLog,
-            @Qualifier(RecommendationTriggerConfiguration.EXECUTOR) TaskExecutor executor) {
+            @Qualifier(RecommendationTriggerConfiguration.EXECUTOR) TaskExecutor executor,
+            ApplicationEventPublisher events) {
 
         this.marketEvents = marketEvents;
         this.products = products;
@@ -74,6 +81,7 @@ public class RecommendationTriggerService {
         this.aiStep = aiStep;
         this.runLog = runLog;
         this.executor = executor;
+        this.events = events;
     }
 
     /**
@@ -131,7 +139,13 @@ public class RecommendationTriggerService {
             CandidateEvaluation evaluation = persisted.evaluation();
 
             if (!evaluation.ranked().isEmpty()) {
-                afterClassification(run, evaluation, evaluation.ranked().getFirst(), eventId, triggerEvent);
+                afterClassification(
+                        run,
+                        evaluation,
+                        evaluation.ranked().getFirst(),
+                        eventId,
+                        triggerEvent,
+                        RecommendationEmailMode.INDIVIDUAL);
             } else if (!evaluation.skipped().isEmpty()) {
                 run.record(TriggerRun.PairOutcome.UNCLASSIFIABLE);
             } else {
@@ -149,18 +163,30 @@ public class RecommendationTriggerService {
      */
     public TriggerRun runForDevice(long userDeviceId, String cause) {
         TriggerRun run = new TriggerRun(TriggerRun.Kind.DEVICE_INVENTORY, cause).context("user_device_id", userDeviceId);
+        RecommendationEmailMode emailMode = CAUSE_DEVICE_ADDED.equals(cause)
+                ? RecommendationEmailMode.DEVICE_SUMMARY
+                : RecommendationEmailMode.INDIVIDUAL;
         try {
             if (!devices.isEvaluable(userDeviceId)) {
                 run.skip("device not evaluable (needs to be current, linked to a catalogue product, and have a budget)");
             } else {
-                PersistedEvaluation persisted = deterministic.evaluateAndPersist(userDeviceId);
+                PersistedEvaluation persisted = deterministic.evaluateAndPersist(userDeviceId, emailMode);
                 run.rowsDeleted(persisted.deleted());
                 CandidateEvaluation evaluation = persisted.evaluation();
                 run.selected(evaluation.ranked().size() + evaluation.skipped().size());
 
                 evaluation.skipped().forEach(s -> run.record(TriggerRun.PairOutcome.UNCLASSIFIABLE));
                 for (CandidateEvaluation.Classified classified : evaluation.ranked()) {
-                    afterClassification(run, evaluation, classified, null, null);
+                    if (!devices.isEvaluable(userDeviceId)) {
+                        run.context("stopped_device_inactive", true);
+                        break;
+                    }
+                    afterClassification(run, evaluation, classified, null, null, emailMode);
+                }
+
+                if (emailMode == RecommendationEmailMode.DEVICE_SUMMARY
+                        && devices.isEvaluable(userDeviceId)) {
+                    events.publishEvent(new DeviceRecommendationEvaluationCompleted(userDeviceId));
                 }
             }
         } catch (RuntimeException e) {
@@ -176,7 +202,8 @@ public class RecommendationTriggerService {
             CandidateEvaluation evaluation,
             CandidateEvaluation.Classified classified,
             Long eventId,
-            AssessRequest.TriggerEvent triggerEvent) {
+            AssessRequest.TriggerEvent triggerEvent,
+            RecommendationEmailMode emailMode) {
 
         if (TierMapper.NO_MEANINGFUL_CHANGE.equals(classified.classification().verdict())) {
             run.record(TriggerRun.PairOutcome.REJECTED_EARLY);
@@ -185,7 +212,8 @@ public class RecommendationTriggerService {
 
         Long deviceId = evaluation.userDeviceId();
         Long productId = classified.candidate().getProductId();
-        AiAssessmentStep.Outcome outcome = aiStep.assess(evaluation, classified, eventId, triggerEvent);
+        AiAssessmentStep.Outcome outcome = aiStep.assess(
+                evaluation, classified, eventId, triggerEvent, emailMode);
         switch (outcome.kind()) {
             case ASSESSED -> run.record(TriggerRun.PairOutcome.ASSESSED);
             case SKIPPED -> run.aiSkipped(deviceId, productId, outcome.reason());

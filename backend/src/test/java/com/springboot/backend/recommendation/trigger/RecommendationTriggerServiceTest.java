@@ -14,6 +14,8 @@ import com.springboot.backend.recommendation.AssessRequest;
 import com.springboot.backend.recommendation.CandidateEvaluation;
 import com.springboot.backend.recommendation.DeterministicRecommendationService;
 import com.springboot.backend.recommendation.DeterministicRecommendationService.PersistedEvaluation;
+import com.springboot.backend.recommendation.DeviceRecommendationEvaluationCompleted;
+import com.springboot.backend.recommendation.RecommendationEmailMode;
 import com.springboot.backend.recommendation.classification.TierMapper;
 import com.springboot.backend.recommendation.classification.UpgradeClassification;
 import com.springboot.backend.repository.CandidateProduct;
@@ -32,6 +34,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.task.SyncTaskExecutor;
+import org.springframework.context.ApplicationEventPublisher;
 
 /**
  * Trigger selection, the early exit, per-pair isolation and the run status,
@@ -52,13 +55,22 @@ class RecommendationTriggerServiceTest {
     @Mock DeterministicRecommendationService deterministic;
     @Mock AiAssessmentStep aiStep;
     @Mock TriggerRunLog runLog;
+    @Mock ApplicationEventPublisher events;
 
     private RecommendationTriggerService service;
 
     @BeforeEach
     void setUp() {
         service = new RecommendationTriggerService(
-                marketEvents, products, devices, selector, deterministic, aiStep, runLog, new SyncTaskExecutor());
+                marketEvents,
+                products,
+                devices,
+                selector,
+                deterministic,
+                aiStep,
+                runLog,
+                new SyncTaskExecutor(),
+                events);
     }
 
     // --- Trigger 1: market event -------------------------------------------
@@ -103,7 +115,8 @@ class RecommendationTriggerServiceTest {
         doReturn(classified(1L, TierMapper.STRONG_UPGRADE_CANDIDATE)).when(deterministic).evaluatePairAndPersist(1L, PRODUCT_ID, EVENT_ID);
         doReturn(classified(2L, TierMapper.NO_MEANINGFUL_CHANGE)).when(deterministic).evaluatePairAndPersist(2L, PRODUCT_ID, EVENT_ID);
         doReturn(notShortlisted(3L)).when(deterministic).evaluatePairAndPersist(3L, PRODUCT_ID, EVENT_ID);
-        when(aiStep.assess(any(), any(), eq(EVENT_ID), any())).thenReturn(AiAssessmentStep.Outcome.assessed(100L));
+        when(aiStep.assess(any(), any(), eq(EVENT_ID), any(), eq(RecommendationEmailMode.INDIVIDUAL)))
+                .thenReturn(AiAssessmentStep.Outcome.assessed(100L));
 
         TriggerRun run = service.runForMarketEvent(EVENT_ID, "TEST");
 
@@ -117,7 +130,9 @@ class RecommendationTriggerServiceTest {
         // The trigger event reaches the AI request, for the one pair past the gate only.
         ArgumentCaptor<CandidateEvaluation> evaluation = ArgumentCaptor.forClass(CandidateEvaluation.class);
         ArgumentCaptor<AssessRequest.TriggerEvent> triggerEvent = ArgumentCaptor.forClass(AssessRequest.TriggerEvent.class);
-        verify(aiStep, times(1)).assess(evaluation.capture(), any(), eq(EVENT_ID), triggerEvent.capture());
+        verify(aiStep, times(1)).assess(
+                evaluation.capture(), any(), eq(EVENT_ID), triggerEvent.capture(),
+                eq(RecommendationEmailMode.INDIVIDUAL));
         assertEquals(1L, evaluation.getValue().userDeviceId());
         assertEquals("PRICE_CHANGE", triggerEvent.getValue().eventType());
         assertEquals(Map.of("price", 1099), triggerEvent.getValue().newValue());
@@ -151,9 +166,9 @@ class RecommendationTriggerServiceTest {
                 .thenReturn(new AffectedDeviceSelector.Selection(List.of(1L, 2L), List.of()));
         doReturn(classified(1L, TierMapper.WORTH_CONSIDERING)).when(deterministic).evaluatePairAndPersist(1L, PRODUCT_ID, EVENT_ID);
         doReturn(classified(2L, TierMapper.WORTH_CONSIDERING)).when(deterministic).evaluatePairAndPersist(2L, PRODUCT_ID, EVENT_ID);
-        when(aiStep.assess(argThat(e -> e != null && e.userDeviceId() == 1L), any(), any(), any()))
+        when(aiStep.assess(argThat(e -> e != null && e.userDeviceId() == 1L), any(), any(), any(), any()))
                 .thenReturn(AiAssessmentStep.Outcome.failed(new AiServiceException("AI service timeout", null)));
-        when(aiStep.assess(argThat(e -> e != null && e.userDeviceId() == 2L), any(), any(), any()))
+        when(aiStep.assess(argThat(e -> e != null && e.userDeviceId() == 2L), any(), any(), any(), any()))
                 .thenReturn(AiAssessmentStep.Outcome.assessed(200L));
 
         TriggerRun run = service.runForMarketEvent(EVENT_ID, "TEST");
@@ -183,7 +198,7 @@ class RecommendationTriggerServiceTest {
         when(selector.forProduct("SMARTPHONE", PRODUCT_ID))
                 .thenReturn(new AffectedDeviceSelector.Selection(List.of(1L), List.of()));
         doReturn(classified(1L, TierMapper.WORTH_WATCHING)).when(deterministic).evaluatePairAndPersist(1L, PRODUCT_ID, EVENT_ID);
-        when(aiStep.assess(any(), any(), any(), any()))
+        when(aiStep.assess(any(), any(), any(), any(), any()))
                 .thenReturn(AiAssessmentStep.Outcome.skipped("missing user_devices.condition"));
 
         TriggerRun run = service.runForMarketEvent(EVENT_ID, "TEST");
@@ -212,8 +227,10 @@ class RecommendationTriggerServiceTest {
         CandidateEvaluation evaluation = new CandidateEvaluation(42L, USER_ID,
                 List.of(candidate(30L, TierMapper.STRONG_UPGRADE_CANDIDATE), candidate(31L, TierMapper.NO_MEANINGFUL_CHANGE)),
                 List.of(new CandidateEvaluation.Skipped(product(32L), "no specs")));
-        when(deterministic.evaluateAndPersist(42L)).thenReturn(new PersistedEvaluation(evaluation, 2, 1));
-        when(aiStep.assess(any(), any(), isNull(), isNull())).thenReturn(AiAssessmentStep.Outcome.assessed(300L));
+        when(deterministic.evaluateAndPersist(42L, RecommendationEmailMode.DEVICE_SUMMARY))
+                .thenReturn(new PersistedEvaluation(evaluation, 2, 1));
+        when(aiStep.assess(any(), any(), isNull(), isNull(), eq(RecommendationEmailMode.DEVICE_SUMMARY)))
+                .thenReturn(AiAssessmentStep.Outcome.assessed(300L));
 
         TriggerRun run = service.runForDevice(42L, "DEVICE_ADDED");
 
@@ -225,14 +242,18 @@ class RecommendationTriggerServiceTest {
         assertEquals(1, run.count(PairOutcome.UNCLASSIFIABLE));
 
         ArgumentCaptor<CandidateEvaluation.Classified> assessed = ArgumentCaptor.forClass(CandidateEvaluation.Classified.class);
-        verify(aiStep, times(1)).assess(eq(evaluation), assessed.capture(), isNull(), isNull());
+        verify(aiStep, times(1)).assess(
+                eq(evaluation), assessed.capture(), isNull(), isNull(),
+                eq(RecommendationEmailMode.DEVICE_SUMMARY));
         assertEquals(30L, assessed.getValue().candidate().getProductId());
+        verify(events).publishEvent(new DeviceRecommendationEvaluationCompleted(42L));
     }
 
     @Test
     void aDeviceWhoseEvaluationFailsIsLoggedAsAFailure() {
         when(devices.isEvaluable(42L)).thenReturn(true);
-        when(deterministic.evaluateAndPersist(42L)).thenThrow(new ResourceNotFoundException("no specs"));
+        when(deterministic.evaluateAndPersist(42L, RecommendationEmailMode.INDIVIDUAL))
+                .thenThrow(new ResourceNotFoundException("no specs"));
 
         TriggerRun run = service.runForDevice(42L, "DEVICE_UPDATED");
 

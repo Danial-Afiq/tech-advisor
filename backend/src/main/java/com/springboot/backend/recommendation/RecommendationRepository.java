@@ -64,9 +64,16 @@ public class RecommendationRepository {
      * each owned device keeps its own current answer.
      */
     public long save(RecommendationRecord rec, Map<String, Object> degradedLog) {
+        return save(rec, degradedLog, RecommendationEmailMode.INDIVIDUAL);
+    }
+
+    public long save(
+            RecommendationRecord rec,
+            Map<String, Object> degradedLog,
+            RecommendationEmailMode emailMode) {
         Long id = tx.execute(status -> {
             Notables notables = new Notables();
-            long newId = supersedeAndInsert(rec, notables);
+            long newId = supersedeAndInsert(rec, notables, emailMode);
             notables.publish();
 
             if (degradedLog != null) {
@@ -103,10 +110,23 @@ public class RecommendationRepository {
     public int replaceForDevice(
             long currentDeviceId, Collection<Long> shortlistedProductIds, List<RecommendationRecord> records) {
 
+        return replaceForDevice(
+                currentDeviceId,
+                shortlistedProductIds,
+                records,
+                RecommendationEmailMode.INDIVIDUAL);
+    }
+
+    public int replaceForDevice(
+            long currentDeviceId,
+            Collection<Long> shortlistedProductIds,
+            List<RecommendationRecord> records,
+            RecommendationEmailMode emailMode) {
+
         Integer deleted = tx.execute(status -> {
             int removed = deleteDropped(currentDeviceId, shortlistedProductIds);
             Notables notables = new Notables();
-            records.forEach(rec -> supersedeAndInsert(rec, notables));
+            records.forEach(rec -> supersedeAndInsert(rec, notables, emailMode));
             notables.publish();
             return removed;
         });
@@ -372,7 +392,7 @@ public class RecommendationRepository {
                             "DELETE FROM recommendations WHERE current_device_id=? AND candidate_product_id=?",
                             currentDeviceId, candidateProductId);
             Notables notables = new Notables();
-            records.forEach(rec -> supersedeAndInsert(rec, notables));
+            records.forEach(rec -> supersedeAndInsert(rec, notables, RecommendationEmailMode.INDIVIDUAL));
             notables.publish();
             return removed;
         });
@@ -407,7 +427,10 @@ public class RecommendationRepository {
      * device and candidate is re-pointed at the new row. Callers own the
      * transaction.
      */
-    private long supersedeAndInsert(RecommendationRecord rec, Notables notables) {
+    private long supersedeAndInsert(
+            RecommendationRecord rec,
+            Notables notables,
+            RecommendationEmailMode emailMode) {
         List<String> deviceHistory = db.queryForList(
                 "SELECT verdict FROM recommendations "
                         + "WHERE user_id=? AND candidate_product_id=? AND current_device_id IS NOT DISTINCT FROM ?::bigint "
@@ -444,7 +467,7 @@ public class RecommendationRepository {
                 rec.promptVersion(),
                 starred);
 
-        events.publishEvent(new RecommendationSaved(newId));
+        events.publishEvent(new RecommendationSaved(newId, emailMode));
 
         if (!deviceHistory.isEmpty()) {
             db.update(
