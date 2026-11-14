@@ -111,6 +111,16 @@ public final class TriggerRun {
         }
     }
 
+    /**
+     * A newer run for the same device was queued, so this one stopped before
+     * making the remaining model calls. The deterministic rows it wrote stand
+     * until the newer run replaces them.
+     */
+    void supersede(int pairsNotAssessed) {
+        context.put("superseded", true);
+        context.put("pairs_left_for_newer_run", pairsNotAssessed);
+    }
+
     /** The run had nothing to do; logged rather than treated as an error. */
     void skip(String reason) {
         skippedReason = reason;

@@ -24,6 +24,7 @@ import { deviceFromApi, deviceToRequest } from "../components/devices/deviceApi"
 import type { DeviceResponse } from "../components/devices/deviceApi";
 import type { Device, UpgradePreferences } from "../components/devices/types";
 import { useDeviceCatalogue } from "../components/devices/useSmartphoneCatalogue";
+import { markRecommendationsRefreshing } from "../components/recommendations/recommendationRefresh";
 import {
   DASHBOARD_PATH,
   DEVICES_PATH,
@@ -104,6 +105,7 @@ export default function DevicesPageTest() {
   const saveDevice = async (draft: Device, isNew: boolean) => {
     if (!isNew) {
       const device = fromSaved(draft, await updateDevice(draft.id, deviceToRequest(draft)));
+      markRecommendationsRefreshing();
       replace(device);
       setEditing(null);
       pushToast("Device updated", `${name(device)} was updated in your account.`);
@@ -129,11 +131,12 @@ export default function DevicesPageTest() {
   ) => {
     const draft = { ...device, upgradePreferences };
     const next = fromSaved(draft, await updateDevice(draft.id, deviceToRequest(draft)));
+    markRecommendationsRefreshing();
     replace(next);
     setPrefs(null);
     pushToast(
       "Upgrade profile saved",
-      `The upgrade preferences for ${name(next)} were saved to your account.`
+      `The upgrade preferences for ${name(next)} were saved. Its recommendations are being updated.`
     );
   };
 
